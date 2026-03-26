@@ -1,0 +1,23 @@
+{
+  "strategy": "file-memory",
+  "paths": {
+    "sources": "data/kb/sources",
+    "cnl": "data/kb/cnl",
+    "meta": "data/kb/meta",
+    "index": "data/kb/index",
+    "quarantine": "data/kb/quarantine"
+  },
+  "indexSavePolicy": "on-change",
+  "maxSourceSizeBytes": 1048576,
+  "maxSources": 500,
+  "maxUnitsPerSource": 500,
+  "maxTotalUnits": 10000,
+  "maxTotalCnlBytes": 104857600,
+  "maxChunkSize": 1500,
+  "minChunkSize": 100,
+  "overlapSentences": 1,
+  "plainTextWindowSize": 1500,
+  "plainTextWindowOverlapChars": 150,
+  "maxLLMCallsPerSource": 200,
+  "ingestTimeoutMs": 300000
+}

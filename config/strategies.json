@@ -1,0 +1,4 @@
+{
+  "defaultMode": "llm-assisted",
+  "enabledModes": ["llm-assisted", "symbolic-only"]
+}

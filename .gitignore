@@ -1,6 +1,13 @@
 # Logs
 logs
 *.log
+
+# Runtime data directory (KB, index, sessions, etc.)
+data/
+
+# Evaluation results
+test/evaluation/results/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

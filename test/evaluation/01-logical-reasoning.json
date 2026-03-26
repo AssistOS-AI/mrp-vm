@@ -1,0 +1,144 @@
+[
+  {
+    "id": "logic-001",
+    "category": "syllogism",
+    "description": "Classic Socrates syllogism — modus ponens",
+    "turns": [
+      { "role": "user", "content": "Socrate e om. Toti oamenii sunt muritori." },
+      { "role": "user", "content": "Este Socrate muritor?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_intent_act": "verify",
+      "turn2_status": "answered",
+      "turn2_mustMention": ["mortal", "Socrates"],
+      "turn2_mustNotContain": ["not enough evidence"]
+    }
+  },
+  {
+    "id": "logic-002",
+    "category": "syllogism",
+    "description": "All birds fly, penguins are birds — expects nuanced answer",
+    "turns": [
+      { "role": "user", "content": "All birds can fly. A penguin is a bird." },
+      { "role": "user", "content": "Can a penguin fly?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["penguin", "fly"]
+    }
+  },
+  {
+    "id": "logic-003",
+    "category": "syllogism",
+    "description": "Transitive property — A>B, B>C, is A>C?",
+    "turns": [
+      { "role": "user", "content": "Iron is heavier than wood. Wood is heavier than paper." },
+      { "role": "user", "content": "Is iron heavier than paper?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["iron", "paper", "heavier"]
+    }
+  },
+  {
+    "id": "logic-004",
+    "category": "syllogism",
+    "description": "Negation — no mammals are fish",
+    "turns": [
+      { "role": "user", "content": "No mammals are fish. A whale is a mammal." },
+      { "role": "user", "content": "Is a whale a fish?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["whale", "not", "fish"]
+    }
+  },
+  {
+    "id": "logic-005",
+    "category": "syllogism",
+    "description": "Three-step chain — A implies B, B implies C, C implies D",
+    "turns": [
+      { "role": "user", "content": "All cats are animals. All animals need water. Everything that needs water needs food." },
+      { "role": "user", "content": "Does a cat need food?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["cat", "food"]
+    }
+  },
+  {
+    "id": "logic-006",
+    "category": "syllogism",
+    "description": "Contrapositive — if it rains the ground is wet",
+    "turns": [
+      { "role": "user", "content": "If it rains, the ground gets wet. The ground is not wet." },
+      { "role": "user", "content": "Is it raining?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["not raining"]
+    }
+  },
+  {
+    "id": "logic-007",
+    "category": "syllogism",
+    "description": "Disjunctive syllogism — either A or B, not A",
+    "turns": [
+      { "role": "user", "content": "The server runs either Linux or Windows. It does not run Windows." },
+      { "role": "user", "content": "What OS does the server run?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["Linux"]
+    }
+  },
+  {
+    "id": "logic-008",
+    "category": "syllogism",
+    "description": "Set membership — all X in set Y, Z is X",
+    "turns": [
+      { "role": "user", "content": "All prime numbers greater than 2 are odd. 7 is a prime number greater than 2." },
+      { "role": "user", "content": "Is 7 odd?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["7", "odd"]
+    }
+  },
+  {
+    "id": "logic-009",
+    "category": "syllogism",
+    "description": "Hypothetical syllogism — if A then B, if B then C",
+    "turns": [
+      { "role": "user", "content": "If the temperature drops below zero, water freezes. If water freezes, pipes can burst." },
+      { "role": "user", "content": "What happens to pipes if the temperature drops below zero?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["pipes", "burst"]
+    }
+  },
+  {
+    "id": "logic-010",
+    "category": "syllogism",
+    "description": "Universal negative — no reptiles are warm-blooded",
+    "turns": [
+      { "role": "user", "content": "No reptiles are warm-blooded. A lizard is a reptile." },
+      { "role": "user", "content": "Is a lizard warm-blooded?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["lizard", "not", "warm"]
+    }
+  }
+]

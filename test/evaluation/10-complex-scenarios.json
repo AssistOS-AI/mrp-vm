@@ -1,0 +1,163 @@
+[
+  {
+    "id": "complex-001",
+    "category": "complex-scenarios",
+    "description": "Multi-turn project setup then architectural question",
+    "kbSources": [
+      { "name": "patterns.md", "content": "The CQRS pattern separates read and write models.\n\nEvent sourcing stores all changes as events.\n\nCQRS works well with event sourcing for complex domains." }
+    ],
+    "turns": [
+      { "role": "user", "content": "We are building a financial trading platform." },
+      { "role": "user", "content": "We need audit trails for every transaction." },
+      { "role": "user", "content": "Should we use CQRS with event sourcing?" }
+    ],
+    "expected": {
+      "turn3_status": "answered",
+      "turn3_mustMention": ["CQRS", "event sourcing", "audit"]
+    }
+  },
+  {
+    "id": "complex-002",
+    "category": "complex-scenarios",
+    "description": "Constraint satisfaction — find option matching all constraints",
+    "kbSources": [
+      { "name": "cloud.md", "content": "AWS Lambda has a 15-minute timeout and 10GB memory limit.\n\nAWS ECS supports long-running tasks with no timeout.\n\nAWS Fargate is serverless containers with up to 30GB memory." }
+    ],
+    "turns": [
+      { "role": "user", "content": "Our batch job runs for 2 hours and needs 20GB RAM." },
+      { "role": "user", "content": "Which AWS compute service should we use?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["Fargate"],
+      "turn2_mustNotContain": ["Lambda"]
+    }
+  },
+  {
+    "id": "complex-003",
+    "category": "complex-scenarios",
+    "description": "Romanian multi-turn with KB",
+    "kbSources": [
+      { "name": "devops.md", "content": "Docker containers provide process isolation.\n\nKubernetes orchestrates container deployments.\n\nHelm manages Kubernetes package deployments." }
+    ],
+    "turns": [
+      { "role": "user", "content": "Folosim Kubernetes in productie." },
+      { "role": "user", "content": "Cum facem deployment-uri?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["Kubernetes"]
+    }
+  },
+  {
+    "id": "complex-004",
+    "category": "complex-scenarios",
+    "description": "Contradiction detection — user states conflicting facts",
+    "turns": [
+      { "role": "user", "content": "Our server has 8GB RAM." },
+      { "role": "user", "content": "Our server has 16GB RAM." },
+      { "role": "user", "content": "How much RAM does our server have?" }
+    ],
+    "expected": {
+      "turn3_status": "answered",
+      "turn3_mustMention": ["16"]
+    }
+  },
+  {
+    "id": "complex-005",
+    "category": "complex-scenarios",
+    "description": "Multi-intent with context — define + compare with constraints",
+    "kbSources": [
+      { "name": "search.md", "content": "BM25 is a lexical retrieval method based on term frequency.\n\nSemantic search uses embeddings to find conceptually similar documents.\n\nHybrid search combines lexical and semantic approaches." }
+    ],
+    "turns": [
+      { "role": "user", "content": "We have no GPU available." },
+      { "role": "user", "content": "Define hybrid search and recommend whether we should use it." }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["hybrid", "GPU"]
+    }
+  },
+  {
+    "id": "complex-006",
+    "category": "complex-scenarios",
+    "description": "Five-turn debugging scenario",
+    "turns": [
+      { "role": "user", "content": "Our API returns 500 errors intermittently." },
+      { "role": "user", "content": "It happens mostly during peak hours." },
+      { "role": "user", "content": "The database connection pool is set to 10." },
+      { "role": "user", "content": "We have 50 concurrent users at peak." },
+      { "role": "user", "content": "Diagnose the likely cause of the 500 errors." }
+    ],
+    "expected": {
+      "turn5_status": "answered",
+      "turn5_mustMention": ["connection pool", "concurrent"]
+    }
+  },
+  {
+    "id": "complex-007",
+    "category": "complex-scenarios",
+    "description": "KB + session + deduction combined",
+    "kbSources": [
+      { "name": "pricing.md", "content": "The basic plan costs $10/user/month.\n\nThe pro plan costs $25/user/month.\n\nThe enterprise plan costs $50/user/month with SLA." }
+    ],
+    "turns": [
+      { "role": "user", "content": "We have 100 users and need an SLA." },
+      { "role": "user", "content": "How much will it cost us per month?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["5000", "enterprise"]
+    }
+  },
+  {
+    "id": "complex-008",
+    "category": "complex-scenarios",
+    "description": "Cross-language reasoning — premises in Romanian, question in English",
+    "turns": [
+      { "role": "user", "content": "Toate serviciile noastre folosesc HTTPS. Serviciul de plati este un serviciu." },
+      { "role": "user", "content": "Does the payment service use HTTPS?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["payment", "HTTPS"]
+    }
+  },
+  {
+    "id": "complex-009",
+    "category": "complex-scenarios",
+    "description": "Evaluation with weighted criteria from session and KB",
+    "kbSources": [
+      { "name": "dbs.md", "content": "PostgreSQL: ACID compliant, supports JSON, complex queries, 10ms avg latency.\n\nMongoDB: document store, flexible schema, 5ms avg latency.\n\nCassandra: distributed, eventual consistency, 2ms avg latency." }
+    ],
+    "turns": [
+      { "role": "user", "content": "We need ACID compliance and latency under 15ms." },
+      { "role": "user", "content": "Evaluate which database fits our requirements." }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["PostgreSQL", "ACID"]
+    }
+  },
+  {
+    "id": "complex-010",
+    "category": "complex-scenarios",
+    "description": "Long conversation — 8 turns building up to a recommendation",
+    "turns": [
+      { "role": "user", "content": "We are a startup with 5 developers." },
+      { "role": "user", "content": "Our budget is limited." },
+      { "role": "user", "content": "We need to ship fast." },
+      { "role": "user", "content": "The product is a B2B SaaS." },
+      { "role": "user", "content": "We expect 1000 users in the first year." },
+      { "role": "user", "content": "Data consistency is important." },
+      { "role": "user", "content": "We prefer open source tools." },
+      { "role": "user", "content": "The team knows JavaScript and Python." },
+      { "role": "user", "content": "Recommend a tech stack for us." }
+    ],
+    "expected": {
+      "turn9_status": "answered",
+      "turn9_mustMention": ["JavaScript", "Python"]
+    }
+  }
+]

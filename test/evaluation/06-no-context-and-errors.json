@@ -1,0 +1,99 @@
+[
+  {
+    "id": "noctx-001",
+    "category": "no-context",
+    "description": "Completely unknown topic, no KB",
+    "turns": [
+      { "role": "user", "content": "What is the population of Mars colony Theta-7?" }
+    ],
+    "expected": { "turn1_status": "no-context" }
+  },
+  {
+    "id": "noctx-002",
+    "category": "no-context",
+    "description": "Question with no prior session context",
+    "turns": [
+      { "role": "user", "content": "What programming language do we use?" }
+    ],
+    "expected": { "turn1_status": "no-context" }
+  },
+  {
+    "id": "noctx-003",
+    "category": "no-context",
+    "description": "Obscure technical question, empty KB",
+    "turns": [
+      { "role": "user", "content": "What is the Kolmogorov complexity of the string 01101001?" }
+    ],
+    "expected": { "turn1_status": "no-context" }
+  },
+  {
+    "id": "noctx-004",
+    "category": "no-context",
+    "description": "No-context should not hallucinate",
+    "turns": [
+      { "role": "user", "content": "What is our company's revenue for Q4 2025?" }
+    ],
+    "expected": {
+      "turn1_status": "no-context",
+      "turn1_mustNotContain": ["$", "million", "billion", "revenue is"]
+    }
+  },
+  {
+    "id": "noctx-005",
+    "category": "no-context",
+    "description": "No-context with explicit error message",
+    "turns": [
+      { "role": "user", "content": "List all employees in the engineering department." }
+    ],
+    "expected": {
+      "turn1_status": "no-context",
+      "turn1_mustMention": ["not contain enough evidence"]
+    }
+  },
+  {
+    "id": "err-001",
+    "category": "error-handling",
+    "description": "Empty user message",
+    "rawRequest": {
+      "messages": [{ "role": "user", "content": "" }]
+    },
+    "expected": { "shouldError": false }
+  },
+  {
+    "id": "err-002",
+    "category": "error-handling",
+    "description": "Very long input — should not silently truncate",
+    "generateLongInput": 9000,
+    "expected": { "errorCode": "NORMALIZER_INPUT_TOO_LARGE" }
+  },
+  {
+    "id": "err-003",
+    "category": "error-handling",
+    "description": "Invalid processing mode",
+    "rawRequest": {
+      "processing_mode": "quantum-mode",
+      "messages": [{ "role": "user", "content": "Hello" }]
+    },
+    "expected": { "errorCode": "INVALID_PROCESSING_MODE" }
+  },
+  {
+    "id": "err-004",
+    "category": "error-handling",
+    "description": "Invalid retrieval profile",
+    "rawRequest": {
+      "retrieval_profile": "turbo-recall",
+      "messages": [{ "role": "user", "content": "Hello" }]
+    },
+    "expected": { "errorCode": "INVALID_RETRIEVAL_PROFILE" }
+  },
+  {
+    "id": "err-005",
+    "category": "error-handling",
+    "description": "Expired session",
+    "rawRequest": {
+      "session_id": "sess-nonexistent-000",
+      "messages": [{ "role": "user", "content": "Hello" }]
+    },
+    "expected": { "errorCode": "SESSION_EXPIRED" }
+  }
+]

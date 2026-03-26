@@ -1,0 +1,9 @@
+{
+  "maxHistoryMessagesForPrompt": 20,
+  "maxHistoryCharsForPrompt": 16000,
+  "sessionIdleTtlMinutes": 30,
+  "maxSessionContextUnits": 200,
+  "defaultProcessingMode": "llm-assisted",
+  "defaultRetrievalProfile": "balanced",
+  "maxSessions": 1000
+}

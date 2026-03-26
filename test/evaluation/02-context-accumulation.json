@@ -1,0 +1,144 @@
+[
+  {
+    "id": "ctx-001",
+    "category": "context-accumulation",
+    "description": "Three turns of facts, query on fourth",
+    "turns": [
+      { "role": "user", "content": "Our project uses Node.js 20." },
+      { "role": "user", "content": "We deploy on AWS Lambda." },
+      { "role": "user", "content": "The database is DynamoDB." },
+      { "role": "user", "content": "Summarize our tech stack." }
+    ],
+    "expected": {
+      "turn4_status": "answered",
+      "turn4_mustMention": ["Node.js", "Lambda", "DynamoDB"]
+    }
+  },
+  {
+    "id": "ctx-002",
+    "category": "context-accumulation",
+    "description": "Preference override — user changes mind",
+    "turns": [
+      { "role": "user", "content": "We prefer PostgreSQL for our database." },
+      { "role": "user", "content": "Actually, we switched to MongoDB instead." },
+      { "role": "user", "content": "What database do we use?" }
+    ],
+    "expected": {
+      "turn3_status": "answered",
+      "turn3_mustMention": ["MongoDB"]
+    }
+  },
+  {
+    "id": "ctx-003",
+    "category": "context-accumulation",
+    "description": "Constraint accumulation — multiple constraints",
+    "turns": [
+      { "role": "user", "content": "We have a budget of $500/month for cloud." },
+      { "role": "user", "content": "Latency must be under 100ms." },
+      { "role": "user", "content": "We need 99.9% uptime." },
+      { "role": "user", "content": "What are our deployment constraints?" }
+    ],
+    "expected": {
+      "turn4_status": "answered",
+      "turn4_mustMention": ["500", "100ms", "99.9"]
+    }
+  },
+  {
+    "id": "ctx-004",
+    "category": "context-accumulation",
+    "description": "Facts should not leak between sessions",
+    "sessionBreak": true,
+    "turns": [
+      { "role": "user", "content": "Our API key is stored in AWS Secrets Manager." }
+    ],
+    "newSessionTurns": [
+      { "role": "user", "content": "Where is our API key stored?" }
+    ],
+    "expected": {
+      "newSession_status": "no-context",
+      "newSession_mustNotContain": ["Secrets Manager"]
+    }
+  },
+  {
+    "id": "ctx-005",
+    "category": "context-accumulation",
+    "description": "Questions should not enter session context",
+    "turns": [
+      { "role": "user", "content": "What is the best database for our use case?" },
+      { "role": "user", "content": "What facts do you know about our project?" }
+    ],
+    "expected": {
+      "turn2_status": "no-context"
+    }
+  },
+  {
+    "id": "ctx-006",
+    "category": "context-accumulation",
+    "description": "Mixed facts and questions — only facts stored",
+    "turns": [
+      { "role": "user", "content": "We use Redis for caching. What is the best eviction policy?" },
+      { "role": "user", "content": "What caching system do we use?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["Redis"]
+    }
+  },
+  {
+    "id": "ctx-007",
+    "category": "context-accumulation",
+    "description": "Numeric facts preserved across turns",
+    "turns": [
+      { "role": "user", "content": "Our server has 16 CPU cores and 64GB RAM." },
+      { "role": "user", "content": "How much RAM does our server have?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["64"]
+    }
+  },
+  {
+    "id": "ctx-008",
+    "category": "context-accumulation",
+    "description": "Environment details accumulate",
+    "turns": [
+      { "role": "user", "content": "We run Kubernetes 1.28 on GKE." },
+      { "role": "user", "content": "The cluster has 5 nodes." },
+      { "role": "user", "content": "Describe our Kubernetes setup." }
+    ],
+    "expected": {
+      "turn3_status": "answered",
+      "turn3_mustMention": ["Kubernetes", "GKE", "5"]
+    }
+  },
+  {
+    "id": "ctx-009",
+    "category": "context-accumulation",
+    "description": "User preferences remembered",
+    "turns": [
+      { "role": "user", "content": "I prefer concise answers with code examples." },
+      { "role": "user", "content": "What are my preferences?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["concise", "code"]
+    }
+  },
+  {
+    "id": "ctx-010",
+    "category": "context-accumulation",
+    "description": "Five turns of incremental project facts",
+    "turns": [
+      { "role": "user", "content": "The project is called Phoenix." },
+      { "role": "user", "content": "It is written in Rust." },
+      { "role": "user", "content": "The target platform is embedded Linux." },
+      { "role": "user", "content": "We use MQTT for messaging." },
+      { "role": "user", "content": "The release date is Q3 2026." },
+      { "role": "user", "content": "Tell me everything about the Phoenix project." }
+    ],
+    "expected": {
+      "turn6_status": "answered",
+      "turn6_mustMention": ["Phoenix", "Rust", "embedded", "MQTT", "Q3"]
+    }
+  }
+]

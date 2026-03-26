@@ -1,0 +1,158 @@
+[
+  {
+    "id": "synth-001",
+    "category": "synthesis-quality",
+    "description": "Answer should be grounded, not hallucinated",
+    "kbSources": [
+      { "name": "facts.md", "content": "Redis supports pub/sub messaging.\n\nRedis stores data in memory.\n\nRedis supports persistence via RDB and AOF." }
+    ],
+    "turns": [
+      { "role": "user", "content": "How does Redis handle persistence?" }
+    ],
+    "expected": {
+      "turn1_status": "answered",
+      "turn1_mustMention": ["RDB", "AOF"],
+      "turn1_mustNotContain": ["Redis Cluster", "sharding"]
+    }
+  },
+  {
+    "id": "synth-002",
+    "category": "synthesis-quality",
+    "description": "Answer cites sources",
+    "kbSources": [
+      { "name": "perf.md", "content": "BM25 processes 10,000 queries per second on a single core.\n\nDense retrieval processes 500 queries per second on GPU." }
+    ],
+    "turns": [
+      { "role": "user", "content": "Compare BM25 and dense retrieval throughput." }
+    ],
+    "expected": {
+      "turn1_status": "answered",
+      "turn1_mustMention": ["10,000", "500"],
+      "turn1_mustUseSources": ["src-"]
+    }
+  },
+  {
+    "id": "synth-003",
+    "category": "synthesis-quality",
+    "description": "Mixed status — one group answered, one no-context",
+    "kbSources": [
+      { "name": "db.md", "content": "PostgreSQL supports ACID transactions.\n\nPostgreSQL uses MVCC for concurrency control." }
+    ],
+    "turns": [
+      { "role": "user", "content": "Explain PostgreSQL's concurrency model. Also explain MongoDB's sharding strategy." }
+    ],
+    "expected": {
+      "intentCount": 2,
+      "group1_status": "answered",
+      "group2_status": "no-context"
+    }
+  },
+  {
+    "id": "synth-004",
+    "category": "synthesis-quality",
+    "description": "Session + KB evidence combined in answer",
+    "kbSources": [
+      { "name": "limits.md", "content": "The free tier allows 1000 API calls per day.\n\nThe pro tier allows 100,000 API calls per day." }
+    ],
+    "turns": [
+      { "role": "user", "content": "We are on the pro tier." },
+      { "role": "user", "content": "How many API calls can we make per day?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["100,000", "pro"]
+    }
+  },
+  {
+    "id": "synth-005",
+    "category": "synthesis-quality",
+    "description": "Structured comparison output",
+    "kbSources": [
+      { "name": "compare.md", "content": "MySQL is open source and widely used.\n\nMySQL uses row-level locking.\n\nPostgreSQL supports advanced data types like JSONB and arrays.\n\nPostgreSQL uses MVCC instead of locking." }
+    ],
+    "turns": [
+      { "role": "user", "content": "Compare MySQL and PostgreSQL." }
+    ],
+    "expected": {
+      "turn1_status": "answered",
+      "turn1_mustMention": ["MySQL", "PostgreSQL"]
+    }
+  },
+  {
+    "id": "synth-006",
+    "category": "synthesis-quality",
+    "description": "Diagnosis with evidence",
+    "kbSources": [
+      { "name": "troubleshoot.md", "content": "High CPU usage is often caused by unoptimized queries.\n\nMemory leaks in Node.js are usually caused by unclosed event listeners.\n\nSlow disk I/O can be caused by insufficient IOPS." }
+    ],
+    "turns": [
+      { "role": "user", "content": "Our Node.js server's memory keeps growing. What could be wrong?" }
+    ],
+    "expected": {
+      "turn1_status": "answered",
+      "turn1_mustMention": ["memory", "event listener"]
+    }
+  },
+  {
+    "id": "synth-007",
+    "category": "synthesis-quality",
+    "description": "Implementation steps from KB",
+    "kbSources": [
+      { "name": "setup.md", "content": "# Redis Setup\n\nStep 1: Install Redis using apt-get install redis-server.\n\nStep 2: Configure redis.conf with maxmemory 256mb.\n\nStep 3: Enable AOF persistence with appendonly yes.\n\nStep 4: Start the service with systemctl start redis." }
+    ],
+    "turns": [
+      { "role": "user", "content": "How do I set up Redis?" }
+    ],
+    "expected": {
+      "turn1_status": "answered",
+      "turn1_mustMention": ["install", "redis.conf", "appendonly"]
+    }
+  },
+  {
+    "id": "synth-008",
+    "category": "synthesis-quality",
+    "description": "Answer should not go beyond evidence",
+    "kbSources": [
+      { "name": "minimal.md", "content": "Python was created by Guido van Rossum." }
+    ],
+    "turns": [
+      { "role": "user", "content": "Tell me everything about Python." }
+    ],
+    "expected": {
+      "turn1_status": "answered",
+      "turn1_mustMention": ["Guido"],
+      "turn1_mustNotContain": ["version 3.12", "Django", "Flask"]
+    }
+  },
+  {
+    "id": "synth-009",
+    "category": "synthesis-quality",
+    "description": "Evaluation with criteria from session",
+    "kbSources": [
+      { "name": "options.md", "content": "Option A costs $100/month and has 99.9% uptime.\n\nOption B costs $50/month and has 99.5% uptime.\n\nOption C costs $200/month and has 99.99% uptime." }
+    ],
+    "turns": [
+      { "role": "user", "content": "Our budget is $150/month and we need at least 99.9% uptime." },
+      { "role": "user", "content": "Which option should we choose?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["Option A"]
+    }
+  },
+  {
+    "id": "synth-010",
+    "category": "synthesis-quality",
+    "description": "Definition from KB — concise and accurate",
+    "kbSources": [
+      { "name": "glossary.md", "content": "BM25 (Best Matching 25) is a probabilistic ranking function used in information retrieval.\n\nTF-IDF stands for Term Frequency-Inverse Document Frequency.\n\nPageRank is an algorithm used by Google to rank web pages." }
+    ],
+    "turns": [
+      { "role": "user", "content": "What is BM25?" }
+    ],
+    "expected": {
+      "turn1_status": "answered",
+      "turn1_mustMention": ["probabilistic", "ranking", "retrieval"]
+    }
+  }
+]

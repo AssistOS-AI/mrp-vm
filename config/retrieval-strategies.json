@@ -1,0 +1,60 @@
+{
+  "defaultProfile": "balanced",
+  "enabledStrategies": ["bm25-lexical"],
+  "profiles": {
+    "fast": {
+      "primaryStrategies": ["bm25-lexical"],
+      "secondaryStrategies": [],
+      "allowParallel": false,
+      "maxStrategiesPerIntent": 1,
+      "minAcceptableCandidates": 3,
+      "confidenceGapThreshold": 0.20,
+      "hardSymbolicPruning": false,
+      "targetLatencyMs": 200
+    },
+    "balanced": {
+      "primaryStrategies": ["bm25-lexical"],
+      "secondaryStrategies": [],
+      "allowParallel": false,
+      "maxStrategiesPerIntent": 1,
+      "minAcceptableCandidates": 5,
+      "confidenceGapThreshold": 0.15,
+      "hardSymbolicPruning": false,
+      "targetLatencyMs": 500
+    },
+    "wide-recall": {
+      "primaryStrategies": ["bm25-lexical"],
+      "secondaryStrategies": [],
+      "allowParallel": true,
+      "maxStrategiesPerIntent": 3,
+      "minAcceptableCandidates": 8,
+      "confidenceGapThreshold": 0.10,
+      "hardSymbolicPruning": false,
+      "targetLatencyMs": 1500
+    },
+    "symbolic-grounded": {
+      "primaryStrategies": ["bm25-lexical"],
+      "secondaryStrategies": [],
+      "allowParallel": false,
+      "maxStrategiesPerIntent": 2,
+      "minAcceptableCandidates": 5,
+      "confidenceGapThreshold": 0.12,
+      "hardSymbolicPruning": true,
+      "targetLatencyMs": 2000
+    },
+    "meta-rational": {
+      "primaryStrategies": ["bm25-lexical"],
+      "secondaryStrategies": [],
+      "allowParallel": true,
+      "maxStrategiesPerIntent": 3,
+      "minAcceptableCandidates": 5,
+      "confidenceGapThreshold": 0.15,
+      "hardSymbolicPruning": false,
+      "targetLatencyMs": 2500
+    }
+  },
+  "strategyWeights": {
+    "bm25-lexical": 1.0
+  },
+  "agreementBonus": 0.10
+}

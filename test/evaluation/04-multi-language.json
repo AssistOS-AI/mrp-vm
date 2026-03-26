@@ -1,0 +1,128 @@
+[
+  {
+    "id": "lang-001",
+    "category": "multi-language",
+    "description": "Romanian — simple definition",
+    "turns": [
+      { "role": "user", "content": "Ce este un algoritm de sortare?" }
+    ],
+    "expected": {
+      "intentCount": 1,
+      "intents": [{ "act": "define" }],
+      "mustNotContain": ["NORMALIZER_FAILED"]
+    }
+  },
+  {
+    "id": "lang-002",
+    "category": "multi-language",
+    "description": "Romanian — comparison with typos",
+    "turns": [
+      { "role": "user", "content": "Compara BM25 cu dense retireval ptr deployment pe CPU." }
+    ],
+    "expected": {
+      "intentCount": 1,
+      "intents": [{ "act": "compare" }]
+    }
+  },
+  {
+    "id": "lang-003",
+    "category": "multi-language",
+    "description": "French — explanation",
+    "turns": [
+      { "role": "user", "content": "Expliquez pourquoi le tri rapide est plus efficace que le tri à bulles." }
+    ],
+    "expected": {
+      "intentCount": 1,
+      "intents": [{ "act": "explain" }]
+    }
+  },
+  {
+    "id": "lang-004",
+    "category": "multi-language",
+    "description": "German — recommendation",
+    "turns": [
+      { "role": "user", "content": "Empfehlen Sie eine Datenbank für Zeitreihendaten." }
+    ],
+    "expected": {
+      "intentCount": 1,
+      "intents": [{ "act": "recommend" }]
+    }
+  },
+  {
+    "id": "lang-005",
+    "category": "multi-language",
+    "description": "Spanish — implementation",
+    "turns": [
+      { "role": "user", "content": "¿Cómo implemento un sistema de caché con Redis?" }
+    ],
+    "expected": {
+      "intentCount": 1,
+      "intents": [{ "act": "implement" }]
+    }
+  },
+  {
+    "id": "lang-006",
+    "category": "multi-language",
+    "description": "Romanian — context accumulation across languages",
+    "turns": [
+      { "role": "user", "content": "Proiectul nostru foloseste Python 3.11 si ruleaza pe Ubuntu." },
+      { "role": "user", "content": "What tech stack do we use?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 1,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["Python"]
+    }
+  },
+  {
+    "id": "lang-007",
+    "category": "multi-language",
+    "description": "Romanian — Socrates in Romanian",
+    "turns": [
+      { "role": "user", "content": "Pisicile sunt animale. Toate animalele au nevoie de apa." },
+      { "role": "user", "content": "Au pisicile nevoie de apa?" }
+    ],
+    "expected": {
+      "turn1_context_units_min": 2,
+      "turn2_status": "answered",
+      "turn2_mustMention": ["cat", "water"]
+    }
+  },
+  {
+    "id": "lang-008",
+    "category": "multi-language",
+    "description": "Mixed languages in one session",
+    "turns": [
+      { "role": "user", "content": "Serverul nostru are 32GB RAM." },
+      { "role": "user", "content": "How much memory does our server have?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["32"]
+    }
+  },
+  {
+    "id": "lang-009",
+    "category": "multi-language",
+    "description": "Italian — diagnosis",
+    "turns": [
+      { "role": "user", "content": "Il mio server è lento dopo l'aggiornamento. Cosa potrebbe essere?" }
+    ],
+    "expected": {
+      "intentCount": 1,
+      "intents": [{ "act": "diagnose" }]
+    }
+  },
+  {
+    "id": "lang-010",
+    "category": "multi-language",
+    "description": "Heavy typos in English",
+    "turns": [
+      { "role": "user", "content": "Explane wy the databse is slwo aftr we addd the new indx." }
+    ],
+    "expected": {
+      "intentCount": 1,
+      "intents": [{ "act": "explain" }]
+    }
+  }
+]

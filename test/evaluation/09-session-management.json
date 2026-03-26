@@ -1,0 +1,142 @@
+[
+  {
+    "id": "session-001",
+    "category": "session-management",
+    "description": "Session persists across turns",
+    "turns": [
+      { "role": "user", "content": "Hello, I am working on project Alpha." },
+      { "role": "user", "content": "What project am I working on?" }
+    ],
+    "expected": {
+      "sameSession": true,
+      "turn2_mustMention": ["Alpha"]
+    }
+  },
+  {
+    "id": "session-002",
+    "category": "session-management",
+    "description": "System prompt respected",
+    "systemPrompt": "Always respond in bullet points.",
+    "turns": [
+      { "role": "user", "content": "What is a linked list?" }
+    ],
+    "expected": {
+      "turn1_mustNotContain": ["NORMALIZER_FAILED"]
+    }
+  },
+  {
+    "id": "session-003",
+    "category": "session-management",
+    "description": "Processing mode persists in session",
+    "processingMode": "symbolic-only",
+    "turns": [
+      { "role": "user", "content": "Hello." },
+      { "role": "user", "content": "What mode are we using?" }
+    ],
+    "expected": {
+      "sessionProcessingMode": "symbolic-only"
+    }
+  },
+  {
+    "id": "session-004",
+    "category": "session-management",
+    "description": "Retrieval profile persists in session",
+    "retrievalProfile": "fast",
+    "turns": [
+      { "role": "user", "content": "Hello." }
+    ],
+    "expected": {
+      "sessionRetrievalProfile": "fast"
+    }
+  },
+  {
+    "id": "session-005",
+    "category": "session-management",
+    "description": "New session has no context from previous",
+    "turns": [
+      { "role": "user", "content": "The secret code is 42." }
+    ],
+    "newSessionTurns": [
+      { "role": "user", "content": "What is the secret code?" }
+    ],
+    "expected": {
+      "newSession_status": "no-context"
+    }
+  },
+  {
+    "id": "session-006",
+    "category": "session-management",
+    "description": "History bounded — old messages still accessible via context",
+    "turns": [
+      { "role": "user", "content": "Our database is PostgreSQL." },
+      { "role": "user", "content": "The version is 15." },
+      { "role": "user", "content": "We use pgvector extension." },
+      { "role": "user", "content": "The host is db.example.com." },
+      { "role": "user", "content": "What database setup do we have?" }
+    ],
+    "expected": {
+      "turn5_status": "answered",
+      "turn5_mustMention": ["PostgreSQL"]
+    }
+  },
+  {
+    "id": "session-007",
+    "category": "session-management",
+    "description": "Assistant responses not in session context",
+    "turns": [
+      { "role": "user", "content": "Define what a hash table is." },
+      { "role": "user", "content": "What facts do you know about our project?" }
+    ],
+    "expected": {
+      "turn2_status": "no-context"
+    }
+  },
+  {
+    "id": "session-008",
+    "category": "session-management",
+    "description": "Commands not stored as context",
+    "turns": [
+      { "role": "user", "content": "Please format your answers as JSON." },
+      { "role": "user", "content": "What project facts do you have?" }
+    ],
+    "expected": {
+      "turn2_status": "no-context"
+    }
+  },
+  {
+    "id": "session-009",
+    "category": "session-management",
+    "description": "Ten turns of context accumulation",
+    "turns": [
+      { "role": "user", "content": "Language: Python." },
+      { "role": "user", "content": "Framework: FastAPI." },
+      { "role": "user", "content": "Database: PostgreSQL." },
+      { "role": "user", "content": "Cache: Redis." },
+      { "role": "user", "content": "Queue: RabbitMQ." },
+      { "role": "user", "content": "Cloud: AWS." },
+      { "role": "user", "content": "Region: eu-west-1." },
+      { "role": "user", "content": "CI: GitHub Actions." },
+      { "role": "user", "content": "Monitoring: Datadog." },
+      { "role": "user", "content": "Container: Docker." },
+      { "role": "user", "content": "Summarize our entire tech stack." }
+    ],
+    "expected": {
+      "turn11_status": "answered",
+      "turn11_mustMention": ["Python", "FastAPI", "PostgreSQL", "Redis", "AWS"]
+    }
+  },
+  {
+    "id": "session-010",
+    "category": "session-management",
+    "description": "Explicit session creation then reuse",
+    "createSessionFirst": true,
+    "turns": [
+      { "role": "user", "content": "We use Terraform for infrastructure." },
+      { "role": "user", "content": "What IaC tool do we use?" }
+    ],
+    "expected": {
+      "turn2_status": "answered",
+      "turn2_mustMention": ["Terraform"]
+    }
+  }
+]
