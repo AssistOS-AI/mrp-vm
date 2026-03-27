@@ -4,7 +4,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CONFIG_DIR = resolve(__dirname, '../../config');
+const CONFIG_DIR = process.env.MRP_CONFIG_DIR || resolve(__dirname, '../../config');
 
 const cache = {};
 

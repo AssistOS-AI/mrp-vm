@@ -206,17 +206,27 @@ export class CNLParser {
     return blocks.map(block => {
       parseFields(block);
       const id = block.headingMatch[1].trim();
+      const role = block.fields['Role']?.value.trim() || '';
       const utilityActsRaw = block.fields['UtilityActs']?.value || '';
+      let utilityActs = utilityActsRaw.split(',').map(a => a.trim().toLowerCase()).filter(Boolean);
+      // Infer UtilityActs from Role if missing
+      if (!utilityActs.length && role) {
+        const ROLE_TO_ACTS = {
+          Comparison: ['compare'], Explanation: ['explain'], Procedure: ['implement'],
+          Definition: ['define'], Evaluation: ['evaluate'], Diagnostic: ['diagnose'],
+          Constraint: ['verify'], Narrative: ['explain', 'describe'], Description: ['describe']
+        };
+        utilityActs = ROLE_TO_ACTS[role] || ['explain'];
+      }
       return {
         id,
         sourceId: block.fields['SourceId']?.value.trim() || '',
         chunkId: block.fields['ChunkId']?.value.trim() || '',
-        role: block.fields['Role']?.value.trim() || '',
-        topic: block.fields['Topic']?.value.trim() || '',
+        role, topic: block.fields['Topic']?.value.trim() || '',
         claim: block.fields['Claim']?.value.trim() || null,
         condition: block.fields['Condition']?.value.trim() || null,
         procedure: block.fields['Procedure']?.value.trim() || null,
-        utilityActs: utilityActsRaw.split(',').map(a => a.trim().toLowerCase()).filter(Boolean),
+        utilityActs,
         utilityNote: block.fields['UtilityNote']?.value.trim() || null
       };
     });

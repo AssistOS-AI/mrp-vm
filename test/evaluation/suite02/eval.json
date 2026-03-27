@@ -1,0 +1,52 @@
+{
+  "suiteId": "suite02",
+  "title": "The Awakening of Lumina-7 — Free-Form Analysis",
+  "description": "Tests deep reasoning, causal chain extraction, character comparison, and counterfactual synthesis. Context precision is evaluated.",
+  "storyFile": "story.nl",
+  "questions": [
+    {
+      "id": "s02-q01",
+      "input": "Explain the chain of cause and effect that links the discovery of the obelisk in the Frozen Abyss to the reactivation of the Eon atmospheric shield. Trace every intermediate step.",
+      "expected": {
+        "intents": [{ "intentMustMention": ["obelisk"], "orderIndependent": true }],
+        "contextMustMention": ["obelisk"],
+        "contextMustNotMention": [],
+        "answerMustMention": ["obelisk"],
+        "answerMustNotContain": ["not contain enough evidence"]
+      }
+    },
+    {
+      "id": "s02-q02",
+      "input": "Compare the motivations and methods of Dr. Elara Vance and Commander Vex. How do their contrasting goals ultimately converge toward the same planetary outcome?",
+      "expected": {
+        "intents": [{ "intentMustMention": ["Elara", "Vex"], "orderIndependent": true }],
+        "contextMustMention": ["Elara", "Vex"],
+        "contextMustNotMention": ["neural implants"],
+        "answerMustMention": ["Elara", "Vex"],
+        "answerMustNotContain": ["not contain enough evidence"]
+      }
+    },
+    {
+      "id": "s02-q03",
+      "input": "Analyze why Kaelen Voss was uniquely qualified to solve the Primordial Resonance crisis. What specific abilities and circumstances made him the only viable candidate?",
+      "expected": {
+        "intents": [{ "intentMustMention": ["Kaelen"], "orderIndependent": true }],
+        "contextMustMention": ["Kaelen"],
+        "contextMustNotMention": ["Quartz Desert"],
+        "answerMustMention": ["neural implants"],
+        "answerMustNotContain": ["not contain enough evidence"]
+      }
+    },
+    {
+      "id": "s02-q04",
+      "input": "Construct a counterfactual: if Commander Vex had discovered the obelisk instead of Dr. Elara Vance, how would the outcome likely differ? Ground your reasoning in the characters' established traits.",
+      "expected": {
+        "intents": [{ "intentMustMention": ["Vex", "obelisk"], "orderIndependent": true }],
+        "contextMustMention": ["Vex"],
+        "contextMustNotMention": [],
+        "answerMustMention": ["Vex"],
+        "answerMustNotContain": ["not contain enough evidence"]
+      }
+    }
+  ]
+}

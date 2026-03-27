@@ -44,6 +44,7 @@ export class MRPServer {
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
       const path = url.pathname;
+      logger.debug(MOD, `${req.method} ${path}`, {}, { reqId });
       // Static UI files
       if (req.method === 'GET' && (path === '/' || path.startsWith('/ui/'))) {
         return this._serveStatic(path, res);
@@ -114,7 +115,8 @@ export class MRPServer {
       retrieval_profile: session?.preferredRetrievalProfile || body.retrieval_profile,
       expires_at: session?.expiresAt,
       choices: [{ index: 0, message: { role: 'assistant', content: result.responseMarkdown }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      response_document: result.responseDocument || null
     });
   }
 

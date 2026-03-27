@@ -21,8 +21,10 @@ UtilityActs: <comma-separated acts>
 UtilityNote: <optional explanation>
 
 ## Rules
-- Roles: Comparison, Explanation, Procedure, Definition, Evaluation, Diagnostic, Constraint
-- Acts: compare, explain, recommend, diagnose, implement, verify, define, evaluate
+- Roles: Comparison, Explanation, Procedure, Definition, Evaluation, Diagnostic, Constraint, Narrative, Description
+- Acts: compare, explain, recommend, diagnose, implement, verify, define, evaluate, identify, describe
+- Use Narrative role for events, actions, and story facts.
+- Use Description role for character traits, locations, and settings.
 - Use Procedure role + Procedure field for procedural/step content. Do NOT use Claim for procedures.
 - A unit cannot have both Claim and Procedure.
 - Claim is required for all roles except Procedure.

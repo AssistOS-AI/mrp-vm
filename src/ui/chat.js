@@ -12,7 +12,7 @@
   const modelSelect = $('#model-select');
   const fileInput = $('#file-input');
 
-  let sessionId = localStorage.getItem('mrp_session_id') || null;
+  let sessionId = null;
 
   function savePrefs() {
     localStorage.setItem('mrp_mode', modeSelect.value);
@@ -27,46 +27,9 @@
 
   function updateBadge() {
     badge.textContent = sessionId ? `Session: ${sessionId}` : 'No session';
-    if (sessionId) localStorage.setItem('mrp_session_id', sessionId);
-    else localStorage.removeItem('mrp_session_id');
   }
 
-  function addMessage(role, content) {
-    const div = document.createElement('div');
-    div.className = `msg ${role}`;
-    if (role === 'assistant') {
-      const html = renderMarkdown(content);
-      const PREVIEW_LINES = 6;
-      const lines = content.split('\n');
-      if (lines.length > PREVIEW_LINES + 2) {
-        const previewHtml = renderMarkdown(lines.slice(0, PREVIEW_LINES).join('\n'));
-        const fullHtml = html;
-        const preview = document.createElement('div');
-        preview.className = 'msg-preview';
-        preview.innerHTML = previewHtml;
-        const full = document.createElement('div');
-        full.className = 'msg-full hidden';
-        full.innerHTML = fullHtml;
-        const toggle = document.createElement('button');
-        toggle.className = 'toggle-btn';
-        toggle.textContent = 'View more';
-        toggle.addEventListener('click', () => {
-          const expanded = full.classList.toggle('hidden');
-          preview.classList.toggle('hidden', !expanded);
-          toggle.textContent = expanded ? 'View more' : 'View less';
-        });
-        div.appendChild(preview);
-        div.appendChild(full);
-        div.appendChild(toggle);
-      } else {
-        div.innerHTML = html;
-      }
-    } else {
-      div.textContent = content;
-    }
-    messagesEl.appendChild(div);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
+  function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
   function renderMarkdown(md) {
     return md
@@ -80,6 +43,46 @@
       .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
       .replace(/\n{2,}/g, '<br><br>')
       .replace(/\n/g, '<br>');
+  }
+
+  function buildContextHtml(group) {
+    const items = [];
+    for (const u of group.currentTurnContext || []) items.push(esc(u.claim || u.procedure || u.id));
+    for (const s of group.sessionSources || []) items.push(esc(s.unitId));
+    for (const s of group.kbSources || []) items.push(esc(s.unitId));
+    if (!items.length) return '<em>none</em>';
+    return '<ul>' + items.map(i => `<li>${i}</li>`).join('') + '</ul>';
+  }
+
+  function renderResponseTable(doc) {
+    const statusClass = s => `status-badge status-${s}`;
+    let html = '<table><colgroup><col class="col-act"><col class="col-intent"><col class="col-context"><col class="col-answer"></colgroup>';
+    html += '<thead><tr><th>Act</th><th>Intent</th><th>Context</th><th>Answer</th></tr></thead><tbody>';
+    for (const g of doc.groups) {
+      const answer = g.answerMarkdown ? renderMarkdown(g.answerMarkdown) : '<em>—</em>';
+      html += `<tr>`;
+      html += `<td class="cell-act">${esc(g.act)}<br><span class="${statusClass(g.status)}">${g.status}</span></td>`;
+      html += `<td>${esc(g.intent)}</td>`;
+      html += `<td class="cell-context">${buildContextHtml(g)}</td>`;
+      html += `<td class="cell-answer">${answer}</td>`;
+      html += `</tr>`;
+    }
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function addMessage(role, content, responseDoc) {
+    const div = document.createElement('div');
+    div.className = `msg ${role}`;
+    if (role === 'assistant' && responseDoc?.groups?.length) {
+      div.innerHTML = renderResponseTable(responseDoc);
+    } else if (role === 'assistant') {
+      div.innerHTML = `<div class="fallback-md">${renderMarkdown(content)}</div>`;
+    } else {
+      div.textContent = content;
+    }
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
   function showError(msg) { errorBar.textContent = msg; errorBar.classList.remove('hidden'); setTimeout(() => errorBar.classList.add('hidden'), 8000); }
@@ -112,6 +115,10 @@
     if (!text) return;
     addMessage('user', text);
     input.value = '';
+    sendMessage(text);
+  });
+
+  async function sendMessage(text) {
     loading.classList.remove('hidden');
     errorBar.classList.add('hidden');
     const body = { messages: [{ role: 'user', content: text }], stream: false };
@@ -124,18 +131,18 @@
       const data = await res.json();
       loading.classList.add('hidden');
       if (data.error) {
-        if (data.error.code === 'SESSION_EXPIRED') { sessionId = null; updateBadge(); showError('Session expired. Please start a new session.'); return; }
+        if (data.error.code === 'SESSION_EXPIRED') { sessionId = null; updateBadge(); return sendMessage(text); }
         showError(data.error.message || 'Error');
         return;
       }
       sessionId = data.session_id || sessionId;
       updateBadge();
-      addMessage('assistant', data.choices?.[0]?.message?.content || '(empty response)');
+      addMessage('assistant', data.choices?.[0]?.message?.content || '(empty response)', data.response_document);
     } catch (err) {
       loading.classList.add('hidden');
       showError(err.message);
     }
-  });
+  }
 
   $('#new-session-btn').addEventListener('click', () => { sessionId = null; updateBadge(); messagesEl.innerHTML = ''; });
 

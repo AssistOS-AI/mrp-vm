@@ -31,8 +31,8 @@ Topic: <dominant subject in English>
 Claim: <the factual assertion in English>
 UtilityActs: <comma-separated acts>
 
-Roles (pick exactly one): Comparison, Explanation, Procedure, Definition, Evaluation, Diagnostic, Constraint
-Acts (comma-separated from this list only): compare, explain, recommend, diagnose, implement, verify, define, evaluate
+Roles (pick exactly one): Comparison, Explanation, Procedure, Definition, Evaluation, Diagnostic, Constraint, Narrative, Description
+Acts (comma-separated from this list only): compare, explain, recommend, diagnose, implement, verify, define, evaluate, identify, describe
 
 EXAMPLES:
 

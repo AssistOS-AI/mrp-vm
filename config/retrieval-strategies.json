@@ -1,60 +1,47 @@
 {
   "defaultProfile": "balanced",
-  "enabledStrategies": ["bm25-lexical"],
+  "enabledStrategies": ["bm25-lexical", "hdc-vsa"],
   "profiles": {
     "fast": {
       "primaryStrategies": ["bm25-lexical"],
       "secondaryStrategies": [],
       "allowParallel": false,
       "maxStrategiesPerIntent": 1,
-      "minAcceptableCandidates": 3,
+      "maxResults": 3,
+      "minScore": 0.3,
+      "minAcceptableCandidates": 2,
       "confidenceGapThreshold": 0.20,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 200
     },
     "balanced": {
       "primaryStrategies": ["bm25-lexical"],
-      "secondaryStrategies": [],
+      "secondaryStrategies": ["hdc-vsa"],
       "allowParallel": false,
-      "maxStrategiesPerIntent": 1,
-      "minAcceptableCandidates": 5,
+      "maxStrategiesPerIntent": 2,
+      "maxResults": 7,
+      "minScore": 0.15,
+      "minAcceptableCandidates": 4,
       "confidenceGapThreshold": 0.15,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 500
     },
     "wide-recall": {
-      "primaryStrategies": ["bm25-lexical"],
+      "primaryStrategies": ["bm25-lexical", "hdc-vsa"],
       "secondaryStrategies": [],
       "allowParallel": true,
-      "maxStrategiesPerIntent": 3,
-      "minAcceptableCandidates": 8,
+      "maxStrategiesPerIntent": 2,
+      "maxResults": 15,
+      "minScore": 0.05,
+      "minAcceptableCandidates": 6,
       "confidenceGapThreshold": 0.10,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 1500
-    },
-    "symbolic-grounded": {
-      "primaryStrategies": ["bm25-lexical"],
-      "secondaryStrategies": [],
-      "allowParallel": false,
-      "maxStrategiesPerIntent": 2,
-      "minAcceptableCandidates": 5,
-      "confidenceGapThreshold": 0.12,
-      "hardSymbolicPruning": true,
-      "targetLatencyMs": 2000
-    },
-    "meta-rational": {
-      "primaryStrategies": ["bm25-lexical"],
-      "secondaryStrategies": [],
-      "allowParallel": true,
-      "maxStrategiesPerIntent": 3,
-      "minAcceptableCandidates": 5,
-      "confidenceGapThreshold": 0.15,
-      "hardSymbolicPruning": false,
-      "targetLatencyMs": 2500
     }
   },
   "strategyWeights": {
-    "bm25-lexical": 1.0
+    "bm25-lexical": 1.0,
+    "hdc-vsa": 0.7
   },
-  "agreementBonus": 0.10
+  "agreementBonus": 0.15
 }

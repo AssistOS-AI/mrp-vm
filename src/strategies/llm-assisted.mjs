@@ -45,9 +45,9 @@ export class LLMAssistedStrategy extends LanguageProcessingStrategy {
     return { contextCNL: result };
   }
 
-  async normalizePersistentContext({ chunkText, provenance, requestedModel }) {
+  async normalizePersistentContext({ chunkText, provenance, requestedModel, systemPrompt }) {
     const prompt = loadPrompt('normalize-context.md');
-    const userMsg = `Source: ${provenance.sourceId}\nChunk: ${provenance.chunkId}\nChunk index: ${provenance.chunkIndex}\n\nText:\n${chunkText}`;
+    const userMsg = `${systemPrompt ? `${systemPrompt}\n\n` : ''}Source: ${provenance.sourceId}\nChunk: ${provenance.chunkId}\nChunk index: ${provenance.chunkIndex}\n\nText:\n${chunkText}`;
     const result = await this.llm.callWithRetry(prompt, userMsg, { model: requestedModel });
     return { contextCNL: result };
   }

@@ -20,7 +20,7 @@ Output: <expected result type>
 ## Rules
 
 - Every Intent Group MUST have an Act field.
-- Act must be one of: compare, explain, recommend, diagnose, implement, verify, define, evaluate
+- Act must be one of: compare, explain, recommend, diagnose, implement, verify, define, evaluate, identify, describe
 - If the request contains multiple distinct intents, create multiple Intent Groups numbered sequentially.
 - Intent Groups are numbered starting from 1.
 - Fields: Act (required), Intent (required), Context (optional), Criterion (optional), Evidence (optional), Output (required).
@@ -38,8 +38,11 @@ Output: <expected result type>
 - verify — constraint verification or logical deduction
 - define — definition
 - evaluate — evaluation
+- identify — naming or locating a specific entity
+- describe — describing properties, traits, or settings
 
 Choose the act that best matches the user's communicative intent.
-For yes/no questions or logical deductions, use "verify".
+For yes/no questions or logical deductions, use "evaluate".
+For "name the character" or "which one" questions, use "identify".
 
 CRITICAL: Output raw Markdown only. Do NOT wrap output in ```markdown``` code fences. No explanations, no extra text.

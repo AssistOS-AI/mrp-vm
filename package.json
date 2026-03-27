@@ -6,6 +6,7 @@
   "scripts": {
     "server": "node src/server/index.mjs",
     "start": "node src/server/index.mjs",
+    "start:verbose": "LOG_VERBOSE=1 node src/server/index.mjs",
     "test": "node --test test/deterministic/**/*.test.mjs",
     "test:live": "node --test test/live-llm/**/*.test.mjs",
     "eval": "node test/evaluation/run.mjs"

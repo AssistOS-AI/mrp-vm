@@ -37,6 +37,8 @@ export class ContextMatcher {
     const allCandidates = new Map(); // unitId → { best candidate }
     const strategiesRun = [];
     let escalated = false;
+    const profileMaxResults = profileConfig?.maxResults || this.maxResultsPerIntent;
+    const profileMinScore = profileConfig?.minScore ?? this.minScore;
 
     // Run primary strategies
     for (const sid of primaryIds) {
@@ -49,7 +51,7 @@ export class ContextMatcher {
         sessionIndex: session?.sessionIndex || null,
         kbIndex,
         profile: profileConfig,
-        budget: { timeoutMs: profileConfig?.targetLatencyMs || 500, maxCandidates: this.maxResultsPerIntent }
+        budget: { timeoutMs: profileConfig?.targetLatencyMs || 500, maxCandidates: profileMaxResults }
       });
       strategiesRun.push(sid);
       for (const c of result.candidates) this._mergeCandidate(allCandidates, c, sid);
@@ -68,7 +70,7 @@ export class ContextMatcher {
             intentRef, contextProfile, currentTurnUnits,
             sessionIndex: session?.sessionIndex || null, kbIndex,
             profile: profileConfig,
-            budget: { timeoutMs: profileConfig?.targetLatencyMs || 500, maxCandidates: this.maxResultsPerIntent }
+            budget: { timeoutMs: profileConfig?.targetLatencyMs || 500, maxCandidates: profileMaxResults }
           });
           strategiesRun.push(sid);
           for (const c of result.candidates) this._mergeCandidate(allCandidates, c, sid);
@@ -92,7 +94,7 @@ export class ContextMatcher {
       // Store boost
       const storeScore = entry.store === 'session' ? this.sessionBoostFactor : 1.0;
       const finalScore = fusedScore * roleScore * storeScore;
-      if (finalScore >= this.minScore) {
+      if (finalScore >= profileMinScore) {
         scored.push({ unitId, score: finalScore, unit: entry.unit, store: entry.store });
       }
     }
@@ -107,7 +109,7 @@ export class ContextMatcher {
       seen.add(hash);
       deduped.push(s);
     }
-    const top = deduped.slice(0, this.maxResultsPerIntent);
+    const top = deduped.slice(0, profileMaxResults);
 
     // Split by store
     const sessionUnits = top.filter(s => s.store === 'session');

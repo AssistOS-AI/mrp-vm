@@ -1,0 +1,52 @@
+{
+  "suiteId": "suite01",
+  "title": "The Awakening of Lumina-7 — Single-Word Answers",
+  "description": "Tests intent detection, context retrieval precision, and concise answer synthesis. All answers must be single-word or Yes/No.",
+  "storyFile": "story.nl",
+  "questions": [
+    {
+      "id": "s01-q01",
+      "input": "If Kaelen Voss were stranded in the technology-free wasteland of the Frozen Abyss, would his city-linked neural implants help him survive? Answer with a single word.",
+      "expected": {
+        "intents": [{ "intentMustMention": ["Kaelen", "neural implants"], "orderIndependent": true }],
+        "contextMustMention": ["neural implants"],
+        "contextMustNotMention": ["Flux Core", "Quartz Desert"],
+        "answerMustMention": ["No"],
+        "answerMustNotContain": ["maybe", "possibly", "uncertain"]
+      }
+    },
+    {
+      "id": "s01-q02",
+      "input": "During the Primordial Resonance earthquakes, would Commander Vex prioritize rescuing Dr. Elara Vance over securing the Flux Core? Answer Yes or No.",
+      "expected": {
+        "intents": [{ "intentMustMention": ["Vex", "Flux Core"], "orderIndependent": true }],
+        "contextMustMention": ["Vex"],
+        "contextMustNotMention": ["neural implants", "code-weaver"],
+        "answerMustMention": ["No"],
+        "answerMustNotContain": ["possibly", "might"]
+      }
+    },
+    {
+      "id": "s01-q03",
+      "input": "Was the dense vertical architecture of Aura-City a tactical advantage for Kaelen while evading drones during the quakes? One word only.",
+      "expected": {
+        "intents": [{ "intentMustMention": ["Aura-City", "Kaelen"], "orderIndependent": true }],
+        "contextMustMention": ["Aura-City"],
+        "contextMustNotMention": ["Flux Core", "Quartz Desert"],
+        "answerMustMention": ["Yes"],
+        "answerMustNotContain": ["uncertain"]
+      }
+    },
+    {
+      "id": "s01-q04",
+      "input": "Name the single character whose Quartz Desert extraction operations would become entirely pointless if the Flux Core had been buried under the obelisk in the Frozen Abyss instead. One word.",
+      "expected": {
+        "intents": [{ "intentMustMention": ["Quartz Desert", "Flux Core"], "orderIndependent": true }],
+        "contextMustMention": ["Vex"],
+        "contextMustNotMention": ["neural implants", "code-weaver"],
+        "answerMustMention": ["Vex"],
+        "answerMustNotContain": ["Elara", "Kaelen"]
+      }
+    }
+  ]
+}
