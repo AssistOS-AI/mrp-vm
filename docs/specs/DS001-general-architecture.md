@@ -135,7 +135,7 @@ other components:
 Markdown CNL (see DS004, DS005).
 
 ### Public Output Format
-`POST /v1/chat/completions` returns Markdown in
+`POST /chat/completions` returns Markdown in
 `choices[0].message.content`. The Markdown groups the
 normalized intents, current-turn context, session
 context, persistent KB evidence, plugin evidence, and

@@ -95,7 +95,7 @@ export class ContextMatcher {
       const storeScore = entry.store === 'session' ? this.sessionBoostFactor : 1.0;
       const finalScore = fusedScore * roleScore * storeScore;
       if (finalScore >= profileMinScore) {
-        scored.push({ unitId, score: finalScore, unit: entry.unit, store: entry.store });
+        scored.push({ unitId, score: finalScore, unit: entry.unit, store: entry.store, notes: entry.notes || [] });
       }
     }
 
@@ -146,12 +146,14 @@ export class ContextMatcher {
       map.set(candidate.unitId, {
         unit: candidate.unit,
         store: candidate.store,
+        notes: [...(candidate.notes || [])],
         strategyScores: { [strategyId]: candidate.normalizedScore }
       });
     } else {
       existing.strategyScores[strategyId] = Math.max(
         existing.strategyScores[strategyId] || 0, candidate.normalizedScore
       );
+      existing.notes = [...new Set([...(existing.notes || []), ...(candidate.notes || [])])];
     }
   }
 
@@ -169,13 +171,17 @@ export class ContextMatcher {
     if (sessionUnits.length > 0) {
       md += `### Session Context\n`;
       for (const s of sessionUnits) {
-        md += `#### ${s.unitId} (score: ${s.score.toFixed(2)})\nRole: ${s.unit?.role || ''}\nClaim: ${s.unit?.claim || s.unit?.procedure || ''}\n\n`;
+        md += `#### ${s.unitId} (score: ${s.score.toFixed(2)})\nRole: ${s.unit?.role || ''}\nClaim: ${s.unit?.claim || s.unit?.procedure || ''}\n`;
+        if (s.notes?.length) md += `Notes: ${s.notes.join(' | ')}\n`;
+        md += `\n`;
       }
     }
     if (kbUnits.length > 0) {
       md += `### Persistent KB Context\n`;
       for (const s of kbUnits) {
-        md += `#### ${s.unitId} (score: ${s.score.toFixed(2)})\nRole: ${s.unit?.role || ''}\nSource: ${s.unit?.sourceId || ''}\nClaim: ${s.unit?.claim || s.unit?.procedure || ''}\n\n`;
+        md += `#### ${s.unitId} (score: ${s.score.toFixed(2)})\nRole: ${s.unit?.role || ''}\nSource: ${s.unit?.sourceId || ''}\nClaim: ${s.unit?.claim || s.unit?.procedure || ''}\n`;
+        if (s.notes?.length) md += `Notes: ${s.notes.join(' | ')}\n`;
+        md += `\n`;
       }
     }
     return md;

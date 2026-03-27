@@ -300,7 +300,7 @@ default evaluation matrix. DS025 defines
 
 - DS013 exposes `retrieval_profile` in chat and
   session requests.
-- DS013 exposes `GET /v1/retrieval-profiles`.
+- DS013 exposes `GET /retrieval-profiles`.
 - DS014 exposes a retrieval-profile selector.
 - DS019 stores retrieval profile as a session
   preference.

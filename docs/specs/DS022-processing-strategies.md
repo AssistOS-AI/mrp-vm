@@ -183,7 +183,7 @@ It must not silently delegate to LLM.
 ## UI/API Integration
 
 - DS013 exposes `processing_mode` in chat/session
-  requests and `GET /v1/processing-strategies`.
+  requests and `GET /processing-strategies`.
 - DS014 exposes a strategy selector in the chat UI.
 - DS019 stores the selected mode as a session
   preference.

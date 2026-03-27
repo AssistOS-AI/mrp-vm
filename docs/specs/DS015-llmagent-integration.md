@@ -48,7 +48,7 @@ Override order:
 ## Model Discovery
 
 LLMBridge exposes a method to list available
-models, consumed by `GET /v1/models` (DS013):
+models, consumed by `GET /models` (DS013):
 
 ```javascript
 class LLMBridge {

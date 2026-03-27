@@ -15,7 +15,7 @@ the OpenAI specification.
 
 ## API Endpoints
 
-### POST /v1/chat/completions
+### POST /chat/completions
 Main endpoint.
 
 Request:
@@ -130,7 +130,7 @@ HTTP status codes:
 - 500 — internal error
 - 504 — timeout
 
-### POST /v1/sessions
+### POST /sessions
 Creates an empty in-memory session explicitly.
 
 Request:
@@ -169,7 +169,7 @@ Response:
 }
 ```
 
-### GET /v1/sessions/:sessionId
+### GET /sessions/:sessionId
 Returns session metadata only.
 
 Response:
@@ -187,11 +187,11 @@ Response:
 }
 ```
 
-### DELETE /v1/sessions/:sessionId
+### DELETE /sessions/:sessionId
 Deletes a session immediately. Response: 204 No
 Content.
 
-### GET /v1/models
+### GET /models
 Returns available LLM providers and models
 discovered by AchillesAgentLib.
 
@@ -208,7 +208,7 @@ Response:
 }
 ```
 
-### GET /v1/processing-strategies
+### GET /processing-strategies
 Returns the available language processing modes.
 
 Response:
@@ -241,7 +241,7 @@ Response:
 }
 ```
 
-### GET /v1/retrieval-profiles
+### GET /retrieval-profiles
 Returns the available retrieval-risk profiles.
 
 Response:
@@ -276,51 +276,36 @@ Response:
 for backward compatibility, but it is obsolete and
 excluded from the default evaluation matrix.
 
-### POST /v1/kb/sources
-Attach a new source to persistent KB.
+### GET /kbs
+Lists persistent KB repositories available for
+mounting in a session.
 
-Request:
-```json
-{
-  "name": "document.md",
-  "content": "... NL text ..."
-}
-```
+### POST /sessions/:sessionId/kb/mount
+Mounts a KB repository into an existing session.
+If the session has unsaved draft changes, the server
+MUST require explicit discard confirmation.
 
-`content` is plain text (string). Binary files
-are not supported in v1. Max size: configurable
-(default 1MB).
+### POST /sessions/:sessionId/kb/fork
+Creates a new KB repository from the current
+session draft and mounts it immediately.
 
-Ingest is synchronous and source-atomic — the
-request blocks until the source is fully normalized,
-indexed, and committed, or it fails with no partial
-commit.
+### POST /sessions/:sessionId/kb/save
+Saves the current session draft into the mounted KB
+repository or another explicit target.
 
-Response (success, 200):
-```json
-{
-  "sourceId": "src-001",
-  "name": "document.md",
-  "status": "ready",
-  "unitCount": 12
-}
-```
+### GET /sessions/:sessionId/workspace
+Returns mounted KB metadata and the current draft
+workspace status for the session.
 
-### PUT /v1/kb/sources/:sourceId
-Update an existing source. Same format as POST.
-The previous committed version remains active until
-the new version is fully processed and swapped in.
+### POST /sessions/:sessionId/workspace/sources
+Stages a source in the current session draft
+workspace without modifying the mounted KB
+repository.
 
-### DELETE /v1/kb/sources/:sourceId
-Delete a source. Response: 204 No Content.
-
-### GET /v1/kb/sources
-List KB sources.
-Response: `{ "sources": [SourceMeta...] }`
-
-### GET /v1/kb/sources/:sourceId
-Source details.
-Response: `SourceMeta`
+This is the single public write path for source
+content. Files enter a session draft first and
+become persistent KB content only after explicit
+`save` or `fork`.
 
 ### GET /health
 Liveness check. Response: `{ "status": "ok" }`
@@ -378,7 +363,7 @@ Response:
 - DS008 (KB) — source CRUD operations.
 - DS014 (Chat UI) — static page serving.
 - DS015 (LLMBridge) — model discovery for
-  `/v1/models`.
+  `/models`.
 - DS022 (Processing Strategies) — mode discovery and
   default mode resolution.
 - DS023 (Retrieval Strategies) — retrieval-profile

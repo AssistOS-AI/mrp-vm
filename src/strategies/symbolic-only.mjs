@@ -1,8 +1,7 @@
 // DS022 — Symbolic-Only Strategy
 import { createHash } from 'node:crypto';
 import { LanguageProcessingStrategy } from './registry.mjs';
-import { PRAGMATIC_ACTS } from '../lib/pragmatics.mjs';
-import { MRPError } from '../lib/errors.mjs';
+import { extractSymbolicFact } from '../lib/symbolic-facts.mjs';
 
 // Simple rule-based NL→CNL for common patterns
 const ACT_VERBS = {
@@ -58,7 +57,13 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
       // Improved topic: take more significant words
       const topic = f.split(/\s+/).slice(0, 8).join(' ').replace(/[^\w\s-]/g, '');
       const hash = createHash('sha256').update(`${f}|${role}|${topic}`).digest('hex');
-      return `## Context Unit session::turn::unit-${String(i).padStart(3, '0')}\nSourceId: session\nChunkId: session::turn\nRole: ${role}\nTopic: ${topic}\nClaim: ${f}\nUtilityActs: ${acts.join(', ')}\nHash: ${hash}`;
+      const fact = extractSymbolicFact(f);
+      let md = `## Context Unit session::turn::unit-${String(i).padStart(3, '0')}\nSourceId: session\nChunkId: session::turn\nRole: ${role}\nTopic: ${topic}\nClaim: ${f}\n`;
+      if (fact) {
+        md += `Subject: ${fact.subject}\nRelation: ${fact.relation}\nObject: ${fact.object}\nConfidence: ${fact.confidence}\n`;
+      }
+      md += `UtilityActs: ${acts.join(', ')}\nHash: ${hash}`;
+      return md;
     }).join('\n\n');
     return { contextCNL: units };
   }
@@ -66,7 +71,7 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
   async normalizePersistentContext({ chunkText, provenance }) {
     const sentences = chunkText.split(/[.!]+/).map(s => s.trim()).filter(Boolean);
     if (sentences.length === 0) return { contextCNL: '' };
-    const units = sentences.slice(0, 5).map((s, i) => {
+    const units = sentences.map((s, i) => {
       const role = /\bstep|procedure|install|configure\b/i.test(s) ? 'Procedure' :
                    /\bdefin|mean|is a\b/i.test(s) ? 'Definition' :
                    /\bcompar|versus|vs\b/i.test(s) ? 'Comparison' : 'Explanation';
@@ -75,8 +80,15 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
       const topic = s.substring(0, 50);
       const hash = createHash('sha256').update(`${s}|${role}|${topic}`).digest('hex');
       let md = `## Context Unit ${unitId}\nSourceId: ${provenance.sourceId}\nChunkId: ${provenance.chunkId}\nRole: ${role}\nTopic: ${topic}\n`;
-      if (role === 'Procedure') md += `Procedure: ${s}\n`;
-      else md += `Claim: ${s}\n`;
+      if (role === 'Procedure') {
+        md += `Procedure: ${s}\n`;
+      } else {
+        md += `Claim: ${s}\n`;
+        const fact = extractSymbolicFact(s);
+        if (fact) {
+          md += `Subject: ${fact.subject}\nRelation: ${fact.relation}\nObject: ${fact.object}\nConfidence: ${fact.confidence}\n`;
+        }
+      }
       md += `UtilityActs: ${acts.join(', ')}\nHash: ${hash}`;
       return md;
     }).join('\n\n');

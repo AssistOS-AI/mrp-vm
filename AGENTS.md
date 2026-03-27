@@ -76,7 +76,7 @@ Agent conversations may use Romanian or other languages.
 | DS023 | [DS023-retrieval-strategies.md](docs/specs/DS023-retrieval-strategies.md) | Retrieval strategy interface: pluggable lexical, semantic, HDC/VSA, and symbolic relevance filters, plus risk profiles and fusion rules. |
 | DS024 | [DS024-hdc-vsa-retrieval.md](docs/specs/DS024-hdc-vsa-retrieval.md) | HDC/VSA associative retrieval: binary hypervectors, per-field structural matching, n-gram encoding, complementary to BM25. |
 | DS025 | [DS025-thinkingdb-symbolic-retrieval.md](docs/specs/DS025-thinkingdb-symbolic-retrieval.md) | ThinkingDB symbolic retrieval: bounded local closure over Context CNL symbolic facts, proof-bearing ranking, and a future `thinkingdb` profile replacing `wide-recall`. |
-| DS025 | [DS025-thinkingdb-symbolic-retrieval.md](docs/specs/DS025-thinkingdb-symbolic-retrieval.md) | ThinkingDB symbolic retrieval: bounded local closure over Context CNL symbolic facts, proof-bearing ranking, and a future `thinkingdb` profile replacing `wide-recall`. |
+| DS026 | [DS026-kb-repositories-workspaces.md](docs/specs/DS026-kb-repositories-workspaces.md) | KB repositories and session workspaces: mounted KB selection, draft overlays, explicit save/fork semantics, and UI/API clarity for persistent versus unsaved knowledge. |
 
 ## Answer Synthesis
 

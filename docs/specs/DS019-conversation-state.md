@@ -39,6 +39,9 @@ Each session stores:
     "wide-recall" | "thinkingdb",
   messageLog: Message[],
   systemPrompt: string | null,
+  mountedKbId: string,
+  mountedKbName: string,
+  workspace: SessionWorkspace,
   sessionContextUnits: ContextUnit[],
   sessionIndex: KBIndexLike
 }
@@ -53,6 +56,11 @@ history.
 
 `sessionContextUnits` is a temporary in-memory KB
 derived only from previous user turns.
+
+`workspace` is the mutable draft layer mounted on
+top of the selected KB repository (DS026). It is
+the session-visible place where uploaded files,
+source edits, and unsaved knowledge accumulate.
 
 ## What Enters the Session Context Store
 
@@ -93,6 +101,8 @@ For an incoming request:
 7. Resolve the effective retrieval profile from the
    current request or session preference.
 8. Expose the current `sessionIndex` for retrieval.
+9. Expose the current mounted KB workspace for
+   retrieval and save/fork operations.
 
 ## Turn Commit
 
@@ -107,6 +117,11 @@ Only after a successful response:
 6. Persist the selected retrieval profile as session
    preference.
 7. Update `lastActivityAt` and `expiresAt`.
+
+This commit step does NOT write the session
+workspace into the mounted KB repository. Persistent
+KB changes require an explicit DS026 save/fork
+action.
 
 If the turn fails, nothing from that turn is added to
 the session context store.

@@ -1,4 +1,5 @@
 // DS004 canonical enums and mappings
+import { SYMBOLIC_RELATIONS } from './symbolic-facts.mjs';
 
 export const PRAGMATIC_ACTS = [
   'compare', 'explain', 'recommend', 'diagnose',
@@ -34,5 +35,8 @@ export const INTENT_ALLOWED_FIELDS = ['Act', 'Intent', 'Context', 'Criterion', '
 export const CONTEXT_REQUIRED_FIELDS = ['SourceId', 'ChunkId', 'Role', 'Topic'];
 export const CONTEXT_ALLOWED_FIELDS = [
   'SourceId', 'ChunkId', 'Role', 'Topic', 'Claim',
-  'Condition', 'Procedure', 'UtilityActs', 'UtilityNote', 'Hash'
+  'Condition', 'Procedure', 'UtilityActs', 'UtilityNote',
+  'Hash', 'Subject', 'Relation', 'Object', 'Confidence'
 ];
+
+export { SYMBOLIC_RELATIONS };

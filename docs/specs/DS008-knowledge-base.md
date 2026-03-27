@@ -8,8 +8,10 @@ and search indices.
 ## Scope Boundary
 
 This DS describes the persistent KB only.
-Temporary session context is defined in DS019 and is
-not stored under `data/kb/`.
+Session-mounted draft workspaces are defined in
+DS026. Temporary session context remains defined in
+DS019 and is not part of the committed KB
+repository until explicitly saved.
 
 ## Three File Types in KB
 

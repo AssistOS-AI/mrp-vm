@@ -60,6 +60,11 @@ describe('CNLValidator — Context CNL', () => {
     assert.equal(v.validateContextCNL(md).valid, true);
   });
 
+  it('accepts valid symbolic fact fields in context CNL', () => {
+    const md = '## Context Unit src-001::chunk-000::unit-000\nSourceId: src-001\nChunkId: src-001::chunk-000\nRole: Explanation\nTopic: AchillesIDE\nClaim: AchillesIDE uses Ploinky.\nSubject: AchillesIDE\nRelation: uses\nObject: Ploinky\nConfidence: 0.95\nUtilityActs: explain';
+    assert.equal(v.validateContextCNL(md).valid, true);
+  });
+
   it('rejects Claim+Procedure conflict', () => {
     const md = '## Context Unit x\nSourceId: s\nChunkId: c\nRole: Procedure\nTopic: T\nClaim: C\nProcedure: P\nUtilityActs: implement';
     const r = v.validateContextCNL(md);
@@ -72,6 +77,13 @@ describe('CNLValidator — Context CNL', () => {
     const r = v.validateContextCNL(md);
     assert.equal(r.valid, false);
     assert.ok(r.errors.some(e => e.code === 'MISSING_CLAIM_FOR_ROLE'));
+  });
+
+  it('rejects incomplete symbolic fact fields', () => {
+    const md = '## Context Unit x\nSourceId: s\nChunkId: c\nRole: Explanation\nTopic: T\nClaim: AchillesIDE uses Ploinky.\nSubject: AchillesIDE\nRelation: uses\nUtilityActs: explain';
+    const r = v.validateContextCNL(md);
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some(e => e.code === 'INCOMPLETE_SYMBOLIC_FACT'));
   });
 });
 
@@ -94,6 +106,15 @@ describe('CNLParser', () => {
     assert.equal(units.length, 1);
     assert.equal(units[0].role, 'Definition');
     assert.deepStrictEqual(units[0].utilityActs, ['define', 'explain']);
+  });
+
+  it('parses symbolic fact fields from context units', () => {
+    const md = '## Context Unit src-001::chunk-000::unit-000\nSourceId: src-001\nChunkId: src-001::chunk-000\nRole: Explanation\nTopic: AchillesIDE\nClaim: AchillesIDE uses Ploinky.\nSubject: AchillesIDE\nRelation: uses\nObject: Ploinky\nConfidence: 0.95\nUtilityActs: explain';
+    const units = p.parseContextCNL(md);
+    assert.equal(units[0].subject, 'AchillesIDE');
+    assert.equal(units[0].relation, 'uses');
+    assert.equal(units[0].object, 'Ploinky');
+    assert.equal(units[0].confidence, 0.95);
   });
 
   it('throws on missing Act in parser', () => {

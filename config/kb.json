@@ -7,6 +7,7 @@
     "index": "data/kb/index",
     "quarantine": "data/kb/quarantine"
   },
+  "workspaceRootDir": "data/workspaces",
   "indexSavePolicy": "on-change",
   "maxSourceSizeBytes": 1048576,
   "maxSources": 500,

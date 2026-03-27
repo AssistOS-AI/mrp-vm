@@ -23,29 +23,45 @@ Topic: <dominant subject>
 Claim: <main assertion or information>
 Condition: <conditions or limitations, optional>
 Procedure: <procedural steps, optional>
+Subject: <canonical symbolic subject, optional>
+Relation: <canonical symbolic relation, optional>
+Object: <canonical symbolic object, optional>
+Confidence: <0..1 confidence for symbolic fact, optional>
 UtilityActs: <list of pragmatic acts served>
 UtilityNote: <optional free-text explanation>
+Hash: <optional deterministic content hash>
 ```
 
 ## Fields
 
-| Field       | Required | Description                     |
-|-------------|----------|---------------------------------|
-| SourceId    | Yes      | ID of the original source       |
-| ChunkId     | Yes      | ID of the chunk                 |
-| Role        | Yes      | Pragmatic role (from enum)      |
-| Topic       | Yes      | Main subject                    |
-| Claim       | Yes*     | Central assertion               |
-| Condition   | No       | Conditions, limitations         |
-| Procedure   | Yes*     | Steps (only for Procedure role) |
-| UtilityActs | No       | Pragmatic acts served (CSV).    |
-|             |          | Inferred from Role if absent.   |
-| UtilityNote | No       | Free-text explanation           |
-| Hash        | No       | Content hash for deduplication  |
+| Field       | Required | Description                        |
+|-------------|----------|------------------------------------|
+| SourceId    | Yes      | ID of the original source          |
+| ChunkId     | Yes      | ID of the chunk                    |
+| Role        | Yes      | Pragmatic role (from enum)         |
+| Topic       | Yes      | Main subject                       |
+| Claim       | Yes*     | Central assertion                  |
+| Condition   | No       | Conditions, limitations            |
+| Procedure   | Yes*     | Steps (only for Procedure role)    |
+| Subject     | No**     | Canonical symbolic fact subject    |
+| Relation    | No**     | Canonical symbolic fact relation   |
+| Object      | No**     | Canonical symbolic fact object     |
+| Confidence  | No***    | Numeric confidence in `[0, 1]`     |
+| UtilityActs | No       | Pragmatic acts served (CSV).       |
+|             |          | Inferred from Role if absent.      |
+| UtilityNote | No       | Free-text explanation              |
+| Hash        | No       | Content hash for deduplication     |
 
 *Claim is required for all roles except Procedure.
 Procedure is required only for the Procedure role.
 A unit CANNOT have both Claim and Procedure.
+
+**`Subject`, `Relation`, and `Object` form a single
+optional symbolic fact block. If any of them is
+present, all three MUST be present.
+
+***`Confidence` MAY appear only together with a
+complete symbolic fact block.
 
 ## ID Schema
 
@@ -84,6 +100,31 @@ This enables structural matching between the
 intent's pragmatic act and the context unit's
 utility.
 
+## Optional Symbolic Fact Block
+
+Context CNL MAY embed one normalized symbolic fact
+inside a unit. This is the only symbolic extension
+needed by DS025 `ThinkingDB`.
+
+Allowed relation values are defined by the runtime
+symbolic relation vocabulary. In v1, they include:
+
+- `uses`
+- `provides`
+- `has_capability`
+- `depends_on`
+- `part_of`
+- `instance_of`
+- `relevant_for`
+- `supports`
+- `mentions`
+- `about`
+- `causes`
+
+When present, the symbolic fields capture a
+canonical triple derived from the unit claim or
+procedure-free assertion.
+
 ## Full Provenance
 
 Each ContextUnit stores internally:
@@ -117,14 +158,15 @@ Same rules as DS004:
 ## Context Unit src-001::chunk-000::unit-000
 SourceId: src-001
 ChunkId: src-001::chunk-000
-Role: Comparison
-Topic: BM25 and dense retrieval
-Claim: BM25 has lower CPU cost in lexical
-  retrieval settings.
-Condition: CPU-only deployment.
-UtilityActs: compare, recommend
-UtilityNote: Useful when evaluating retrieval
-  approaches for constrained environments.
+Role: Explanation
+Topic: AchillesIDE and secure execution
+Claim: AchillesIDE uses Ploinky.
+Subject: AchillesIDE
+Relation: uses
+Object: Ploinky
+Confidence: 0.90
+UtilityActs: explain, verify
+Hash: 6d8f0f7a...
 
 ## Context Unit src-001::chunk-001::unit-000
 SourceId: src-001

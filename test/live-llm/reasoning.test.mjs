@@ -27,7 +27,7 @@ describe('Logical reasoning — Socrates syllogism', () => {
   let sessionId;
 
   it('turn 1: establishes premises', async () => {
-    const r = await post('/v1/chat/completions', {
+    const r = await post('/chat/completions', {
       processing_mode: 'llm-assisted',
       messages: [{ role: 'user', content: 'Socrate e om. Toti oamenii sunt muritori.' }]
     });
@@ -37,12 +37,12 @@ describe('Logical reasoning — Socrates syllogism', () => {
   });
 
   it('session stores context units from premises', async () => {
-    const s = await get(`/v1/sessions/${sessionId}`);
+    const s = await get(`/sessions/${sessionId}`);
     assert.ok(s.session_context_unit_count > 0, `expected context units, got ${s.session_context_unit_count}`);
   });
 
   it('turn 2: deduces Socrates is mortal', async () => {
-    const r = await post('/v1/chat/completions', {
+    const r = await post('/chat/completions', {
       session_id: sessionId,
       processing_mode: 'llm-assisted',
       messages: [{ role: 'user', content: 'Este Socrate muritor?' }]
@@ -58,7 +58,7 @@ describe('Logical reasoning — Socrates syllogism', () => {
 
 describe('Multi-language input', () => {
   it('handles Romanian input', async () => {
-    const r = await post('/v1/chat/completions', {
+    const r = await post('/chat/completions', {
       processing_mode: 'llm-assisted',
       messages: [{ role: 'user', content: 'Defineste ce este un algoritm de sortare.' }]
     });
@@ -67,7 +67,7 @@ describe('Multi-language input', () => {
   });
 
   it('handles French input', async () => {
-    const r = await post('/v1/chat/completions', {
+    const r = await post('/chat/completions', {
       processing_mode: 'llm-assisted',
       messages: [{ role: 'user', content: "Expliquez pourquoi le tri rapide est efficace." }]
     });
@@ -76,7 +76,7 @@ describe('Multi-language input', () => {
   });
 
   it('handles input with typos', async () => {
-    const r = await post('/v1/chat/completions', {
+    const r = await post('/chat/completions', {
       processing_mode: 'llm-assisted',
       messages: [{ role: 'user', content: 'Compara BM25 cu dense retireval ptr deployment pe CPU.' }]
     });
@@ -86,15 +86,15 @@ describe('Multi-language input', () => {
 
 describe('Session context persistence', () => {
   it('facts from turn 1 are retrievable in turn 2', async () => {
-    const r1 = await post('/v1/chat/completions', {
+    const r1 = await post('/chat/completions', {
       processing_mode: 'llm-assisted',
       messages: [{ role: 'user', content: 'We deploy on ARM servers with 4GB RAM. We use Ubuntu 22.04.' }]
     });
     const sid = r1.session_id;
-    const s = await get(`/v1/sessions/${sid}`);
+    const s = await get(`/sessions/${sid}`);
     assert.ok(s.session_context_unit_count > 0, 'should extract context units');
 
-    const r2 = await post('/v1/chat/completions', {
+    const r2 = await post('/chat/completions', {
       session_id: sid,
       processing_mode: 'llm-assisted',
       messages: [{ role: 'user', content: 'What hardware do we use?' }]
@@ -107,7 +107,7 @@ describe('Session context persistence', () => {
 
 describe('No-context behavior', () => {
   it('returns no-context when KB is empty and no session facts', async () => {
-    const r = await post('/v1/chat/completions', {
+    const r = await post('/chat/completions', {
       processing_mode: 'llm-assisted',
       messages: [{ role: 'user', content: 'What is the airspeed velocity of an unladen swallow?' }]
     });

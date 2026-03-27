@@ -17,7 +17,7 @@ minimal static files). No frontend frameworks.
 - Each browser tab maintains its own session in
   memory (no localStorage/cookie persistence for
   session ID). Refresh or new tab starts fresh.
-- Calls `POST /v1/chat/completions` with fetch API,
+- Calls `POST /chat/completions` with fetch API,
   sending only the new delta messages for the
   current turn, not the full history.
 - Renders assistant responses as a 4-column table
@@ -30,6 +30,10 @@ minimal static files). No frontend frameworks.
 
 ### Session UX
 - Session badge showing current `session_id`.
+- Mounted KB badge showing the active KB
+  repository.
+- Draft badge showing whether the current KB draft
+  is saved or unsaved.
 - "New session" action clears the in-memory session
   and message history.
 - Expiry awareness: if the server returns
@@ -43,18 +47,34 @@ minimal static files). No frontend frameworks.
 - Only text files accepted (`.md`, `.txt`).
 - File is read locally in the browser with
   `FileReader`.
-- Content is sent as a JSON string to
-  `POST /v1/kb/sources`.
+- Content is staged into the session workspace via
+  `POST /sessions/:sessionId/workspace/sources`.
+- Before staging a file, the UI MUST make it clear
+  whether the file is being added to the current
+  session draft or whether the user wants to fork
+  the mounted KB first.
 - Visual feedback: "Uploading", "Processing",
   "Ready", or explicit error.
 
+### KB Controls
+- KB selector populated from `GET /kbs`.
+- Explicit `Load KB` action for mounting a KB into
+  the current session.
+- Explicit `Fork KB` action for creating a new KB
+  from the current session draft.
+- Explicit `Save KB` action for persisting the
+  current draft.
+- The UI MUST never imply that chat activity or file
+  upload has already overwritten the persistent KB
+  unless a save action has completed successfully.
+
 ### Runtime Configuration
 - Processing mode selector, populated from
-  `GET /v1/processing-strategies`.
+  `GET /processing-strategies`.
 - Retrieval profile selector, populated from
-  `GET /v1/retrieval-profiles`.
+  `GET /retrieval-profiles`.
 - Provider + model selector, populated from
-  `GET /v1/models`.
+  `GET /models`.
 - Local persistence (`localStorage`).
 - Reset to default.
 - Selected processing mode is sent in the

@@ -20,7 +20,7 @@ const ALL_MODES = ['llm-assisted', 'symbolic-only'];
 // `wide-recall` is kept only as obsolete
 // compatibility coverage and is not part of the
 // default evaluation matrix.
-const ALL_PROFILES = ['fast', 'balanced'];
+const ALL_PROFILES = ['fast', 'balanced', 'thinkingdb'];
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -40,6 +40,24 @@ async function fetchJson(base, method, path, body) {
   const r = await fetch(`${base}${path}`, opts);
   if (method === 'DELETE') return {};
   return r.json();
+}
+
+async function createPreparedSession(base, mode, profile, storyContent, ingestProcessingMode) {
+  const sessionRes = await fetchJson(base, 'POST', '/sessions', {
+    processing_mode: mode,
+    retrieval_profile: profile
+  });
+  if (!sessionRes.session_id) throw new Error(sessionRes.error?.message || 'failed to create session');
+  const stageRes = await fetchJson(base, 'POST', `/sessions/${sessionRes.session_id}/workspace/sources`, {
+    name: 'eval-story.nl',
+    content: storyContent,
+    processing_mode: ingestProcessingMode
+  });
+  if (!stageRes.sourceId) throw new Error(stageRes.error?.message || 'failed to stage story');
+  return {
+    sessionId: sessionRes.session_id,
+    unitCount: stageRes.unitCount || 0
+  };
 }
 
 function createIsolatedConfig(tmpDir, port) {
@@ -138,14 +156,22 @@ function matchIntents(expectedIntents, responseDoc, fullText) {
 
 // ── Question evaluation ──
 
-async function runQuestion(q, base, mode, profile) {
+async function runQuestion(q, base, mode, profile, storyContent, ingestProcessingMode) {
   const result = { id: q.id, pass: true, answerPass: true, contextPass: true, failures: [], durationMs: 0, contextQuality: null };
-  const start = Date.now();
-  const r = await fetchJson(base, 'POST', '/v1/chat/completions', {
-    processing_mode: mode, retrieval_profile: profile,
-    messages: [{ role: 'user', content: q.input }]
-  });
-  result.durationMs = Date.now() - start;
+  const prepared = await createPreparedSession(base, mode, profile, storyContent, ingestProcessingMode);
+  let r;
+  try {
+    const start = Date.now();
+    r = await fetchJson(base, 'POST', '/chat/completions', {
+      session_id: prepared.sessionId,
+      processing_mode: mode,
+      retrieval_profile: profile,
+      messages: [{ role: 'user', content: q.input }]
+    });
+    result.durationMs = Date.now() - start;
+  } finally {
+    try { await fetchJson(base, 'DELETE', `/sessions/${prepared.sessionId}`); } catch {}
+  }
   if (r.error) {
     result.pass = result.answerPass = result.contextPass = false;
     result.failures.push({ check: 'api', expected: 'successful response', got: `${r.error.code}: ${r.error.message}` });
@@ -220,8 +246,11 @@ async function runSuite(suiteDir, port) {
   mkdirSync(tmpDir, { recursive: true });
   const configDir = createIsolatedConfig(tmpDir, port);
 
-  const modes = MODE_FILTER ? [MODE_FILTER] : ALL_MODES;
-  const profiles = PROFILE_FILTER ? [PROFILE_FILTER] : ALL_PROFILES;
+  const suiteModes = evalData.modes?.length ? evalData.modes : ALL_MODES;
+  const suiteProfiles = evalData.profiles?.length ? evalData.profiles : ALL_PROFILES;
+  const modes = MODE_FILTER ? suiteModes.filter(m => m === MODE_FILTER) : suiteModes;
+  const profiles = PROFILE_FILTER ? suiteProfiles.filter(p => p === PROFILE_FILTER) : suiteProfiles;
+  const ingestProcessingMode = evalData.ingestProcessingMode || 'llm-assisted';
   const comboResults = [];
 
   let serverProc;
@@ -229,19 +258,7 @@ async function runSuite(suiteDir, port) {
     serverProc = await startServer(configDir);
     await waitReady(base);
 
-    // Ingest story once with llm-assisted
-    const ingestRes = await fetchJson(base, 'POST', '/v1/kb/sources', {
-      name: `${evalData.suiteId}-story`, content: storyContent, processing_mode: 'llm-assisted'
-    });
-    if (!ingestRes.sourceId) {
-      console.log(`  ${C.red}Ingest failed: ${ingestRes.error?.message}${C.reset}`);
-      for (const m of modes) for (const p of profiles) {
-        comboResults.push({ mode: m, profile: p, suiteId: evalData.suiteId, passed: 0,
-          failed: evalData.questions.length, results: [], error: 'ingest failed', avgContextF1: 0 });
-      }
-      return comboResults;
-    }
-    console.log(`  ${C.dim}Story ingested: ${ingestRes.unitCount} units${C.reset}`);
+    console.log(`  ${C.dim}Story prepared for per-session draft staging${C.reset}`);
 
     // Run all mode×profile combos on the same server
     for (const mode of modes) {
@@ -256,7 +273,7 @@ async function runSuite(suiteDir, port) {
 
         for (const q of evalData.questions) {
           try {
-            const result = await runQuestion(q, base, mode, profile);
+            const result = await runQuestion(q, base, mode, profile, storyContent, ingestProcessingMode);
             results.push(result);
             if (result.pass) passed++; else failed++;
             if (result.answerPass) ansPassed++;
@@ -373,9 +390,8 @@ async function main() {
 
   const modes = MODE_FILTER ? [MODE_FILTER] : ALL_MODES;
   const profiles = PROFILE_FILTER ? [PROFILE_FILTER] : ALL_PROFILES;
-  const combos = modes.length * profiles.length;
 
-  console.log(`${C.bold}${suites.length} suite(s) × ${combos} combos (${modes.join(',')} × ${profiles.join(',')})${C.reset}\n`);
+  console.log(`${C.bold}${suites.length} suite(s) × variable combos (${modes.join(',')} × ${profiles.join(',')})${C.reset}\n`);
 
   let portCounter = BASE_PORT;
   const allResults = [];
@@ -392,7 +408,7 @@ async function main() {
   mkdirSync(join(EVAL_DIR, 'results'), { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   writeFileSync(join(EVAL_DIR, 'results', `eval-${ts}.json`), JSON.stringify({
-    timestamp: new Date().toISOString(), combos, suites: suites.length,
+    timestamp: new Date().toISOString(), suites: suites.length,
     totalPassed: allResults.reduce((s, r) => s + r.passed, 0),
     totalFailed: allResults.reduce((s, r) => s + r.failed, 0),
     results: allResults

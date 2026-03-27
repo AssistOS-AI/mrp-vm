@@ -29,6 +29,10 @@ ChunkId: session::turn
 Role: <role>
 Topic: <dominant subject in English>
 Claim: <the factual assertion in English>
+Subject: <canonical symbolic subject — optional>
+Relation: <canonical symbolic relation — optional>
+Object: <canonical symbolic object — optional>
+Confidence: <number in [0,1] — optional>
 UtilityActs: <comma-separated acts>
 
 Roles (pick exactly one): Comparison, Explanation, Procedure, Definition, Evaluation, Diagnostic, Constraint, Narrative, Description
@@ -57,5 +61,13 @@ UtilityActs: verify, explain
 If no extractable facts exist, output NOTHING (completely empty response).
 Use Procedure role only for procedural steps, and use Procedure field instead of Claim.
 A unit cannot have both Claim and Procedure.
+- When a claim can be cleanly represented as a
+  simple symbolic fact, also emit:
+  `Subject`, `Relation`, `Object`, and optional
+  `Confidence`.
+- Allowed symbolic relations: uses, provides,
+  has_capability, depends_on, part_of,
+  instance_of, relevant_for, supports, mentions,
+  about, causes.
 
 CRITICAL: Output raw Markdown only. Do NOT wrap output in ```markdown``` code fences.

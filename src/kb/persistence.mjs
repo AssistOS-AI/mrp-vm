@@ -14,6 +14,14 @@ function atomicWrite(filePath, content) {
   renameSync(tmp, filePath);
 }
 
+function clearDir(dir) {
+  if (!existsSync(dir)) return;
+  for (const entry of readdirSync(dir)) {
+    const filePath = join(dir, entry);
+    if (statSync(filePath).isFile()) unlinkSync(filePath);
+  }
+}
+
 export class FileMemoryPersistence {
   constructor(config) {
     this.paths = {};
@@ -91,6 +99,12 @@ export class FileMemoryPersistence {
     atomicWrite(join(this.paths.sources, `${sourceId}.src`), content);
   }
 
+  async loadRawSource(sourceId) {
+    const fp = join(this.paths.sources, `${sourceId}.src`);
+    if (!existsSync(fp)) return null;
+    return readFileSync(fp, 'utf-8');
+  }
+
   async removeRawSource(sourceId) {
     const fp = join(this.paths.sources, `${sourceId}.src`);
     if (existsSync(fp)) unlinkSync(fp);
@@ -129,6 +143,13 @@ export class FileMemoryPersistence {
     }
   }
 
+  async resetRepository() {
+    clearDir(this.paths.sources);
+    clearDir(this.paths.cnl);
+    clearDir(this.paths.meta);
+    clearDir(this.paths.index);
+  }
+
   _unitToMarkdown(u) {
     let md = `## Context Unit ${u.id}\n`;
     md += `SourceId: ${u.sourceId}\n`;
@@ -138,8 +159,13 @@ export class FileMemoryPersistence {
     if (u.claim) md += `Claim: ${u.claim}\n`;
     if (u.condition) md += `Condition: ${u.condition}\n`;
     if (u.procedure) md += `Procedure: ${u.procedure}\n`;
+    if (u.subject) md += `Subject: ${u.subject}\n`;
+    if (u.relation) md += `Relation: ${u.relation}\n`;
+    if (u.object) md += `Object: ${u.object}\n`;
+    if (u.confidence !== null && u.confidence !== undefined) md += `Confidence: ${u.confidence}\n`;
     md += `UtilityActs: ${(u.utilityActs || []).join(', ')}\n`;
     if (u.utilityNote) md += `UtilityNote: ${u.utilityNote}\n`;
+    if (u.hash) md += `Hash: ${u.hash}\n`;
     return md;
   }
 }

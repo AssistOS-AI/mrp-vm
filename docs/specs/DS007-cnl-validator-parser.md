@@ -67,6 +67,9 @@ Validator error codes:
 - `INVALID_GROUP_NUMBER`
 - `INVALID_ACT_VALUE`
 - `INVALID_ROLE_VALUE`
+- `INVALID_RELATION_VALUE`
+- `INVALID_CONFIDENCE_VALUE`
+- `INCOMPLETE_SYMBOLIC_FACT`
 - `CLAIM_AND_PROCEDURE_CONFLICT`
 - `MISSING_CLAIM_FOR_ROLE`
 - `MISSING_PROCEDURE_FOR_ROLE`
@@ -100,8 +103,13 @@ Validator error codes:
   claim: string | null,
   condition: string | null,
   procedure: string | null,
+  subject: string | null,
+  relation: string | null,
+  object: string | null,
+  confidence: number | null,
   utilityActs: string[],
-  utilityNote: string | null
+  utilityNote: string | null,
+  hash: string | null
 }
 ```
 
@@ -124,12 +132,23 @@ Validator error codes:
 - Heading: `## Context Unit <ID>`.
 - Required fields: SourceId, ChunkId, Role,
   Topic, UtilityActs.
+- Allowed fields: SourceId, ChunkId, Role, Topic,
+  Claim, Condition, Procedure, Subject, Relation,
+  Object, Confidence, UtilityActs, UtilityNote,
+  Hash.
 - Claim required if Role ≠ Procedure.
 - Procedure required if Role = Procedure.
 - Claim and Procedure cannot coexist →
   `CLAIM_AND_PROCEDURE_CONFLICT`.
 - Role must be from the DS005 enum.
 - UtilityActs: CSV of acts from the DS004 enum.
+- `Subject`, `Relation`, and `Object` are optional
+  as a single block. Partial symbolic facts are
+  rejected with `INCOMPLETE_SYMBOLIC_FACT`.
+- `Relation` must belong to the runtime symbolic
+  relation vocabulary.
+- `Confidence`, when present, must be numeric in
+  `[0, 1]`.
 - Unknown `Role` is a hard validation error
   (`INVALID_ROLE_VALUE`), not a warning.
 - DS007 does not infer or auto-correct roles.

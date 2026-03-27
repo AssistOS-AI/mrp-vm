@@ -1,0 +1,87 @@
+{
+  "maxDepth": 3,
+  "maxDerivedFactsPerQuery": 64,
+  "maxProofs": 32,
+  "maxSeedFacts": 8,
+  "maxFocusedProofs": 12,
+  "defaultRuleWeight": 0.9,
+  "minConfidence": 0.15,
+  "distancePenalty": 0.25,
+  "goalBonus": 1.15,
+  "seedBonus": 1.1,
+  "preferredRelations": ["relevant_for", "has_capability", "depends_on", "causes"],
+  "rules": [
+    {
+      "id": "tool_to_capability",
+      "when": [
+        { "s": "?x", "r": "uses", "o": "?y" },
+        { "s": "?y", "r": "provides", "o": "?z" }
+      ],
+      "then": { "s": "?x", "r": "has_capability", "o": "?z" },
+      "weight": 0.95
+    },
+    {
+      "id": "capability_to_relevance",
+      "when": [
+        { "s": "?x", "r": "has_capability", "o": "?c" },
+        { "s": "?c", "r": "relevant_for", "o": "?goal" }
+      ],
+      "then": { "s": "?x", "r": "relevant_for", "o": "?goal" },
+      "weight": 0.9
+    },
+    {
+      "id": "provider_to_relevance",
+      "when": [
+        { "s": "?x", "r": "provides", "o": "?c" },
+        { "s": "?c", "r": "relevant_for", "o": "?goal" }
+      ],
+      "then": { "s": "?x", "r": "relevant_for", "o": "?goal" },
+      "weight": 0.88
+    },
+    {
+      "id": "dependency_transitive",
+      "when": [
+        { "s": "?x", "r": "depends_on", "o": "?y" },
+        { "s": "?y", "r": "depends_on", "o": "?z" }
+      ],
+      "then": { "s": "?x", "r": "depends_on", "o": "?z" },
+      "weight": 0.92
+    },
+    {
+      "id": "dependency_capability",
+      "when": [
+        { "s": "?x", "r": "depends_on", "o": "?y" },
+        { "s": "?y", "r": "has_capability", "o": "?c" }
+      ],
+      "then": { "s": "?x", "r": "has_capability", "o": "?c" },
+      "weight": 0.9
+    },
+    {
+      "id": "dependency_relevance",
+      "when": [
+        { "s": "?x", "r": "depends_on", "o": "?y" },
+        { "s": "?y", "r": "relevant_for", "o": "?goal" }
+      ],
+      "then": { "s": "?x", "r": "relevant_for", "o": "?goal" },
+      "weight": 0.85
+    },
+    {
+      "id": "support_to_relevance",
+      "when": [
+        { "s": "?x", "r": "supports", "o": "?c" },
+        { "s": "?c", "r": "relevant_for", "o": "?goal" }
+      ],
+      "then": { "s": "?x", "r": "relevant_for", "o": "?goal" },
+      "weight": 0.88
+    },
+    {
+      "id": "causal_chain",
+      "when": [
+        { "s": "?x", "r": "causes", "o": "?y" },
+        { "s": "?y", "r": "causes", "o": "?z" }
+      ],
+      "then": { "s": "?x", "r": "causes", "o": "?z" },
+      "weight": 0.9
+    }
+  ]
+}

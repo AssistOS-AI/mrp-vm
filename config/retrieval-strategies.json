@@ -1,6 +1,6 @@
 {
   "defaultProfile": "balanced",
-  "enabledStrategies": ["bm25-lexical", "hdc-vsa"],
+  "enabledStrategies": ["bm25-lexical", "hdc-vsa", "thinkingdb-symbolic"],
   "profiles": {
     "fast": {
       "primaryStrategies": ["bm25-lexical"],
@@ -37,11 +37,24 @@
       "confidenceGapThreshold": 0.15,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 1500
+    },
+    "thinkingdb": {
+      "primaryStrategies": ["bm25-lexical"],
+      "secondaryStrategies": ["thinkingdb-symbolic"],
+      "allowParallel": false,
+      "maxStrategiesPerIntent": 2,
+      "maxResults": 8,
+      "minScore": 0.12,
+      "minAcceptableCandidates": 6,
+      "confidenceGapThreshold": 0.25,
+      "hardSymbolicPruning": false,
+      "targetLatencyMs": 700
     }
   },
   "strategyWeights": {
     "bm25-lexical": 1.0,
-    "hdc-vsa": 0.7
+    "hdc-vsa": 0.7,
+    "thinkingdb-symbolic": 0.85
   },
   "agreementBonus": 0.15
 }

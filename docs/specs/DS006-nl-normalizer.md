@@ -71,7 +71,7 @@ to the normalizer contract.
 - This direction is not part of the main v1 chat/API
   pipeline.
 - It may exist as an auxiliary utility, but
-  `POST /v1/chat/completions` returns structured
+  `POST /chat/completions` returns structured
   Markdown directly (see DS013 and DS017).
 
 ## Main Interface

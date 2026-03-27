@@ -10,6 +10,8 @@
   <header>
     <h1>MRP-VM</h1>
     <div id="session-badge" aria-live="polite">No session</div>
+    <div id="kb-badge" aria-live="polite">KB: default</div>
+    <div id="workspace-badge" aria-live="polite">Draft: none</div>
     <button id="new-session-btn" aria-label="Start new session">New Session</button>
   </header>
   <main>
@@ -21,6 +23,13 @@
       <label for="model-select">Model:</label>
       <select id="model-select" aria-label="Model"></select>
       <button id="reset-config" aria-label="Reset to defaults">Reset</button>
+    </div>
+    <div id="kb-bar">
+      <label for="kb-select">KB:</label>
+      <select id="kb-select" aria-label="Mounted knowledge base"></select>
+      <button id="load-kb-btn" type="button">Load KB</button>
+      <button id="fork-kb-btn" type="button">Fork KB</button>
+      <button id="save-kb-btn" type="button">Save KB</button>
     </div>
     <div id="messages" role="log" aria-live="polite"></div>
     <div id="loading" class="hidden" aria-live="assertive">Processing…</div>

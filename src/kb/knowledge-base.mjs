@@ -34,7 +34,9 @@ export class KnowledgeBase {
   }
 
   _hashUnit(u) {
-    return createHash('sha256').update(`${u.claim || ''}|${u.role}|${u.topic}`).digest('hex');
+    return createHash('sha256')
+      .update(`${u.claim || ''}|${u.procedure || ''}|${u.role}|${u.topic}|${u.subject || ''}|${u.relation || ''}|${u.object || ''}`)
+      .digest('hex');
   }
 
   async boot() {
@@ -168,4 +170,77 @@ export class KnowledgeBase {
   async getContextUnits(sourceId) { return this._units.filter(u => u.sourceId === sourceId); }
   getIndex() { return this.index; }
   getAllUnits() { return this._units; }
+
+  async exportSnapshot() {
+    const sources = [];
+    for (const meta of this.getSources()) {
+      const content = await this.persistence.loadRawSource(meta.sourceId);
+      const units = await this.getContextUnits(meta.sourceId);
+      sources.push({
+        meta: { ...meta },
+        content: content || '',
+        units: units.map(u => ({ ...u })),
+        kind: meta.kind || 'source'
+      });
+    }
+    return { sources };
+  }
+
+  async replaceAllSources(snapshot) {
+    const sources = snapshot?.sources || [];
+    await this._acquireLock();
+    try {
+      if (sources.length > this.maxSources) {
+        throw new MRPError('KB_VALIDATION_MAX_SOURCES', MOD, `Snapshot exceeds max sources limit (${this.maxSources})`);
+      }
+
+      const allUnits = [];
+      const sourceMap = new Map();
+      const normalizedEntries = new Map();
+      for (const entry of sources) {
+        const meta = {
+          ...(entry.meta || {}),
+          sourceId: entry.meta?.sourceId,
+          name: entry.meta?.name || entry.meta?.sourceId || 'unnamed',
+          status: 'ready',
+          updatedAt: new Date().toISOString()
+        };
+        const units = (entry.units || []).map(u => {
+          const next = { ...u };
+          next.hash = next.hash || this._hashUnit(next);
+          return next;
+        });
+        if (units.length > this.maxUnitsPerSource) {
+          throw new MRPError('KB_VALIDATION_MAX_UNITS_PER_SOURCE', MOD,
+            `Source ${meta.sourceId} produces ${units.length} units, exceeding limit`);
+        }
+        meta.addedAt = meta.addedAt || new Date().toISOString();
+        meta.chunkCount = new Set(units.map(u => u.chunkId)).size;
+        meta.unitCount = units.length;
+        meta.hash = meta.hash || createHash('sha256').update(entry.content || '').digest('hex');
+        sourceMap.set(meta.sourceId, meta);
+        normalizedEntries.set(meta.sourceId, { meta, content: entry.content || '', units });
+        allUnits.push(...units);
+      }
+
+      if (allUnits.length > this.maxTotalUnits) {
+        throw new MRPError('KB_VALIDATION_MAX_TOTAL_UNITS', MOD, 'Total units limit exceeded');
+      }
+
+      await this.persistence.resetRepository();
+      for (const [sourceId, entry] of normalizedEntries) {
+        const meta = sourceMap.get(sourceId);
+        await this.persistence.saveSourceMeta(meta.sourceId, meta);
+        await this.persistence.saveRawSource(meta.sourceId, meta.name, entry.content || '');
+        await this.persistence.saveContextUnits(meta.sourceId, entry.units || []);
+      }
+
+      this.index.rebuild(allUnits);
+      await this.persistence.saveIndex(this.index.toIndexData());
+      this._sources = sourceMap;
+      this._units = allUnits;
+    } finally {
+      this._releaseLock();
+    }
+  }
 }

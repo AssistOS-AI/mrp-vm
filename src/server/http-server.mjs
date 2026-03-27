@@ -14,9 +14,9 @@ const MOD = 'server';
 const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript', '.mjs': 'application/javascript' };
 
 export class MRPServer {
-  constructor(engine, kb, conversationHandler, llmBridge, strategyRegistry, retrievalStrategyRegistry, config) {
+  constructor(engine, kbRepositoryManager, conversationHandler, llmBridge, strategyRegistry, retrievalStrategyRegistry, config) {
     this.engine = engine;
-    this.kb = kb;
+    this.kbRepositoryManager = kbRepositoryManager;
     this.conversation = conversationHandler;
     this.llmBridge = llmBridge;
     this.strategyRegistry = strategyRegistry;
@@ -50,18 +50,19 @@ export class MRPServer {
         return this._serveStatic(path, res);
       }
       // API routes
-      if (path === '/v1/chat/completions' && req.method === 'POST') return await this._chatCompletions(req, res, reqId);
-      if (path === '/v1/sessions' && req.method === 'POST') return await this._createSession(req, res);
-      if (path.match(/^\/v1\/sessions\/[^/]+$/) && req.method === 'GET') return this._getSession(path, res);
-      if (path.match(/^\/v1\/sessions\/[^/]+$/) && req.method === 'DELETE') return this._deleteSession(path, res);
-      if (path === '/v1/models' && req.method === 'GET') return this._getModels(res);
-      if (path === '/v1/processing-strategies' && req.method === 'GET') return this._getStrategies(res);
-      if (path === '/v1/retrieval-profiles' && req.method === 'GET') return this._getRetrievalProfiles(res);
-      if (path === '/v1/kb/sources' && req.method === 'POST') return await this._addSource(req, res);
-      if (path === '/v1/kb/sources' && req.method === 'GET') return this._listSources(res);
-      if (path.match(/^\/v1\/kb\/sources\/[^/]+$/) && req.method === 'GET') return this._getSource(path, res);
-      if (path.match(/^\/v1\/kb\/sources\/[^/]+$/) && req.method === 'PUT') return await this._updateSource(req, res, path);
-      if (path.match(/^\/v1\/kb\/sources\/[^/]+$/) && req.method === 'DELETE') return await this._deleteSource(path, res);
+      if (path === '/chat/completions' && req.method === 'POST') return await this._chatCompletions(req, res, reqId);
+      if (path === '/sessions' && req.method === 'POST') return await this._createSession(req, res);
+      if (path.match(/^\/sessions\/[^/]+$/) && req.method === 'GET') return this._getSession(path, res);
+      if (path.match(/^\/sessions\/[^/]+$/) && req.method === 'DELETE') return this._deleteSession(path, res);
+      if (path === '/models' && req.method === 'GET') return this._getModels(res);
+      if (path === '/processing-strategies' && req.method === 'GET') return this._getStrategies(res);
+      if (path === '/retrieval-profiles' && req.method === 'GET') return this._getRetrievalProfiles(res);
+      if (path === '/kbs' && req.method === 'GET') return this._listKbs(res);
+      if (path.match(/^\/sessions\/[^/]+\/kb\/mount$/) && req.method === 'POST') return await this._mountKb(req, res, path);
+      if (path.match(/^\/sessions\/[^/]+\/kb\/fork$/) && req.method === 'POST') return await this._forkKb(req, res, path);
+      if (path.match(/^\/sessions\/[^/]+\/kb\/save$/) && req.method === 'POST') return await this._saveKb(req, res, path);
+      if (path.match(/^\/sessions\/[^/]+\/workspace$/) && req.method === 'GET') return this._getWorkspace(path, res);
+      if (path.match(/^\/sessions\/[^/]+\/workspace\/sources$/) && req.method === 'POST') return await this._stageWorkspaceSource(req, res, path);
       if (path === '/health' && req.method === 'GET') return this._json(res, 200, { status: 'ok' });
       if (path === '/ready' && req.method === 'GET') return this._readiness(res);
       this._json(res, 404, { error: { code: 'NOT_FOUND', message: 'Unknown endpoint', type: 'invalid_request' } });
@@ -116,7 +117,10 @@ export class MRPServer {
       expires_at: session?.expiresAt,
       choices: [{ index: 0, message: { role: 'assistant', content: result.responseMarkdown }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      response_document: result.responseDocument || null
+      response_document: result.responseDocument || null,
+      kb_id: session?.mountedKbId || body.kb_id || null,
+      kb_name: session?.mountedKbName || null,
+      workspace_dirty: !!session?.workspace?.dirty
     });
   }
 
@@ -133,14 +137,21 @@ export class MRPServer {
     if (body.retrieval_profile && !this.retrievalStrategyRegistry.getProfile(body.retrieval_profile)) {
       return this._json(res, 400, { error: { code: 'INVALID_RETRIEVAL_PROFILE', message: `Unknown retrieval profile: ${body.retrieval_profile}`, type: 'invalid_request' } });
     }
-    const session = this.conversation.createSession(body.model, body.processing_mode, body.retrieval_profile);
+    if (body.kb_id) {
+      try { this.kbRepositoryManager.getRepository(body.kb_id); } catch (e) { return this._handleError(res, e); }
+    }
+    const session = await this.conversation.createSession(body.model, body.processing_mode, body.retrieval_profile, body.kb_id || null);
+    const workspaceStats = session.workspace?.getStats() || {};
     this._json(res, 200, {
       session_id: session.sessionId,
       created_at: session.createdAt,
       expires_at: session.expiresAt,
       processing_mode: session.preferredProcessingMode,
       retrieval_profile: session.preferredRetrievalProfile,
-      model: session.preferredModel
+      model: session.preferredModel,
+      kb_id: session.mountedKbId,
+      kb_name: session.mountedKbName,
+      workspace_dirty: !!workspaceStats.dirty
     });
   }
 
@@ -174,38 +185,76 @@ export class MRPServer {
     this._json(res, 200, { profiles });
   }
 
-  async _addSource(req, res) {
+  _listKbs(res) {
+    this._json(res, 200, {
+      kbs: this.kbRepositoryManager.listRepositories()
+    });
+  }
+
+  _getWorkspace(path, res) {
+    const sessionId = path.split('/')[2];
+    const session = this.conversation.getSession(sessionId);
+    if (!session) return this._json(res, 410, { error: { code: 'SESSION_EXPIRED', message: 'Session not found or expired', type: 'processing_error' } });
+    this._json(res, 200, {
+      session_id: session.sessionId,
+      kb_id: session.mountedKbId,
+      kb_name: session.mountedKbName,
+      workspace: {
+        ...session.workspace.getStats(),
+        sources: session.workspace.getSources()
+      }
+    });
+  }
+
+  async _mountKb(req, res, path) {
+    const sessionId = path.split('/')[2];
     const body = JSON.parse(await this._readBody(req));
-    if (!body.name || !body.content) return this._json(res, 400, { error: { code: 'INVALID_INPUT', message: 'name and content required', type: 'invalid_request' } });
-    const defaultMode = this.config.defaultIngestMode || 'llm-assisted';
-    const strategy = this.strategyRegistry.resolve(body.processing_mode || null, null, defaultMode);
-    const sourceId = await this.kb.addSource(body.name, body.content, strategy);
-    const meta = this.kb.getSource(sourceId);
-    this._json(res, 200, { sourceId: meta.sourceId, name: meta.name, status: meta.status, unitCount: meta.unitCount });
-  }
-
-  async _updateSource(req, res, path) {
-    const id = path.split('/').pop();
-    const body = JSON.parse(await this._readBody(req));
-    const defaultMode = this.config.defaultIngestMode || 'llm-assisted';
-    const strategy = this.strategyRegistry.resolve(body.processing_mode || null, null, defaultMode);
-    await this.kb.updateSource(id, body.content, strategy);
-    this._json(res, 200, { sourceId: id, status: 'ready' });
-  }
-
-  async _deleteSource(path, res) {
-    const id = path.split('/').pop();
-    await this.kb.removeSource(id);
-    res.writeHead(204); res.end();
-  }
-
-  _listSources(res) { this._json(res, 200, { sources: this.kb.getSources() }); }
-
-  _getSource(path, res) {
-    const id = path.split('/').pop();
-    const meta = this.kb.getSource(id);
-    if (!meta) return this._json(res, 404, { error: { code: 'KB_NOT_FOUND', message: 'Source not found', type: 'processing_error' } });
+    if (!body.kb_id) return this._json(res, 400, { error: { code: 'KB_VALIDATION_MISSING_ID', message: 'kb_id is required', type: 'invalid_request' } });
+    const meta = await this.conversation.mountRepository(sessionId, body.kb_id, { discardDraft: !!body.discard_draft });
     this._json(res, 200, meta);
+  }
+
+  async _forkKb(req, res, path) {
+    const sessionId = path.split('/')[2];
+    const body = JSON.parse(await this._readBody(req));
+    const meta = await this.conversation.forkWorkspace(sessionId, body.name || null);
+    this._json(res, 200, meta);
+  }
+
+  async _saveKb(req, res, path) {
+    const sessionId = path.split('/')[2];
+    const body = JSON.parse(await this._readBody(req));
+    const meta = await this.conversation.saveWorkspace(sessionId, {
+      targetKbId: body.target_kb_id || null,
+      name: body.name || null,
+      fork: !!body.fork,
+      includeConversationUnits: body.include_conversation_units !== false
+    });
+    this._json(res, 200, meta);
+  }
+
+  async _stageWorkspaceSource(req, res, path) {
+    const sessionId = path.split('/')[2];
+    const body = JSON.parse(await this._readBody(req));
+    if (!body.name || !body.content) {
+      return this._json(res, 400, { error: { code: 'INVALID_INPUT', message: 'name and content required', type: 'invalid_request' } });
+    }
+    const defaultMode = this.config.defaultIngestMode || 'llm-assisted';
+    const strategy = this.strategyRegistry.resolve(body.processing_mode || null, null, defaultMode);
+    const session = this.conversation.getSession(sessionId);
+    if (!session) return this._json(res, 410, { error: { code: 'SESSION_EXPIRED', message: 'Session not found or expired', type: 'processing_error' } });
+    const sourceId = body.source_id || null;
+    const effectiveSourceId = sourceId || `src-${randomUUID().substring(0, 10)}`;
+    const { units } = await this.kbRepositoryManager.ingestor.ingest(effectiveSourceId, body.content, body.name, strategy);
+    const meta = await this.conversation.stageWorkspaceSource(sessionId, body.name, body.content, units, { sourceId: effectiveSourceId });
+    const workspace = session.workspace.getStats();
+    this._json(res, 200, {
+      sourceId: meta.sourceId,
+      name: meta.name,
+      unitCount: meta.unitCount,
+      kb_id: session.mountedKbId,
+      workspace_dirty: workspace.dirty
+    });
   }
 
   _readiness(res) {

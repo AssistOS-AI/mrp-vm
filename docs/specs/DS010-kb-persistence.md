@@ -39,6 +39,9 @@ non-functional requirements for migration triggers.
 - All runtime/generated KB data lives under
   `data/kb/` (gitignored). The `data/` directory
   is created automatically at boot.
+- Session workspaces MAY be persisted separately
+  under `data/workspaces/` and MUST NOT be confused
+  with committed KB repository state.
 - CNL files are saved as Markdown in
   `data/kb/cnl/`, one file per source.
 - Metadata is saved as JSON in `data/kb/meta/`,
@@ -110,6 +113,7 @@ If any condition fails → rebuild.
     "index": "data/kb/index",
     "quarantine": "data/kb/quarantine"
   },
+  "workspaceRootDir": "data/workspaces",
   "indexSavePolicy": "on-change",
   "maxSourceSizeBytes": 1048576,
   "maxSources": 500,

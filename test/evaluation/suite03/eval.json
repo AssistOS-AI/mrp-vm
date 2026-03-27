@@ -1,0 +1,33 @@
+{
+  "suiteId": "suite03",
+  "title": "ThinkingDB — Bounded Symbolic Closure",
+  "description": "Evaluates the thinkingdb profile on explicit multi-hop symbolic facts using symbolic-only ingest.",
+  "storyFile": "story.nl",
+  "ingestProcessingMode": "symbolic-only",
+  "modes": ["symbolic-only"],
+  "profiles": ["thinkingdb"],
+  "questions": [
+    {
+      "id": "s03-q01",
+      "input": "Explain why AchillesIDE is relevant for secure execution.",
+      "expected": {
+        "intents": [{ "intentMustMention": ["AchillesIDE", "secure execution"], "orderIndependent": true }],
+        "contextMustMention": ["Ploinky provides sandboxing", "Sandboxing is relevant for secure execution"],
+        "contextMustNotMention": [],
+        "answerMustMention": ["AchillesIDE uses Ploinky", "Ploinky provides sandboxing"],
+        "answerMustNotContain": ["not contain enough evidence"]
+      }
+    },
+    {
+      "id": "s03-q02",
+      "input": "Explain why AchillesIDE benefits from isolation for secure execution.",
+      "expected": {
+        "intents": [{ "intentMustMention": ["AchillesIDE", "isolation"], "orderIndependent": true }],
+        "contextMustMention": ["Ploinky depends on KernelX", "KernelX provides isolation"],
+        "contextMustNotMention": [],
+        "answerMustMention": ["KernelX provides isolation", "Isolation is relevant for secure execution"],
+        "answerMustNotContain": ["not contain enough evidence"]
+      }
+    }
+  ]
+}

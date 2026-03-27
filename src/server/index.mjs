@@ -15,9 +15,11 @@ import { SymbolicOnlyStrategy } from '../strategies/symbolic-only.mjs';
 import { LLMBridge } from '../llm/bridge.mjs';
 import { KnowledgeBase } from '../kb/knowledge-base.mjs';
 import { FileMemoryPersistence } from '../kb/persistence.mjs';
+import { KBRepositoryManager } from '../kb/repository-manager.mjs';
 import { SourceIngestor } from '../ingest/source-ingestor.mjs';
 import { BM25LexicalStrategy, RetrievalStrategyRegistry } from '../retrieval/strategies/registry.mjs';
 import { HDCVSAStrategy } from '../retrieval/strategies/hdc-vsa.mjs';
+import { ThinkingDBSymbolicStrategy } from '../retrieval/strategies/thinkingdb.mjs';
 import { MRPEngine } from '../core/engine.mjs';
 import { MRPServer } from './http-server.mjs';
 
@@ -32,6 +34,7 @@ async function boot() {
   const strategiesConfig = loadConfig('strategies');
   const retrievalConfig = loadConfig('retrieval');
   const retrievalStrategiesConfig = loadConfig('retrieval-strategies');
+  const thinkingdbConfig = loadConfig('thinkingdb');
   const kbConfig = loadConfig('kb');
   const conversationConfig = loadConfig('conversation');
 
@@ -61,18 +64,20 @@ async function boot() {
   await pluginManager.scanWrappers();
 
   // 6-7. Load persistent KB + index
-  const persistence = new FileMemoryPersistence(kbConfig);
-  const kbIndex = new KBIndex(retrievalConfig);
   const normalizer = new NLNormalizer(strategyRegistry);
   const ingestor = new SourceIngestor(normalizer, kbConfig);
-  const kb = new KnowledgeBase(ingestor, kbIndex, persistence, kbConfig);
+  const kbRepositoryManager = new KBRepositoryManager(ingestor, retrievalConfig, kbConfig);
   logger.info(MOD, 'Loading Knowledge Base');
-  await kb.boot();
+  await kbRepositoryManager.boot();
+  conversationHandler.attachKBRepositoryManager(kbRepositoryManager);
+  const defaultKb = kbRepositoryManager.getDefaultRepository().kb;
+  const kbIndex = defaultKb.getIndex();
 
   // 8. Initialize RetrievalStrategyRegistry
   const retrievalStrategyRegistry = new RetrievalStrategyRegistry();
   retrievalStrategyRegistry.register(new BM25LexicalStrategy(retrievalConfig));
   retrievalStrategyRegistry.register(new HDCVSAStrategy());
+  retrievalStrategyRegistry.register(new ThinkingDBSymbolicStrategy(thinkingdbConfig));
   retrievalStrategyRegistry.setProfiles(retrievalStrategiesConfig.profiles);
 
   // Build remaining components
@@ -92,7 +97,7 @@ async function boot() {
   logger.info(MOD, 'Engine ready');
 
   // 10. Start HTTP server
-  const server = new MRPServer(engine, kb, conversationHandler, llmBridge, strategyRegistry, retrievalStrategyRegistry, serverConfig);
+  const server = new MRPServer(engine, kbRepositoryManager, conversationHandler, llmBridge, strategyRegistry, retrievalStrategyRegistry, serverConfig);
   server.start();
 
   // Periodic session cleanup

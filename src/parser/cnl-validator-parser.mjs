@@ -1,6 +1,7 @@
 // DS007 — CNL Validator & Parser (fully symbolic)
 import {
   PRAGMATIC_ACTS, PRAGMATIC_ROLES,
+  SYMBOLIC_RELATIONS,
   INTENT_REQUIRED_FIELDS, INTENT_ALLOWED_FIELDS,
   CONTEXT_REQUIRED_FIELDS, CONTEXT_ALLOWED_FIELDS
 } from '../lib/pragmatics.mjs';
@@ -158,6 +159,32 @@ export class CNLValidator {
           }
         }
       }
+      // Symbolic fact all-or-none validation
+      const hasSubject = !!block.fields['Subject'];
+      const hasRelation = !!block.fields['Relation'];
+      const hasObject = !!block.fields['Object'];
+      const hasConfidence = !!block.fields['Confidence'];
+      if (hasSubject || hasRelation || hasObject || hasConfidence) {
+        if (!(hasSubject && hasRelation && hasObject)) {
+          errors.push({ code: 'INCOMPLETE_SYMBOLIC_FACT', line: block.lineStart, column: 1, field: null,
+            message: `Context Unit ${unitId} must provide Subject, Relation, and Object together` });
+        }
+        if (hasRelation) {
+          const relationVal = block.fields['Relation'].value.trim();
+          if (!SYMBOLIC_RELATIONS.includes(relationVal)) {
+            errors.push({ code: 'INVALID_RELATION_VALUE', line: block.fields['Relation'].lineNum, column: 1, field: 'Relation',
+              message: `Invalid Relation '${relationVal}' in Context Unit ${unitId}` });
+          }
+        }
+        if (block.fields['Confidence']) {
+          const raw = block.fields['Confidence'].value.trim();
+          const parsed = Number(raw);
+          if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+            errors.push({ code: 'INVALID_CONFIDENCE_VALUE', line: block.fields['Confidence'].lineNum, column: 1, field: 'Confidence',
+              message: `Invalid Confidence '${raw}' in Context Unit ${unitId}` });
+          }
+        }
+      }
       // Claim/Procedure mutual exclusion
       const role = block.fields['Role']?.value.trim();
       const hasClaim = !!block.fields['Claim'];
@@ -228,7 +255,11 @@ export class CNLParser {
         procedure: block.fields['Procedure']?.value.trim() || null,
         utilityActs,
         utilityNote: block.fields['UtilityNote']?.value.trim() || null,
-        hash: block.fields['Hash']?.value.trim() || null
+        hash: block.fields['Hash']?.value.trim() || null,
+        subject: block.fields['Subject']?.value.trim() || null,
+        relation: block.fields['Relation']?.value.trim() || null,
+        object: block.fields['Object']?.value.trim() || null,
+        confidence: block.fields['Confidence'] ? Number(block.fields['Confidence'].value.trim()) : null
       };
     });
   }

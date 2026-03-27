@@ -31,6 +31,7 @@ export class IntentDecomposer {
     // Extract query terms from target + criteria + explicit context
     const textParts = [decomposed.target, ...decomposed.criteria];
     if (decomposed.explicitContext) textParts.push(decomposed.explicitContext);
+    const queryText = textParts.join(' ').trim();
     const queryTerms = textParts.join(' ')
       .split(/\s+/)
       .map(w => w.replace(/[^\w-]/g, '').toLowerCase())
@@ -38,6 +39,7 @@ export class IntentDecomposer {
     return {
       intentGroupNumber: decomposed.groupNumber,
       neededRoles,
+      queryText,
       queryTerms: [...new Set(queryTerms)],
       actBoost: decomposed.act,
       maxResults: 10

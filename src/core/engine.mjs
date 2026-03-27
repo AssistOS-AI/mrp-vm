@@ -51,9 +51,9 @@ export class MRPEngine {
       logger.debug(MOD, 'Phase 1/12: Preparing turn', { sessionId: request.session_id || '(new)' }, rx);
       const { session, currentMessage, historyForPrompt, systemPrompt,
         requestedModel, requestedProcessingMode, requestedRetrievalProfile
-      } = this.conversationHandler.prepareTurn(
+      } = await this.conversationHandler.prepareTurn(
         request.session_id, request.messages,
-        request.model, request.processing_mode, request.retrieval_profile
+        request.model, request.processing_mode, request.retrieval_profile, request.kb_id || null
       );
       const sx = { ...rx, sessionId: session.sessionId };
       logger.debug(MOD, 'Turn prepared', { historyLen: historyForPrompt.length, msgPreview: currentMessage.slice(0, 80) }, sx);
@@ -123,7 +123,7 @@ export class MRPEngine {
       logger.info(MOD, 'Phase 9/12: Running retrieval', { profile: retrievalProfileId }, sx);
       const resolvedIntents = await this.retrieval.resolve(
         decomposedIntents, contextProfiles, currentTurnUnits,
-        session, retrievalProfileId, this.kbIndex
+        session, retrievalProfileId, session.workspace?.getIndex() || this.kbIndex
       );
       logger.debug(MOD, 'Retrieval complete', { resolvedCount: resolvedIntents.length }, sx);
 
