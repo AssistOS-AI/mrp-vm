@@ -17,6 +17,7 @@ import { KnowledgeBase } from '../kb/knowledge-base.mjs';
 import { FileMemoryPersistence } from '../kb/persistence.mjs';
 import { SourceIngestor } from '../ingest/source-ingestor.mjs';
 import { BM25LexicalStrategy, RetrievalStrategyRegistry } from '../retrieval/strategies/registry.mjs';
+import { HDCVSAStrategy } from '../retrieval/strategies/hdc-vsa.mjs';
 import { MRPEngine } from '../core/engine.mjs';
 import { MRPServer } from './http-server.mjs';
 
@@ -71,6 +72,7 @@ async function boot() {
   // 8. Initialize RetrievalStrategyRegistry
   const retrievalStrategyRegistry = new RetrievalStrategyRegistry();
   retrievalStrategyRegistry.register(new BM25LexicalStrategy(retrievalConfig));
+  retrievalStrategyRegistry.register(new HDCVSAStrategy());
   retrievalStrategyRegistry.setProfiles(retrievalStrategiesConfig.profiles);
 
   // Build remaining components

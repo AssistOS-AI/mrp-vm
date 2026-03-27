@@ -17,7 +17,7 @@ const PROFILE_FILTER = arg('--profile');
 const DELAY_MS = parseInt(arg('--delay') || '2000', 10);
 
 const ALL_MODES = ['llm-assisted', 'symbolic-only'];
-const ALL_PROFILES = ['fast', 'balanced', 'wide-recall', 'symbolic-grounded', 'meta-rational'];
+const ALL_PROFILES = ['fast', 'balanced', 'wide-recall'];
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
