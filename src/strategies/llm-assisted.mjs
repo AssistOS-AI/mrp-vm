@@ -54,10 +54,11 @@ export class LLMAssistedStrategy extends LanguageProcessingStrategy {
 
   async synthesizeResponse({ sessionId, resolvedIntents, pluginOutputs, systemPrompt, requestedModel }) {
     const prompt = loadPrompt('synthesize.md');
-    // Build evidence document
-    let evidenceDoc = `Session: ${sessionId}\n\n`;
+    // Build evidence document (session ID excluded for cache stability)
+    let evidenceDoc = '';
     for (const ri of resolvedIntents) {
-      evidenceDoc += ri.resolvedMarkdown + '\n\n';
+      // Normalize source/unit IDs for cache stability
+      evidenceDoc += ri.resolvedMarkdown.replace(/src-[a-f0-9]+/g, 'src-REF').replace(/sess-[a-f0-9-]+/g, 'sess-REF') + '\n\n';
       const po = (pluginOutputs || []).find(p => p.intentRef === ri.intentRef);
       if (po && po.status === 'success') {
         evidenceDoc += `### Plugin Evidence\nPlugin: ${po.pluginName}\nConfidence: ${po.confidence}\nResult: ${po.resultCNL}\n\n`;
@@ -91,8 +92,8 @@ export class LLMAssistedStrategy extends LanguageProcessingStrategy {
           intent: ri.decomposed.intent,
           status: po?.status === 'error' ? 'plugin-error' : hasEvidence ? 'answered' : 'no-context',
           currentTurnContext: ri.currentTurnContextUnits,
-          sessionSources: ri.sessionUnits.map(s => ({ unitId: s.unitId, score: s.score })),
-          kbSources: ri.kbUnits.map(s => ({ sourceId: s.unit?.sourceId, unitId: s.unitId, score: s.score })),
+          sessionSources: ri.sessionUnits.map(s => ({ unitId: s.unitId, score: s.score, unit: s.unit })),
+          kbSources: ri.kbUnits.map(s => ({ sourceId: s.unit?.sourceId, unitId: s.unitId, score: s.score, unit: s.unit })),
           pluginOutput: po || null,
           answerMarkdown: groupBlocks[ri.intentRef] || null,
           warnings: po?.status === 'error' ? [`Plugin error: ${po.error?.message || 'unknown'}`] : []

@@ -42,6 +42,7 @@ async function fetchJson(base, method, path, body) {
 function createIsolatedConfig(tmpDir, port) {
   const configDir = join(tmpDir, 'config');
   const dataDir = join(tmpDir, 'data', 'kb');
+  const cacheDir = join(tmpDir, 'data', 'cache');
   cpSync(join(PROJECT_ROOT, 'config'), configDir, { recursive: true });
   const kb = JSON.parse(readFileSync(join(configDir, 'kb.json'), 'utf-8'));
   for (const key of Object.keys(kb.paths)) {
@@ -52,6 +53,11 @@ function createIsolatedConfig(tmpDir, port) {
   const srv = JSON.parse(readFileSync(join(configDir, 'server.json'), 'utf-8'));
   srv.port = port;
   writeFileSync(join(configDir, 'server.json'), JSON.stringify(srv, null, 2));
+  // Point LLM cache to shared project cache (survives across runs)
+  const llm = JSON.parse(readFileSync(join(configDir, 'llm.json'), 'utf-8'));
+  llm.cacheDir = join(PROJECT_ROOT, 'data', 'cache');
+  mkdirSync(llm.cacheDir, { recursive: true });
+  writeFileSync(join(configDir, 'llm.json'), JSON.stringify(llm, null, 2));
   return configDir;
 }
 
@@ -130,7 +136,7 @@ function matchIntents(expectedIntents, responseDoc, fullText) {
 // ── Question evaluation ──
 
 async function runQuestion(q, base, mode, profile) {
-  const result = { id: q.id, pass: true, failures: [], durationMs: 0, contextQuality: null };
+  const result = { id: q.id, pass: true, answerPass: true, contextPass: true, failures: [], durationMs: 0, contextQuality: null };
   const start = Date.now();
   const r = await fetchJson(base, 'POST', '/v1/chat/completions', {
     processing_mode: mode, retrieval_profile: profile,
@@ -138,7 +144,7 @@ async function runQuestion(q, base, mode, profile) {
   });
   result.durationMs = Date.now() - start;
   if (r.error) {
-    result.pass = false;
+    result.pass = result.answerPass = result.contextPass = false;
     result.failures.push({ check: 'api', expected: 'successful response', got: `${r.error.code}: ${r.error.message}` });
     return result;
   }
@@ -150,10 +156,10 @@ async function runQuestion(q, base, mode, profile) {
   const contextText = gatherContextText(doc) + ' ' + content;
   const answerSnippet = answerText.slice(0, 200).replace(/\n/g, ' ');
 
-  // Intent matching
+  // Intent matching — counts as answer fail
   const intentFails = matchIntents(exp.intents, doc, content);
   if (intentFails.length) {
-    result.pass = false;
+    result.answerPass = false;
     const actualIntents = doc?.groups?.map(g => `"${g.intent}"`).join(', ') || '(none)';
     result.failures.push({ check: 'intent', expected: `intent mentioning [${exp.intents.map(e => (e.intentMustMention||[]).join(', ')).join('; ')}]`, got: actualIntents });
   }
@@ -161,41 +167,43 @@ async function runQuestion(q, base, mode, profile) {
   // Context quality
   result.contextQuality = scoreContextQuality(exp, doc, content);
 
-  // Context recall
+  // Context recall — retrieval fail
   if (exp.contextMustMention?.length) {
     const missing = checkMention(contextText, exp.contextMustMention);
     if (missing.length) {
-      result.pass = false;
+      result.contextPass = false;
       result.failures.push({ check: 'context recall', expected: `context to mention [${exp.contextMustMention.join(', ')}]`, got: `missing: [${missing.join(', ')}]` });
     }
   }
 
-  // Context precision
+  // Context precision — retrieval fail
   if (exp.contextMustNotMention?.length) {
     const found = checkNotContain(contextText, exp.contextMustNotMention);
     if (found.length) {
-      result.pass = false;
+      result.contextPass = false;
       result.failures.push({ check: 'context precision', expected: `context to NOT mention [${exp.contextMustNotMention.join(', ')}]`, got: `found unwanted: [${found.join(', ')}]` });
     }
   }
 
-  // Answer must mention
+  // Answer must mention — answer fail
   if (exp.answerMustMention) {
     const missing = checkMention(answerText, exp.answerMustMention);
     if (missing.length) {
-      result.pass = false;
+      result.answerPass = false;
       result.failures.push({ check: 'answer content', expected: `answer to contain [${exp.answerMustMention.join(', ')}]`, got: `missing [${missing.join(', ')}] — answer: "${answerSnippet}"` });
     }
   }
 
-  // Answer must not contain
+  // Answer must not contain — answer fail
   if (exp.answerMustNotContain) {
     const found = checkNotContain(answerText, exp.answerMustNotContain);
     if (found.length) {
-      result.pass = false;
+      result.answerPass = false;
       result.failures.push({ check: 'answer noise', expected: `answer to NOT contain [${exp.answerMustNotContain.join(', ')}]`, got: `found unwanted [${found.join(', ')}] — answer: "${answerSnippet}"` });
     }
   }
+
+  result.pass = result.answerPass && result.contextPass;
   return result;
 }
 
@@ -239,6 +247,7 @@ async function runSuite(suiteDir, port) {
         process.stdout.write(`    ⏳ ${label}...`);
 
         let passed = 0, failed = 0, totalF1 = 0;
+        let ansPassed = 0, ctxPassed = 0;
         const results = [];
         let comboError = null;
 
@@ -247,6 +256,8 @@ async function runSuite(suiteDir, port) {
             const result = await runQuestion(q, base, mode, profile);
             results.push(result);
             if (result.pass) passed++; else failed++;
+            if (result.answerPass) ansPassed++;
+            if (result.contextPass) ctxPassed++;
             totalF1 += result.contextQuality?.f1 || 0;
           } catch (e) {
             results.push({ id: q.id, pass: false, failures: [e.message], durationMs: 0, contextQuality: { recall: 0, precision: 0, f1: 0, details: [] } });
@@ -256,14 +267,17 @@ async function runSuite(suiteDir, port) {
         }
 
         const avgF1 = totalF1 / evalData.questions.length;
-        const combo = { mode, profile, suiteId: evalData.suiteId, passed, failed, results, avgContextF1: avgF1, error: comboError };
+        const combo = { mode, profile, suiteId: evalData.suiteId, passed, failed, ansPassed, ctxPassed, total: evalData.questions.length, results, avgContextF1: avgF1, error: comboError };
         comboResults.push(combo);
 
         const icon = failed === 0 ? `${C.green}✅` : passed > 0 ? `${C.yellow}${passed}/${passed + failed}` : `${C.red}✗ `;
         process.stdout.write(`\r    ${icon}${C.reset} ${label} F1:${colorScore(avgF1)}\n`);
         for (const qr of results) {
           if (!qr.pass) {
-            console.log(`      ${C.red}✗ ${qr.id}${C.reset} ${C.dim}(${qr.durationMs}ms)${C.reset}`);
+            const tags = [];
+            if (!qr.answerPass) tags.push(`${C.red}ANS${C.reset}`);
+            if (!qr.contextPass) tags.push(`${C.yellow}CTX${C.reset}`);
+            console.log(`      ${C.red}✗ ${qr.id}${C.reset} [${tags.join('+')}] ${C.dim}(${qr.durationMs}ms)${C.reset}`);
             for (const f of qr.failures) {
               if (typeof f === 'object') {
                 console.log(`        ${C.yellow}[${f.check}]${C.reset} expected: ${C.green}${f.expected}${C.reset}`);
@@ -308,18 +322,22 @@ function printMatrix(allResults) {
   for (const suite of suites) {
     const sr = allResults.filter(r => r.suiteId === suite);
     console.log(`\n${C.bold}${C.cyan}═══ ${suite} ═══${C.reset}`);
-    console.log(`  ${C.bold}${'Mode'.padEnd(16)}${'Profile'.padEnd(20)}${'Pass'.padEnd(14)}${'Ctx Recall'.padEnd(13)}${'Ctx Prec'.padEnd(13)}${'Ctx F1'.padEnd(13)}${'Avg ms'}${C.reset}`);
-    console.log(`  ${'─'.repeat(90)}`);
+    console.log(`  ${C.bold}${'Mode'.padEnd(16)}${'Profile'.padEnd(14)}${'All'.padEnd(12)}${'Ans'.padEnd(12)}${'Ctx'.padEnd(12)}${'Recall'.padEnd(10)}${'Prec'.padEnd(10)}${'F1'.padEnd(10)}${'ms'}${C.reset}`);
+    console.log(`  ${'─'.repeat(96)}`);
 
     for (const r of sr) {
       if (r.error && !r.results.length) {
-        console.log(`  ${r.mode.padEnd(16)}${r.profile.padEnd(20)}${C.red}ERROR: ${r.error.slice(0, 50)}${C.reset}`);
+        console.log(`  ${r.mode.padEnd(16)}${r.profile.padEnd(14)}${C.red}ERROR: ${r.error.slice(0, 50)}${C.reset}`);
         continue;
       }
+      const n = r.total || r.results.length;
       const avgRecall = r.results.reduce((s, x) => s + (x.contextQuality?.recall || 0), 0) / r.results.length;
       const avgPrec = r.results.reduce((s, x) => s + (x.contextQuality?.precision || 0), 0) / r.results.length;
       const avgMs = Math.round(r.results.reduce((s, x) => s + x.durationMs, 0) / r.results.length);
-      console.log(`  ${r.mode.padEnd(16)}${r.profile.padEnd(20)}${colorPass(r.passed, r.failed).padEnd(26)}${colorScore(avgRecall).padEnd(24)}${colorScore(avgPrec).padEnd(24)}${colorScore(r.avgContextF1).padEnd(24)}${C.dim}${avgMs}ms${C.reset}`);
+      const allP = colorPass(r.passed, r.failed);
+      const ansP = colorPass(r.ansPassed ?? r.passed, n - (r.ansPassed ?? r.passed));
+      const ctxP = colorPass(r.ctxPassed ?? n, n - (r.ctxPassed ?? n));
+      console.log(`  ${r.mode.padEnd(16)}${r.profile.padEnd(14)}${allP.padEnd(24)}${ansP.padEnd(24)}${ctxP.padEnd(24)}${colorScore(avgRecall).padEnd(21)}${colorScore(avgPrec).padEnd(21)}${colorScore(r.avgContextF1).padEnd(21)}${C.dim}${avgMs}${C.reset}`);
     }
   }
 

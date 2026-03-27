@@ -1,12 +1,16 @@
-// DS023 — HDC/VSA Associative Retrieval Strategy
+// DS024 — HDC/VSA Associative Retrieval Strategy
+// Per-field structural matching with weighted fusion
 import { RetrievalStrategy } from './registry.mjs';
-import { randomHV, bind, bundle, encodeTokens, similarity, basis } from '../../lib/hdc.mjs';
+import { randomHV, bind, encodeNgrams, encodeTokens, similarity } from '../../lib/hdc.mjs';
 import { tokenize } from '../tokenizer.mjs';
+
+// Field weights for final score
+const FIELD_WEIGHTS = { role: 0.20, topic: 0.35, claim: 0.35, acts: 0.10 };
 
 export class HDCVSAStrategy extends RetrievalStrategy {
   constructor() {
     super();
-    this._unitVectors = new Map(); // unitId → Uint32Array
+    this._cache = new Map(); // unitId → { role, topic, claim, acts } vectors
   }
 
   getId() { return 'hdc-vsa'; }
@@ -14,58 +18,58 @@ export class HDCVSAStrategy extends RetrievalStrategy {
   getCostClass() { return 'cheap'; }
   supportsParallelExecution() { return true; }
 
-  // Encode a context unit into a hypervector
   _encodeUnit(unit) {
-    const parts = [];
-    if (unit.role) parts.push(bind(basis('role'), randomHV(unit.role)));
-    if (unit.topic) parts.push(bind(basis('topic'), encodeTokens(tokenize(unit.topic))));
-    if (unit.claim) parts.push(bind(basis('claim'), encodeTokens(tokenize(unit.claim))));
-    if (unit.procedure) parts.push(bind(basis('procedure'), encodeTokens(tokenize(unit.procedure))));
-    if (unit.utilityActs?.length) parts.push(bind(basis('acts'), encodeTokens(unit.utilityActs)));
-    return parts.length ? bundle(parts) : encodeTokens(tokenize(unit.topic || ''));
+    return {
+      role: unit.role ? randomHV(unit.role) : null,
+      topic: unit.topic ? encodeNgrams(tokenize(unit.topic)) : null,
+      claim: unit.claim ? encodeNgrams(tokenize(unit.claim)) : unit.procedure ? encodeNgrams(tokenize(unit.procedure)) : null,
+      acts: unit.utilityActs?.length ? encodeTokens(unit.utilityActs) : null
+    };
   }
 
-  // Encode a query from context profile
   _encodeQuery(contextProfile) {
-    const parts = [];
-    if (contextProfile.neededRoles?.length) {
-      parts.push(bind(basis('role'), bundle(contextProfile.neededRoles.map(r => randomHV(r)))));
+    const roleVecs = (contextProfile.neededRoles || []).map(r => randomHV(r));
+    return {
+      role: roleVecs.length ? encodeTokens(contextProfile.neededRoles) : null,
+      topic: contextProfile.queryTerms?.length ? encodeNgrams(contextProfile.queryTerms) : null,
+      claim: contextProfile.queryTerms?.length ? encodeNgrams(contextProfile.queryTerms) : null,
+      acts: contextProfile.actBoost ? randomHV(contextProfile.actBoost) : null
+    };
+  }
+
+  _scoreUnit(queryVecs, unitVecs) {
+    let total = 0, weightSum = 0;
+    for (const [field, weight] of Object.entries(FIELD_WEIGHTS)) {
+      const qv = queryVecs[field];
+      const uv = unitVecs[field];
+      if (!qv || !uv) continue;
+      const sim = similarity(qv, uv);
+      // Shift: random baseline is ~0.50, so meaningful signal is above that
+      const shifted = Math.max(0, (sim - 0.50) * 2); // maps 0.50→0, 0.75→0.50, 1.0→1.0
+      total += weight * shifted;
+      weightSum += weight;
     }
-    if (contextProfile.queryTerms?.length) {
-      parts.push(bind(basis('topic'), encodeTokens(contextProfile.queryTerms)));
-      parts.push(bind(basis('claim'), encodeTokens(contextProfile.queryTerms)));
-    }
-    if (contextProfile.actBoost) {
-      parts.push(bind(basis('acts'), randomHV(contextProfile.actBoost)));
-    }
-    return parts.length ? bundle(parts) : encodeTokens(contextProfile.queryTerms || []);
+    return weightSum > 0 ? total / weightSum : 0;
   }
 
   async retrieve({ contextProfile, sessionIndex, kbIndex, budget }) {
     const start = Date.now();
-    const queryVec = this._encodeQuery(contextProfile);
+    const queryVecs = this._encodeQuery(contextProfile);
     const maxCandidates = budget?.maxCandidates || 10;
     const candidates = [];
 
-    // Score all units from session + KB
     const sources = [];
     if (sessionIndex) for (const [id, u] of sessionIndex.units) sources.push({ unitId: id, unit: u, store: 'session' });
     if (kbIndex) for (const [id, u] of kbIndex.units) sources.push({ unitId: id, unit: u, store: 'kb' });
 
     for (const { unitId, unit, store } of sources) {
-      // Cache encoded vectors
-      if (!this._unitVectors.has(unitId)) this._unitVectors.set(unitId, this._encodeUnit(unit));
-      const score = similarity(queryVec, this._unitVectors.get(unitId));
-      if (score > 0.45) { // baseline threshold — random vectors have ~0.50 similarity
-        candidates.push({ unitId, store, rawScore: score, normalizedScore: 0, unit, notes: ['hdc-vsa'] });
+      if (!this._cache.has(unitId)) this._cache.set(unitId, this._encodeUnit(unit));
+      const score = this._scoreUnit(queryVecs, this._cache.get(unitId));
+      if (score > 0.05) {
+        candidates.push({ unitId, store, rawScore: score, normalizedScore: score, unit, notes: ['hdc-vsa'] });
       }
     }
 
-    // Normalize: shift so that 0.45→0, 1.0→1
-    const minThresh = 0.45;
-    for (const c of candidates) c.normalizedScore = Math.max(0, (c.rawScore - minThresh) / (1 - minThresh));
-
-    // Sort and limit
     candidates.sort((a, b) => b.normalizedScore - a.normalizedScore);
     return {
       strategyId: 'hdc-vsa',
@@ -75,6 +79,5 @@ export class HDCVSAStrategy extends RetrievalStrategy {
     };
   }
 
-  // Clear cache when KB changes
-  invalidate(unitId) { if (unitId) this._unitVectors.delete(unitId); else this._unitVectors.clear(); }
+  invalidate(unitId) { if (unitId) this._cache.delete(unitId); else this._cache.clear(); }
 }

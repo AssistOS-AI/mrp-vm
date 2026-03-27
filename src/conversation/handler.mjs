@@ -88,9 +88,16 @@ export class ConversationHandler {
   commitSuccessfulTurn(session, currentUserMessage, assistantMarkdown, currentTurnContextUnits, selectedModel, selectedProcessingMode, selectedRetrievalProfile) {
     session.messageLog.push({ role: 'user', content: currentUserMessage });
     session.messageLog.push({ role: 'assistant', content: assistantMarkdown });
-    // Add context units (respecting limit)
-    const remaining = this.maxContextUnits - session.sessionContextUnits.length;
-    const toAdd = (currentTurnContextUnits || []).slice(0, Math.max(0, remaining));
+    // Add context units (respecting limit and deduplicating by hash)
+    const existingHashes = new Set(session.sessionContextUnits.map(u => u.hash));
+    const toAdd = [];
+    for (const u of (currentTurnContextUnits || [])) {
+      if (session.sessionContextUnits.length + toAdd.length >= this.maxContextUnits) break;
+      if (!u.hash || !existingHashes.has(u.hash)) {
+        toAdd.push(u);
+        if (u.hash) existingHashes.add(u.hash);
+      }
+    }
     session.sessionContextUnits.push(...toAdd);
     // Update session index
     for (const u of toAdd) session.sessionIndex.addUnit(u);

@@ -48,8 +48,8 @@
   function buildContextHtml(group) {
     const items = [];
     for (const u of group.currentTurnContext || []) items.push(esc(u.claim || u.procedure || u.id));
-    for (const s of group.sessionSources || []) items.push(esc(s.unitId));
-    for (const s of group.kbSources || []) items.push(esc(s.unitId));
+    for (const s of group.sessionSources || []) items.push(esc(s.unit?.claim || s.unit?.procedure || s.unitId));
+    for (const s of group.kbSources || []) items.push(esc(s.unit?.claim || s.unit?.procedure || s.unitId));
     if (!items.length) return '<em>none</em>';
     return '<ul>' + items.map(i => `<li>${i}</li>`).join('') + '</ul>';
   }

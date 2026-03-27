@@ -227,7 +227,8 @@ export class CNLParser {
         condition: block.fields['Condition']?.value.trim() || null,
         procedure: block.fields['Procedure']?.value.trim() || null,
         utilityActs,
-        utilityNote: block.fields['UtilityNote']?.value.trim() || null
+        utilityNote: block.fields['UtilityNote']?.value.trim() || null,
+        hash: block.fields['Hash']?.value.trim() || null
       };
     });
   }

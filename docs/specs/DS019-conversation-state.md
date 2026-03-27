@@ -96,10 +96,8 @@ For an incoming request:
 Only after a successful response:
 
 1. Append the current `user` message to `messageLog`.
-2. Append the assistant Markdown response to
-   `messageLog`.
-3. Insert the current-turn context units into
-   `sessionContextUnits`.
+2. Append the assistant Markdown response to `messageLog`.
+3. Insert the current-turn context units into `sessionContextUnits`, performing **content-based deduplication** using unit hashes. If a unit with the same hash already exists in the session store, it is not added again.
 4. Rebuild or incrementally update `sessionIndex`.
 5. Persist the selected processing mode as session
    preference.

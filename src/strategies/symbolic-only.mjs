@@ -1,4 +1,5 @@
 // DS022 — Symbolic-Only Strategy
+import { createHash } from 'node:crypto';
 import { LanguageProcessingStrategy } from './registry.mjs';
 import { PRAGMATIC_ACTS } from '../lib/pragmatics.mjs';
 import { MRPError } from '../lib/errors.mjs';
@@ -35,7 +36,7 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
 
   async normalizeIntent({ rawNL }) {
     const act = detectAct(rawNL);
-    const sentences = rawNL.split(/[.?!]+/).map(s => s.trim()).filter(Boolean);
+    const sentences = rawNL.length < 200 ? [rawNL] : rawNL.split(/[.?!]+/).map(s => s.trim()).filter(Boolean);
     const intentCNL = sentences.map((s, i) => {
       const a = i === 0 ? act : detectAct(s);
       return `## Intent Group ${i + 1}\nAct: ${a}\nIntent: ${s}\nOutput: Structured response.`;
@@ -44,16 +45,20 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
   }
 
   async extractSessionContext({ rawNL }) {
-    // Extract factual statements (heuristic: sentences with "is", "are", "use", "have", not questions)
+    // Extract factual statements
     const sentences = rawNL.split(/[.!]+/).map(s => s.trim()).filter(Boolean);
     const facts = sentences.filter(s => !s.endsWith('?') && !s.startsWith('Please') && !s.startsWith('Can you')
-      && /\b(is|are|use|have|has|deploy|run|prefer|need|require|want)\b/i.test(s));
+      && /\b(is|are|use|have|has|deploy|run|prefer|need|require|want|live|exist|situated|located)\b/i.test(s));
     if (facts.length === 0) return { contextCNL: '' };
     const units = facts.map((f, i) => {
       const role = /\b(prefer|want|like)\b/i.test(f) ? 'Evaluation' :
-                   /\b(deploy|run|environment|server)\b/i.test(f) ? 'Constraint' : 'Explanation';
-      const acts = [detectAct(f)];
-      return `## Context Unit session::turn::unit-${String(i).padStart(3, '0')}\nSourceId: session\nChunkId: session::turn\nRole: ${role}\nTopic: ${f.substring(0, 50)}\nClaim: ${f}\nUtilityActs: ${acts.join(', ')}`;
+                   /\b(deploy|run|environment|server|only|must|should)\b/i.test(f) ? 'Constraint' : 'Explanation';
+      const act = detectAct(f);
+      const acts = [act];
+      // Improved topic: take more significant words
+      const topic = f.split(/\s+/).slice(0, 8).join(' ').replace(/[^\w\s-]/g, '');
+      const hash = createHash('sha256').update(`${f}|${role}|${topic}`).digest('hex');
+      return `## Context Unit session::turn::unit-${String(i).padStart(3, '0')}\nSourceId: session\nChunkId: session::turn\nRole: ${role}\nTopic: ${topic}\nClaim: ${f}\nUtilityActs: ${acts.join(', ')}\nHash: ${hash}`;
     }).join('\n\n');
     return { contextCNL: units };
   }
@@ -67,10 +72,12 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
                    /\bcompar|versus|vs\b/i.test(s) ? 'Comparison' : 'Explanation';
       const acts = [detectAct(s)];
       const unitId = `${provenance.sourceId}::${provenance.chunkId.split('::').pop()}::unit-${String(i).padStart(3, '0')}`;
-      let md = `## Context Unit ${unitId}\nSourceId: ${provenance.sourceId}\nChunkId: ${provenance.chunkId}\nRole: ${role}\nTopic: ${s.substring(0, 50)}\n`;
+      const topic = s.substring(0, 50);
+      const hash = createHash('sha256').update(`${s}|${role}|${topic}`).digest('hex');
+      let md = `## Context Unit ${unitId}\nSourceId: ${provenance.sourceId}\nChunkId: ${provenance.chunkId}\nRole: ${role}\nTopic: ${topic}\n`;
       if (role === 'Procedure') md += `Procedure: ${s}\n`;
       else md += `Claim: ${s}\n`;
-      md += `UtilityActs: ${acts.join(', ')}`;
+      md += `UtilityActs: ${acts.join(', ')}\nHash: ${hash}`;
       return md;
     }).join('\n\n');
     return { contextCNL: units };
@@ -127,8 +134,8 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
         intent: ri.decomposed.intent,
         status,
         currentTurnContext: ri.currentTurnContextUnits,
-        sessionSources: ri.sessionUnits.map(s => ({ unitId: s.unitId, score: s.score })),
-        kbSources: ri.kbUnits.map(s => ({ sourceId: s.unit?.sourceId, unitId: s.unitId, score: s.score })),
+        sessionSources: ri.sessionUnits.map(s => ({ unitId: s.unitId, score: s.score, unit: s.unit })),
+        kbSources: ri.kbUnits.map(s => ({ sourceId: s.unit?.sourceId, unitId: s.unitId, score: s.score, unit: s.unit })),
         pluginOutput: po || null,
         answerMarkdown: groupAnswer,
         warnings: po?.status === 'error' ? [`Plugin error: ${po.error?.message || 'unknown'}`] : []

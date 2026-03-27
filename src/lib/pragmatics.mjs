@@ -34,5 +34,5 @@ export const INTENT_ALLOWED_FIELDS = ['Act', 'Intent', 'Context', 'Criterion', '
 export const CONTEXT_REQUIRED_FIELDS = ['SourceId', 'ChunkId', 'Role', 'Topic'];
 export const CONTEXT_ALLOWED_FIELDS = [
   'SourceId', 'ChunkId', 'Role', 'Topic', 'Claim',
-  'Condition', 'Procedure', 'UtilityActs', 'UtilityNote'
+  'Condition', 'Procedure', 'UtilityActs', 'UtilityNote', 'Hash'
 ];
