@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Neuro-Symbolic Virtual Machine (MRP-VM) Architecture</title>
+<style>
+  :root { --bg: #fff; --text: #333; --accent: #01579b; --border: #ddd; --code-bg: #f4f4f4; }
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: var(--text); max-width: 900px; margin: 0 auto; padding: 2rem; }
+  h1, h2, h3 { color: #111; }
+  h1 { border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; }
+  h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin-top: 2rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul { padding-left: 1.5rem; }
+  li { margin-bottom: 0.5rem; }
+  .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-style: italic; display: flex; justify-content: space-between; }
+  .nav a { font-weight: bold; }
+  svg { max-width: 100%; height: auto; margin: 2rem 0; display: block; }
+</style>
+</head>
+<body>
+  <h1>The Neuro-Symbolic Virtual Machine (MRP-VM)</h1>
+
+  <h2>Architecture: The Governed Control Layer</h2>
+  <p>The <strong>MRP-VM</strong> functions as a governed runtime for language-centric execution. Unlike conventional VMs that process opcodes (e.g., JVM or EVM), MRP-VM processes <strong>Intents</strong> and <strong>Context</strong> expressed in Controlled Natural Language (CNL) [DS001].</p>
+
+  <h3>Core Architecture and Components</h3>
+  <p>The architecture is designed around the <strong>MRPEngine</strong>, the central orchestrator responsible for managing the request lifecycle across twelve distinct phases [DS002].</p>
+
+  <svg width="800" height="400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
+    <rect x="10" y="10" width="780" height="380" fill="#f9f9f9" stroke="#333" stroke-width="2"/>
+    
+    <!-- Core -->
+    <rect x="300" y="50" width="200" height="60" rx="10" fill="#e1f5fe" stroke="#01579b" stroke-width="2"/>
+    <text x="400" y="85" font-family="Arial" font-size="16" text-anchor="middle" font-weight="bold">MRP Core Engine</text>
+    
+    <!-- Layers -->
+    <rect x="50" y="150" width="140" height="50" rx="5" fill="#fff9c4" stroke="#fbc02d" stroke-width="1.5"/>
+    <text x="120" y="180" font-family="Arial" font-size="14" text-anchor="middle">Normalizer</text>
+    
+    <rect x="210" y="150" width="140" height="50" rx="5" fill="#fff9c4" stroke="#fbc02d" stroke-width="1.5"/>
+    <text x="280" y="180" font-family="Arial" font-size="14" text-anchor="middle">Decomposer</text>
+    
+    <rect x="370" y="150" width="140" height="50" rx="5" fill="#fff9c4" stroke="#fbc02d" stroke-width="1.5"/>
+    <text x="440" y="180" font-family="Arial" font-size="14" text-anchor="middle">Retrieval</text>
+    
+    <rect x="530" y="150" width="140" height="50" rx="5" fill="#fff9c4" stroke="#fbc02d" stroke-width="1.5"/>
+    <text x="600" y="180" font-family="Arial" font-size="14" text-anchor="middle">Synthesis</text>
+    
+    <!-- Storage/Plugins -->
+    <rect x="250" y="260" width="140" height="50" rx="5" fill="#dcedc8" stroke="#33691e" stroke-width="1.5"/>
+    <text x="320" y="290" font-family="Arial" font-size="14" text-anchor="middle">Knowledge Base</text>
+    
+    <rect x="410" y="260" width="140" height="50" rx="5" fill="#f8bbd0" stroke="#880e4f" stroke-width="1.5"/>
+    <text x="480" y="290" font-family="Arial" font-size="14" text-anchor="middle">Plugins (Wrappers)</text>
+    
+    <!-- Connections -->
+    <path d="M 400 110 L 400 130 L 120 130 L 120 150" fill="none" stroke="#333" stroke-width="1.5"/>
+    <path d="M 400 110 L 400 150" fill="none" stroke="#333" stroke-width="1.5" stroke-dasharray="5,5"/>
+    <path d="M 400 110 L 400 130 L 280 130 L 280 150" fill="none" stroke="#333" stroke-width="1.5"/>
+    <path d="M 400 110 L 400 130 L 600 130 L 600 150" fill="none" stroke="#333" stroke-width="1.5"/>
+    
+    <path d="M 440 200 L 440 230 L 320 230 L 320 260" fill="none" stroke="#333" stroke-width="1.5"/>
+    <path d="M 440 200 L 440 230 L 480 230 L 480 260" fill="none" stroke="#333" stroke-width="1.5"/>
+  </svg>
+
+  <h3>Structural Components</h3>
+  <ol>
+    <li><strong>MRPEngine</strong>: The central coordinator [DS002]. It manages the request state, enforces operational budgets (e.g., LLM attempt limits), and handles the transitions between neural and symbolic phases.</li>
+    <li><strong>NL Normalizer</strong>: The "semantic bridge" [DS006]. It utilizes LLMs (under <code>llm-assisted</code> strategy) to translate raw input into <strong>Intent CNL</strong> and <strong>Context CNL</strong>. This normalization phase is crucial for grounding subsequent steps in a formal, auditable format.</li>
+    <li><strong>Intent Decomposer</strong>: A symbolic module that splits complex requests into discrete, actionable <strong>Intent Groups</strong> [DS011]. Each group is assigned a <strong>Pragmatic Act</strong> (e.g., <em>compare</em>, <em>verify</em>, <em>implement</em>) that guides the selection of the appropriate execution regime [DS004].</li>
+    <li><strong>Retrieval &amp; Context Matching</strong>: A multi-strategy engine [DS012, DS023] that gathers evidence from:
+      <ul>
+        <li><strong>Current-Turn Context</strong>: Facts extracted from the user's latest message.</li>
+        <li><strong>Session context</strong>: Temporary facts persisted during the current conversation [DS019].</li>
+        <li><strong>Persistent Knowledge Base</strong>: Long-term organizational knowledge [DS008].</li>
+      </ul>
+    </li>
+    <li><strong>Plugin System (External Interpreters)</strong>: The "ALU" of the VM [DS003, DS016]. Specialized processes (e.g., Z3 solvers or domain-specific code) are invoked to solve formal parts of the intent, returning results back in CNL.</li>
+    <li><strong>Answer Synthesizer</strong>: The final output generator [DS017]. It produces structured Markdown that cites explicit evidence, ensuring that the assistant's answer is grounded and verifiable.</li>
+  </ol>
+
+  <h3>The Neuro-Symbolic Boundary</h3>
+  <p>The MRP-VM enforces a strict boundary between <strong>neural intuition</strong> and <strong>symbolic logic</strong>.</p>
+  <ul>
+    <li>LLMs are relegated to the roles of <strong>Normalizers</strong> and <strong>Synthesizers</strong>, where their creative fluidity is an asset.</li>
+    <li>Logical reasoning, fact retrieval, and formal verification are handled by <strong>Symbolic Decomposers, Retrieval Indices, and Specialized Plugins</strong>, where precision is paramount.</li>
+  </ul>
+  <p>By separating these concerns, the VM provides a predictable environment where errors can be localized (e.g., a "Plugin Error" vs. a "Retrieval Timeout") and corrected with precision [DS001].</p>
+
+  <div class="nav">
+    <span>&larr; <a href="index.html">The Vision</a></span>
+    <span>Next: <a href="PIPELINE.html">The Intent Decomposition and Lifecycle</a> &rarr;</span>
+  </div>
+</body>
+</html>

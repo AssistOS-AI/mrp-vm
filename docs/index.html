@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meta-Rational Pragmatics Virtual Machine (MRP-VM)</title>
+<style>
+  :root { --bg: #fff; --text: #333; --accent: #01579b; --border: #ddd; --code-bg: #f4f4f4; }
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: var(--text); max-width: 900px; margin: 0 auto; padding: 2rem; }
+  h1, h2, h3 { color: #111; }
+  h1 { border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; }
+  h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin-top: 2rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul { padding-left: 1.5rem; }
+  li { margin-bottom: 0.5rem; }
+  .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-style: italic; }
+  .nav a { font-weight: bold; }
+  .references { margin-top: 2rem; font-size: 0.9em; color: #555; }
+</style>
+</head>
+<body>
+  <h1>Meta-Rational Pragmatics Virtual Machine (MRP-VM)</h1>
+
+  <h2>The Vision: A New Generation of Agentic Architectures</h2>
+  <p>The <strong>Meta-Rational Pragmatics Virtual Machine (MRP-VM)</strong> represents a fundamental shift in the design of autonomous agents and language-processing systems. Moving beyond the limitations of monolithic Large Language Models (LLMs) and opaque "agentic loops," MRP-VM introduces a disciplined <strong>neuro-symbolic control layer</strong> [1].</p>
+
+  <p>At its core, MRP-VM is a prototype for the <strong>Meta-Rational Pragmatics (MRP)</strong> approach—a framework that treats the coordination of multiple reasoning regimes (neural, symbolic, and retrieval-based) as a first-class architectural concern.</p>
+
+  <h3>From Model Continuation to Governed Execution</h3>
+  <p>In traditional AI systems, execution is often synonymous with model inference—a "black box" process that is difficult to audit or formally verify. MRP-VM reframes this by conceptualizing the <strong>Virtual Machine</strong> not as a processor of low-level binary instructions, but as an <strong>orchestrator of natural language interpreters</strong>.</p>
+
+  <p>Each specialized skill or "plugin" added to the system functions as a new type of interpreter. These range from:</p>
+  <ul>
+    <li><strong>Neural Interpreters</strong>: Leveraging LLMs for broad semantic normalization and creative synthesis.</li>
+    <li><strong>Symbolic Interpreters</strong>: Utilizing SMT solvers (like Z3), formal logic, or deterministic code for high-precision verification and constraint satisfaction.</li>
+    <li><strong>Pragmatic Interpreters</strong>: Specialized rulesets optimized for specific classes of problems, such as diagnostic reasoning or procedural implementation.</li>
+  </ul>
+
+  <h3>The Neuro-Symbolic Synthesis</h3>
+  <p>MRP-VM operates on the principle of <strong>Disciplined Semantic Pluralism</strong> [1]. It recognizes that no single model or theory is universally adequate. Instead, the VM manages a plurality of "partially adequate" models, routing execution to the most appropriate "regime" based on the user's intent and the available context.</p>
+
+  <p>The process is inherently neuro-symbolic:</p>
+  <ol>
+    <li><strong>Neural Normalization</strong>: LLMs are used as "semantic front-ends" to translate messy, ambiguous natural language into a <strong>Controlled Natural Language (CNL)</strong> [DS004, DS005].</li>
+    <li><strong>Context Preparation</strong>: The system systematically prepares the "session context" and retrieves relevant evidence from the "Knowledge Base" [DS008, DS019].</li>
+    <li><strong>Symbolic Execution</strong>: The prepared "Resolved Intent" is dispatched to the optimal interpreter, where the problem is solved within a governed and verifiable frame [DS003, DS016].</li>
+  </ol>
+
+  <p>By grounding execution in explicit intents and auditable evidence, MRP-VM transforms the "opaque execution" of current AI into a <strong>dependable, legible, and auditable system</strong> [1].</p>
+
+  <div class="references">
+    <p><strong>References and Further Reading:</strong></p>
+    <ul>
+      <li>[1] <a href="https://agisystem2.com/MRP/index.html" target="_blank">Meta Rational Pragmatics (MRP) — AGISystem2</a></li>
+      <li>[DS001] <a href="./specs/DS001-general-architecture.md">General Architecture</a></li>
+      <li>[DS002] <a href="./specs/DS002-mrp-vm-core.md">MRP-VM Core Engine</a></li>
+    </ul>
+  </div>
+
+  <div class="nav">
+    Next: <a href="ARCH-VM.html">The Virtual Machine Architecture</a>
+  </div>
+</body>
+</html>

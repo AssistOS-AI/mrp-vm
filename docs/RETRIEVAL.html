@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knowledge, Context, and Retrieval Profiles - MRP-VM</title>
+<style>
+  :root { --bg: #fff; --text: #333; --accent: #01579b; --border: #ddd; --code-bg: #f4f4f4; }
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: var(--text); max-width: 900px; margin: 0 auto; padding: 2rem; }
+  h1, h2, h3 { color: #111; }
+  h1 { border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; }
+  h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin-top: 2rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul, ol { padding-left: 1.5rem; }
+  li { margin-bottom: 0.5rem; }
+  table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.95em; }
+  th, td { border: 1px solid var(--border); padding: 0.75rem; text-align: left; vertical-align: top; }
+  th { background: #f9f9f9; }
+  code { font-family: monospace; background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.9em;}
+  .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-style: italic; display: flex; justify-content: space-between; }
+  .nav a { font-weight: bold; }
+</style>
+</head>
+<body>
+  <h1>Knowledge, Context, and Retrieval Profiles</h1>
+
+  <h2>Memory: From Raw Data to Contextual Evidence</h2>
+  <p>In MRP-VM, "Knowledge" is not a static repository of documents, but an actively governed store of <strong>Context Units</strong> [DS005].</p>
+
+  <h3>The Knowledge Base (KB) Ingest Pipeline</h3>
+  <p>When a raw document (e.g., Markdown or plain text) is added to the <strong>Knowledge Base</strong> [DS008], it undergoes an atomic transformation process:</p>
+  <ol>
+    <li><strong>Semantic Chunking</strong>: The document is segmented into chunks small enough for coherent reasoning but large enough to preserve context [DS018].</li>
+    <li><strong>Context Normalization</strong>: Each chunk is transformed into one or more <strong>Context CNL Units</strong>. These units are enriched with pragmatic information:
+      <ul>
+        <li><strong>Role</strong>: The function of the information (e.g., <em>Procedure</em>, <em>Constraint</em>, <em>Definition</em>) [DS005].</li>
+        <li><strong>Utility Acts</strong>: A list of pragmatic acts the unit is particularly well-suited to serve (e.g., <em>compare</em>, <em>implement</em>).</li>
+      </ul>
+    </li>
+  </ol>
+  <p>This process ensures that "raw language" is systematically converted into <strong>"symbolic evidence"</strong> that the VM can query and match with high precision.</p>
+
+  <h3>The Session Context Store</h3>
+  <p>A key differentiator of MRP-VM is its handling of <strong>Session Context</strong> [DS019]. The system does not simply store the full transcript of a conversation. Instead, it extracts factual details, preferences, and constraints from each user turn and persists them as temporary <strong>Context Units</strong>.</p>
+  <p>Importantly, the system explicitly excludes direct requests, questions, or assistant-authored text from this store. This ensures the <strong>Session Context</strong> contains only stable, user-established facts, creating a "clean" environment for reasoning.</p>
+
+  <h3>Retrieval Strategies and Risk Profiles</h3>
+  <p>The matching of intents with context is orchestrated through a pluggable <strong>Strategy Layer</strong> [DS012, DS023].</p>
+
+  <ul>
+    <li><strong>Lexical Matching (BM25)</strong>: The baseline strategy for exact token overlap [DS009].</li>
+    <li><strong>HDC/VSA Associative Matching</strong>: A neuro-symbolic strategy using high-dimensional vectors (hypervectors) for fast, approximate matching of structural patterns (e.g., matching a topic even when exact keywords differ) [DS024].</li>
+    <li><strong>Symbolic Grounding</strong>: Advanced strategies that use symbolic logic to confirm or prune retrieved evidence based on formal constraints [DS023].</li>
+  </ul>
+
+  <p>These strategies are configured into <strong>Retrieval Risk Profiles</strong> that manage the trade-off between latency, recall, and certainty:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Profile</th>
+        <th>Strategy Lifecycle</th>
+        <th>Use Case</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>fast</code></td>
+        <td>Single lexical pass.</td>
+        <td>Lowest latency, high keyword reliance.</td>
+      </tr>
+      <tr>
+        <td><code>balanced</code></td>
+        <td>Lexical pass + conditional escalation.</td>
+        <td>Recommended default for general interaction.</td>
+      </tr>
+      <tr>
+        <td><code>wide-recall</code></td>
+        <td>Parallel execution of multiple strategies.</td>
+        <td>Maximum evidence discovery for complex queries.</td>
+      </tr>
+      <tr>
+        <td><code>symbolic-grounded</code></td>
+        <td>Lexical pass followed by symbolic pruning.</td>
+        <td>High-certainty reasoning for formal domains.</td>
+      </tr>
+      <tr>
+        <td><code>meta-rational</code></td>
+        <td>Adaptive escalation and cross-strategy fusion.</td>
+        <td>The most advanced "rational" profile [DS023].</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>By choosing the right profile, the VM can optimize its "regime of truth" for the task at hand.</p>
+
+  <div class="nav">
+    <span>&larr; <a href="PIPELINE.html">The Intent Decomposition and Lifecycle</a></span>
+    <span>Next: <a href="PLUGINS.html">The Plugin Ecosystem and Symbolic Grounding</a> &rarr;</span>
+  </div>
+</body>
+</html>
