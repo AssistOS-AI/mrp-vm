@@ -36,13 +36,17 @@ Each session stores:
   preferredProcessingMode: "llm-assisted" |
     "symbolic-only",
   preferredRetrievalProfile: "fast" | "balanced" |
-    "wide-recall",
+    "wide-recall" | "thinkingdb",
   messageLog: Message[],
   systemPrompt: string | null,
   sessionContextUnits: ContextUnit[],
   sessionIndex: KBIndexLike
 }
 ```
+
+`wide-recall` is retained only for backward
+compatibility. New sessions SHOULD prefer `fast`,
+`balanced`, or, once implemented, `thinkingdb`.
 
 `messageLog` is for transcript continuity and prompt
 history.

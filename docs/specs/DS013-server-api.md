@@ -272,6 +272,10 @@ Response:
 }
 ```
 
+`wide-recall` MAY still appear in profile discovery
+for backward compatibility, but it is obsolete and
+excluded from the default evaluation matrix.
+
 ### POST /v1/kb/sources
 Attach a new source to persistent KB.
 

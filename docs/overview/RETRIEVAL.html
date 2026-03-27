@@ -55,9 +55,9 @@
   <tr><th>Profile</th><th>Strategies</th><th>Results</th><th>Use Case</th></tr>
   <tr><td><code>fast</code></td><td>BM25 only</td><td>Top 3</td><td>Simple questions, max precision</td></tr>
   <tr><td><code>balanced</code></td><td>BM25 + HDC escalation</td><td>Top 7</td><td>Default, good tradeoff</td></tr>
-  <tr><td><code>wide-recall</code></td><td>BM25 + HDC parallel</td><td>Top 15</td><td>Complex questions, max coverage</td></tr>
+  <tr><td><code>wide-recall</code></td><td>Legacy BM25 + HDC parallel</td><td>Top 15</td><td>Obsolete compatibility profile, not recommended</td></tr>
 </table>
-<p>A <a href="../future/symbolic-execution.html">symbolic execution strategy</a> for constraint-based pruning is proposed but not yet implemented.</p>
+<p><code>wide-recall</code> is now treated as obsolete and incomplete. The planned replacement is <code>thinkingdb</code>, a bounded symbolic retrieval profile specified in DS025. A separate <a href="../future/symbolic-execution.html">symbolic execution strategy</a> <a href="../future/thinkingdb.html">ThinkingDB</a> for constraint-based pruning is also proposed but not yet implemented.</p>
 
 <div class="nav-bottom">
   <a href="PIPELINE.html" class="prev">← Pipeline</a>

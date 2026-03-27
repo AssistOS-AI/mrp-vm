@@ -29,8 +29,13 @@ Evaluation operates on:
   `symbolic-only`, or both.
 - Evaluation suites must declare the target
   retrieval profile: `fast`, `balanced`,
-  `wide-recall`, `symbolic-grounded`,
-  `meta-rational`, or a defined subset.
+  `thinkingdb`, `wide-recall`,
+  `symbolic-grounded`, `meta-rational`,
+  or a defined subset.
+- `wide-recall` is obsolete compatibility coverage.
+  It MAY be evaluated explicitly, but it is excluded
+  from the default evaluation matrix and SHOULD NOT
+  be used as the recommended profile for new suites.
 - Evaluation expectations are phrased in terms of
   output intent grouping, status, context usage,
   provenance, and answer content bands.

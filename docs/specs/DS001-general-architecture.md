@@ -48,7 +48,10 @@ processing strategy requires LLMs.
 - v1 supports selectable processing modes:
   `llm-assisted` and `symbolic-only`.
 - v1 supports selectable retrieval profiles:
-  `fast`, `balanced`, and `wide-recall`.
+  `fast`, `balanced`, and legacy `wide-recall`
+  compatibility coverage.
+- DS025 defines `thinkingdb` as the intended
+  symbolic successor to `wide-recall`.
 - v1 baseline retrieval uses BM25 lexical search
   and HDC/VSA associative matching.
 - Working language in v1: English-only. Input in other

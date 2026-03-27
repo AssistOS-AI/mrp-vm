@@ -1,5 +1,5 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Retrieval Algorithms - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
-<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html" class="current">Retrieval</a> <a href="processing-modes.html">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html">Cache</a></nav>
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html" class="current">Retrieval</a> <a href="processing-modes.html">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="../future/thinkingdb.html">ThinkingDB</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html">Cache</a></nav>
 
 <h1>Retrieval Algorithms — BM25 &amp; HDC/VSA <span class="badge done">IMPLEMENTED</span></h1>
 <p>MRP-VM uses two complementary retrieval strategies to find relevant evidence. Specs: <a href="../specs/DS009-kb-indexing-retrieval.md">DS009</a>, <a href="../specs/DS023-retrieval-strategies.md">DS023</a>, <a href="../specs/DS024-hdc-vsa-retrieval.md">DS024</a>.</p>
@@ -77,10 +77,11 @@ finalScore = 0.35×topic + 0.35×claim + 0.20×role + 0.10×acts</code></pre>
 <tr><th>Profile</th><th>Strategies</th><th>maxResults</th><th>minScore</th><th>Gap Threshold</th><th>Use Case</th></tr>
 <tr><td><strong>fast</strong></td><td>BM25 only</td><td>3</td><td>0.3</td><td>50%</td><td>Simple questions, max precision</td></tr>
 <tr><td><strong>balanced</strong></td><td>BM25 + HDC escalation</td><td>7</td><td>0.15</td><td>35%</td><td>Default, good tradeoff</td></tr>
-<tr><td><strong>wide-recall</strong></td><td>BM25 + HDC parallel</td><td>15</td><td>0.05</td><td>15%</td><td>Complex questions, max coverage</td></tr>
+<tr><td><strong>wide-recall</strong></td><td>Legacy BM25 + HDC parallel</td><td>15</td><td>0.05</td><td>15%</td><td>Obsolete compatibility profile, not recommended</td></tr>
 </table>
 <p><strong>Escalation</strong> (balanced): HDC runs only when BM25 returns fewer than <code>minAcceptableCandidates</code>.<br>
-<strong>Parallel</strong> (wide-recall): both run simultaneously, results fused with agreement bonus.</p>
+<strong>Legacy Parallel</strong> (wide-recall): documented for compatibility only and excluded from the default evaluation matrix.<br>
+<strong>Planned Successor</strong> (thinkingdb): bounded symbolic closure over normalized facts as specified by DS025.</p>
 
 <div class="nav-bottom"><a href="cnl-formats.html" class="prev">← CNL Formats</a> <a href="processing-modes.html">Processing Modes →</a></div>
 </div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

@@ -128,7 +128,11 @@ similarity exists.
 |---------|----------|
 | `fast` | Not used. BM25 only. |
 | `balanced` | Secondary. Escalation when BM25 returns fewer than `minAcceptableCandidates`. |
-| `wide-recall` | Primary alongside BM25. Parallel execution, results fused with agreement bonus. |
+| `wide-recall` | Legacy primary alongside BM25. Obsolete compatibility mode only. |
+
+`wide-recall` is no longer the recommended path for
+broader retrieval. DS025 defines `thinkingdb` as the
+planned symbolic successor profile.
 
 ## Fusion with BM25
 

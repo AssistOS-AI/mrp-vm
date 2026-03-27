@@ -111,7 +111,8 @@ precision, recall, and explainability.
 
 ```javascript
 {
-  id: "fast" | "balanced" | "wide-recall",
+  id: "fast" | "balanced" | "wide-recall" |
+    "thinkingdb",
   primaryStrategies: string[],
   secondaryStrategies: string[],
   allowParallel: boolean,
@@ -149,13 +150,22 @@ between profiles when using the same strategies.
   `minAcceptableCandidates`.
 - Recommended default.
 
-#### `wide-recall`
-- BM25 and HDC/VSA run in parallel as co-primaries.
-- `maxResults: 15`, `minScore: 0.05`.
-- Maximizes candidate coverage before fusion.
-- Best for complex, multi-faceted questions.
-- Higher noise expected; fusion and agreement bonus
-  help rank relevant results higher.
+#### `wide-recall` (obsolete compatibility profile)
+- Kept only for backward compatibility.
+- Marked obsolete and incomplete.
+- Not part of the default evaluation matrix.
+- Superseded conceptually by the future
+  `thinkingdb` profile from DS025.
+- Should not be chosen as the recommended path for
+  new symbolic or multi-hop retrieval work.
+
+#### `thinkingdb` (planned replacement profile)
+- Defined by DS025.
+- BM25 remains primary.
+- A symbolic `thinkingdb-symbolic` strategy runs as
+  bounded local-closure expansion.
+- Intended to replace `wide-recall` as the richer
+  multi-hop retrieval profile.
 
 ## Adaptive Escalation Rules
 
@@ -224,6 +234,9 @@ Implemented strategies:
 - `bm25-lexical` (DS009)
 - `hdc-vsa-associative` (DS024)
 
+Planned symbolic strategy:
+- `thinkingdb-symbolic` (DS025)
+
 ## Configuration
 
 `config/retrieval-strategies.json`:
@@ -276,6 +289,12 @@ Implemented strategies:
   "agreementBonus": 0.15
 }
 ```
+
+`wide-recall` remains in config only as a legacy
+compatibility profile. It SHOULD be marked obsolete
+in documentation and SHOULD be excluded from the
+default evaluation matrix. DS025 defines
+`thinkingdb` as its intended successor.
 
 ## UI/API Integration
 

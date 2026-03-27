@@ -75,6 +75,8 @@ Agent conversations may use Romanian or other languages.
 |----|------|------|
 | DS023 | [DS023-retrieval-strategies.md](docs/specs/DS023-retrieval-strategies.md) | Retrieval strategy interface: pluggable lexical, semantic, HDC/VSA, and symbolic relevance filters, plus risk profiles and fusion rules. |
 | DS024 | [DS024-hdc-vsa-retrieval.md](docs/specs/DS024-hdc-vsa-retrieval.md) | HDC/VSA associative retrieval: binary hypervectors, per-field structural matching, n-gram encoding, complementary to BM25. |
+| DS025 | [DS025-thinkingdb-symbolic-retrieval.md](docs/specs/DS025-thinkingdb-symbolic-retrieval.md) | ThinkingDB symbolic retrieval: bounded local closure over Context CNL symbolic facts, proof-bearing ranking, and a future `thinkingdb` profile replacing `wide-recall`. |
+| DS025 | [DS025-thinkingdb-symbolic-retrieval.md](docs/specs/DS025-thinkingdb-symbolic-retrieval.md) | ThinkingDB symbolic retrieval: bounded local closure over Context CNL symbolic facts, proof-bearing ranking, and a future `thinkingdb` profile replacing `wide-recall`. |
 
 ## Answer Synthesis
 
@@ -138,6 +140,7 @@ DS013 (Server) ──→ DS002 (Core)
   │                  ├→ DS012 (Retrieval)
   │                  │    ├→ DS009 (Indexing/BM25)
   │                  │    ├→ DS023 (retrieval strategies)
+  │                  │    ├→ DS025 (ThinkingDB symbolic closure)
   │                  │    └→ DS004 (canonical mapping)
   │                  │
   │                  ├→ DS017 (Answer Synthesis)

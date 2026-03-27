@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ThinkingDB Symbolic Retrieval - MRP-VM</title>
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="page">
+<nav class="top">
+  <a href="../index.html">Home</a>
+  <a href="../architecture/engine.html">Engine</a>
+  <a href="../concepts/cnl-formats.html">CNL</a>
+  <a href="../concepts/retrieval-algorithms.html">Retrieval</a>
+  <a href="../concepts/processing-modes.html">Modes</a>
+  <a href="../architecture/plugin-guide.html">Plugins</a>
+  <a href="../architecture/session-lifecycle.html">Sessions</a>
+  <a href="agentic-loops.html">Agentic Loops</a>
+  <a href="symbolic-execution.html">Symbolic Exec</a>
+  <a href="thinkingdb.html" class="current">ThinkingDB</a>
+  <a href="../concepts/evaluation.html">Evaluation</a>
+  <a href="../concepts/llm-cache.html">Cache</a>
+</nav>
+
+<h1>ThinkingDB — Symbolic Retrieval <span class="badge planned">NOT IMPLEMENTED</span></h1>
+<p>A bounded symbolic reasoning layer that supplements BM25 and HDC/VSA with local logical closure over structured facts. Full spec: <a href="../specs/DS025-thinkingdb-symbolic-retrieval.md">DS025</a>.</p>
+
+<h2>What Problem Does It Solve?</h2>
+<p>BM25 finds units that share words with the query. HDC/VSA finds units with similar structure. Neither can <strong>compose facts</strong>. If the KB says "AchillesIDE uses Ploinky" and "Ploinky provides sandboxing", neither BM25 nor HDC can conclude that "AchillesIDE has sandboxing capability" — that requires a reasoning step.</p>
+<p>ThinkingDB performs bounded symbolic composition: given seed facts near the query, it applies rules to derive new facts and traces which original KB units participated in the proof.</p>
+
+<svg class="diagram" width="750" height="220" viewBox="0 0 750 220" xmlns="http://www.w3.org/2000/svg">
+  <rect x="20" y="20" width="160" height="45" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="100" y="47" text-anchor="middle" font-size="11" font-family="system-ui" font-weight="bold">Seed Facts</text>
+  <text x="100" y="80" text-anchor="middle" font-size="9" font-family="system-ui" fill="#555">A uses B</text>
+  <text x="100" y="93" text-anchor="middle" font-size="9" font-family="system-ui" fill="#555">B provides C</text>
+
+  <path d="M180 42 L240 42" stroke="#334155" stroke-width="1.5" marker-end="url(#at)"/>
+
+  <rect x="240" y="20" width="180" height="45" rx="6" fill="#fef9c3" stroke="#ca8a04" stroke-width="2"/><text x="330" y="47" text-anchor="middle" font-size="11" font-family="system-ui" font-weight="bold">Rule Application</text>
+  <text x="330" y="80" text-anchor="middle" font-size="9" font-family="system-ui" fill="#555">if ?x uses ?y AND ?y provides ?z</text>
+  <text x="330" y="93" text-anchor="middle" font-size="9" font-family="system-ui" fill="#555">then ?x has_capability ?z</text>
+
+  <path d="M420 42 L480 42" stroke="#334155" stroke-width="1.5" marker-end="url(#at)"/>
+
+  <rect x="480" y="20" width="180" height="45" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/><text x="570" y="47" text-anchor="middle" font-size="11" font-family="system-ui" font-weight="bold">Derived Fact</text>
+  <text x="570" y="80" text-anchor="middle" font-size="9" font-family="system-ui" fill="#555">A has_capability C</text>
+  <text x="570" y="93" text-anchor="middle" font-size="9" font-family="system-ui" fill="#555">conf: 0.90, proof: 2 steps</text>
+
+  <path d="M570 65 L570 130" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#at)"/>
+
+  <rect x="460" y="130" width="220" height="45" rx="6" fill="#f3e8ff" stroke="#7c3aed" stroke-width="1.5"/><text x="570" y="152" text-anchor="middle" font-size="11" font-family="system-ui">Ranked Source Units</text>
+  <text x="570" y="170" text-anchor="middle" font-size="9" font-family="system-ui" fill="#555">original KB units that participated in proof</text>
+
+  <defs><marker id="at" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0 0 L8 3 L0 6" fill="#334155"/></marker></defs>
+</svg>
+
+<h2>Key Design Decisions</h2>
+<table>
+<tr><th>Decision</th><th>Rationale</th></tr>
+<tr><td>No new CNL dialect</td><td>Reuses DS005 Context CNL with optional <code>Subject/Relation/Object</code> fields</td></tr>
+<tr><td>Rules in code/config, not CNL</td><td>Avoids a second public normalization contract in v1</td></tr>
+<tr><td>Local closure only</td><td>Full KB saturation is too expensive; only seed neighborhood is expanded</td></tr>
+<tr><td>Positive Horn fragment</td><td>No negation, no disjunction — keeps reasoning bounded and predictable</td></tr>
+<tr><td>Proof-bearing ranking</td><td>Returns original KB units with proof traces, not synthetic derived units</td></tr>
+</table>
+
+<h2>Context CNL Extension</h2>
+<p>A Context Unit MAY carry structured symbolic fields alongside its normal pragmatic fields:</p>
+<pre><code>## Context Unit src-001::chunk-000::unit-000
+SourceId: src-001
+ChunkId: src-001::chunk-000
+Role: Explanation
+Topic: AchillesIDE and Ploinky
+Claim: AchillesIDE uses Ploinky.
+Subject: AchillesIDE
+Relation: uses
+Object: Ploinky
+Confidence: 1.00
+UtilityActs: explain</code></pre>
+<p><code>Subject</code>, <code>Relation</code>, <code>Object</code> are all-or-none. <code>Confidence</code> is optional (default 1.0). Units without these fields remain valid DS005 units.</p>
+
+<h2>Rule Model</h2>
+<pre><code>{
+  id: "tool_to_capability",
+  when: [
+    { s: "?x", r: "uses", o: "?y" },
+    { s: "?y", r: "provides", o: "?z" }
+  ],
+  then: { s: "?x", r: "has_capability", o: "?z" },
+  weight: 0.95,
+  maxDepth: 3
+}</code></pre>
+<p>Bounded positive Horn: 1–3 premises, one conclusion, variables with <code>?</code> prefix. Recursive rules allowed under depth budget.</p>
+
+<h3>Built-in Relations</h3>
+<p><code>uses</code>, <code>provides</code>, <code>has_capability</code>, <code>depends_on</code>, <code>part_of</code>, <code>instance_of</code>, <code>relevant_for</code>, <code>supports</code>, <code>mentions</code>, <code>about</code></p>
+
+<h2>Query &amp; Closure</h2>
+<ol>
+  <li><strong>Seed resolution</strong> — match query terms to symbolic subjects/objects</li>
+  <li><strong>Local neighborhood</strong> — collect facts within <code>maxDepth</code> hops of seeds</li>
+  <li><strong>Bounded fixpoint</strong> — apply rules iteratively until no new facts or budget exhausted</li>
+  <li><strong>Ranking</strong> — score each source unit by the best proof path it participates in</li>
+</ol>
+<pre><code>pathScore = ∏(fact.conf) × ∏(rule.weight) × distancePenalty(len) × goalBonus × seedBonus
+distancePenalty(n) = 1 / (1 + n × 0.25)</code></pre>
+
+<h2>Proposed Retrieval Profile</h2>
+<pre><code>{
+  "thinkingdb": {
+    "primaryStrategies": ["bm25-lexical"],
+    "secondaryStrategies": ["thinkingdb-symbolic"],
+    "maxResults": 8,
+    "minScore": 0.12,
+    "confidenceGapThreshold": 0.25,
+    "targetLatencyMs": 700
+  }
+}</code></pre>
+<p>BM25 remains the precision anchor. ThinkingDB runs as secondary symbolic expansion. Intended to eventually replace <code>wide-recall</code> for multi-hop retrieval.</p>
+
+<h2>What's Needed to Implement</h2>
+<ol>
+  <li>Add <code>Subject/Relation/Object/Confidence</code> to DS005 allowed fields and DS007 validator</li>
+  <li>Extend LLM normalization prompts to extract symbolic triples when present</li>
+  <li>Implement <code>ThinkingDB</code> class (synchronous, no deps, ~200 lines)</li>
+  <li>Implement <code>thinkingdb-symbolic</code> DS023 strategy wrapper</li>
+  <li>Add <code>thinkingdb</code> profile to <code>config/retrieval-strategies.json</code></li>
+  <li>Create evaluation suite with multi-hop reasoning scenarios</li>
+</ol>
+
+<h2>Explicit Non-Goals (v1)</h2>
+<ul>
+  <li>No public rule CNL or query CNL</li>
+  <li>No negation or contradiction detection</li>
+  <li>No confidence calibration by LLM</li>
+  <li>No persistence of derived facts as KB truth</li>
+  <li>No alias learning from free text</li>
+</ul>
+
+<div class="nav-bottom">
+  <a href="symbolic-execution.html" class="prev">← Symbolic Exec</a>
+  <a href="../index.html">Home →</a>
+</div>
+</div>
+<footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer>
+</body>
+</html>
