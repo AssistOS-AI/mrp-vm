@@ -111,12 +111,13 @@ precision, recall, and explainability.
 
 ```javascript
 {
-  id: "fast" | "balanced" | "wide-recall" |
-    "symbolic-grounded" | "meta-rational",
+  id: "fast" | "balanced" | "wide-recall",
   primaryStrategies: string[],
   secondaryStrategies: string[],
   allowParallel: boolean,
   maxStrategiesPerIntent: number,
+  maxResults: number,
+  minScore: number,
   minAcceptableCandidates: number,
   confidenceGapThreshold: number,
   hardSymbolicPruning: boolean,
@@ -124,39 +125,37 @@ precision, recall, and explainability.
 }
 ```
 
+`maxResults` controls how many top candidates are
+returned after scoring and deduplication.
+
+`minScore` is the minimum fused score threshold.
+Candidates below this are discarded before ranking.
+
+These two parameters are the primary differentiators
+between profiles when using the same strategies.
+
 ### Built-in Profile Semantics
 
 #### `fast`
-- Run only the first enabled cheap strategy.
-- No escalation.
-- Prioritizes latency over recall.
+- BM25 only. No secondary strategies.
+- `maxResults: 3`, `minScore: 0.3`.
+- Prioritizes precision and latency over recall.
+- Best for simple, focused questions.
 
 #### `balanced`
-- Run lexical retrieval first.
-- Escalate to one secondary strategy only if recall
-  or confidence is weak.
-- This is the recommended default.
+- BM25 primary, HDC/VSA as secondary (escalation).
+- `maxResults: 7`, `minScore: 0.15`.
+- HDC/VSA runs only when BM25 returns fewer than
+  `minAcceptableCandidates`.
+- Recommended default.
 
 #### `wide-recall`
-- Run all enabled cheap/moderate strategies in
-  parallel.
-- Maximize candidate coverage before fusion.
-
-#### `symbolic-grounded`
-- Run lexical recall first, then a symbolic strategy
-  for pruning or relevance proof.
-- When symbolic pruning marks a candidate as
-  incompatible and `hardSymbolicPruning = true`,
-  the candidate is removed even if lexical score is
-  high.
-
-#### `meta-rational`
-- Start with a cheap primary strategy.
-- Escalate adaptively if the first pass is too weak
-  or ambiguous.
-- Secondary strategies may run in parallel.
-- Fusion rewards agreement across independent
-  filters.
+- BM25 and HDC/VSA run in parallel as co-primaries.
+- `maxResults: 15`, `minScore: 0.05`.
+- Maximizes candidate coverage before fusion.
+- Best for complex, multi-faceted questions.
+- Higher noise expected; fusion and agreement bonus
+  help rank relevant results higher.
 
 ## Adaptive Escalation Rules
 
@@ -197,43 +196,33 @@ is removed before final ranking.
 
 ### `bm25-lexical`
 - Implemented through DS009.
-- Current default and only required v1 strategy.
 - Cheap, deterministic, explainable.
+- High precision on exact token matches.
+
+### `hdc-vsa-associative`
+- Implemented through DS024.
+- Uses hyperdimensional binary vectors (4096-bit)
+  for per-field structural matching.
+- Cheap (bitwise operations), deterministic.
+- Complements BM25 by capturing structural
+  similarity when lexical overlap is partial.
+- See DS024 for full specification.
 
 ### `semantic-embedding`
 - Optional future strategy.
 - Uses vector similarity over stored embeddings.
-- Not part of the required v1 baseline.
-
-### `hdc-vsa-associative`
-- Optional future strategy.
-- Uses hyperdimensional/vector symbolic
-  representations for fast associative filtering and
-  approximate relevance matching.
-- Suitable when very low-latency broad filtering is
-  needed.
+- Not part of the current baseline.
 
 ### `symbolic-fixedpoint`
 - Optional future strategy.
-- Uses symbolic propagation, abstract
-  interpretation, fixed-point iteration, constraint
-  narrowing, or similar methods to reject or confirm
-  candidates.
-- Best suited for high-precision or safety-oriented
-  profiles.
+- Uses symbolic propagation or constraint narrowing.
+- Not part of the current baseline.
 
-## Current v1 Baseline
+## Current Baseline
 
-Current specifications require only:
-- `bm25-lexical`
-
-Current specifications do NOT require:
-- semantic search
-- embeddings
-- HDC/VSA
-- symbolic fixed-point retrieval
-
-These are extension targets enabled by DS023.
+Implemented strategies:
+- `bm25-lexical` (DS009)
+- `hdc-vsa-associative` (DS024)
 
 ## Configuration
 
@@ -241,63 +230,50 @@ These are extension targets enabled by DS023.
 ```json
 {
   "defaultProfile": "balanced",
-  "enabledStrategies": ["bm25-lexical"],
+  "enabledStrategies": ["bm25-lexical", "hdc-vsa"],
   "profiles": {
     "fast": {
       "primaryStrategies": ["bm25-lexical"],
       "secondaryStrategies": [],
       "allowParallel": false,
       "maxStrategiesPerIntent": 1,
-      "minAcceptableCandidates": 3,
+      "maxResults": 3,
+      "minScore": 0.3,
+      "minAcceptableCandidates": 2,
       "confidenceGapThreshold": 0.20,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 200
     },
     "balanced": {
       "primaryStrategies": ["bm25-lexical"],
-      "secondaryStrategies": [],
+      "secondaryStrategies": ["hdc-vsa"],
       "allowParallel": false,
-      "maxStrategiesPerIntent": 1,
-      "minAcceptableCandidates": 5,
+      "maxStrategiesPerIntent": 2,
+      "maxResults": 7,
+      "minScore": 0.15,
+      "minAcceptableCandidates": 4,
       "confidenceGapThreshold": 0.15,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 500
     },
     "wide-recall": {
-      "primaryStrategies": ["bm25-lexical"],
+      "primaryStrategies": ["bm25-lexical", "hdc-vsa"],
       "secondaryStrategies": [],
       "allowParallel": true,
-      "maxStrategiesPerIntent": 3,
-      "minAcceptableCandidates": 8,
+      "maxStrategiesPerIntent": 2,
+      "maxResults": 15,
+      "minScore": 0.05,
+      "minAcceptableCandidates": 6,
       "confidenceGapThreshold": 0.10,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 1500
-    },
-    "symbolic-grounded": {
-      "primaryStrategies": ["bm25-lexical"],
-      "secondaryStrategies": [],
-      "allowParallel": false,
-      "maxStrategiesPerIntent": 2,
-      "minAcceptableCandidates": 5,
-      "confidenceGapThreshold": 0.12,
-      "hardSymbolicPruning": true,
-      "targetLatencyMs": 2000
-    },
-    "meta-rational": {
-      "primaryStrategies": ["bm25-lexical"],
-      "secondaryStrategies": [],
-      "allowParallel": true,
-      "maxStrategiesPerIntent": 3,
-      "minAcceptableCandidates": 5,
-      "confidenceGapThreshold": 0.15,
-      "hardSymbolicPruning": false,
-      "targetLatencyMs": 2500
     }
   },
   "strategyWeights": {
-    "bm25-lexical": 1.0
+    "bm25-lexical": 1.0,
+    "hdc-vsa": 0.7
   },
-  "agreementBonus": 0.10
+  "agreementBonus": 0.15
 }
 ```
 

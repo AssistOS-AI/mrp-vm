@@ -66,6 +66,13 @@ DS011, DS012:
 - `verify` — constraint verification
 - `define` — definition
 - `evaluate` — evaluation
+- `identify` — naming or locating a specific entity
+- `describe` — describing properties, traits, or
+  settings
+
+For yes/no questions or logical deductions, use
+`evaluate`. For "name the character" or "which one"
+questions, use `identify`.
 
 The pragmatic act is emitted by the Normalizer
 (DS006) based on LLM semantic understanding.
@@ -77,16 +84,18 @@ Defined once here. All DS files (DS009, DS011,
 DS012) reference this table. Can be externalized
 to `config/pragmatic-mappings.json`.
 
-| Act         | Preferred Context Roles            |
-|-------------|-------------------------------------|
-| compare     | Comparison, Evaluation              |
-| explain     | Explanation, Diagnostic             |
-| recommend   | Comparison, Evaluation, Procedure   |
-| diagnose    | Diagnostic, Explanation             |
-| implement   | Procedure, Constraint               |
-| verify      | Constraint, Definition              |
-| define      | Definition, Explanation             |
-| evaluate    | Evaluation, Comparison              |
+| Act         | Preferred Context Roles               |
+|-------------|----------------------------------------|
+| compare     | Comparison, Evaluation                 |
+| explain     | Explanation, Diagnostic, Narrative     |
+| recommend   | Comparison, Evaluation, Procedure      |
+| diagnose    | Diagnostic, Explanation                |
+| implement   | Procedure, Constraint                  |
+| verify      | Constraint, Definition                 |
+| define      | Definition, Explanation                |
+| evaluate    | Evaluation, Comparison, Narrative      |
+| identify    | Narrative, Description, Definition     |
+| describe    | Description, Narrative, Explanation    |
 
 This table is a retrieval preference table, not a
 validation schema.

@@ -14,25 +14,27 @@ minimal static files). No frontend frameworks.
 - Text input field + Send button.
 - Display user/assistant messages in chronological
   order.
-- Creates or resumes a server session and stores
-  `session_id` in `localStorage`.
+- Each browser tab maintains its own session in
+  memory (no localStorage/cookie persistence for
+  session ID). Refresh or new tab starts fresh.
 - Calls `POST /v1/chat/completions` with fetch API,
   sending only the new delta messages for the
   current turn, not the full history.
-- Renders assistant output as Markdown.
+- Renders assistant responses as a 4-column table
+  (Act, Intent, Context, Answer) when structured
+  `response_document` is available. Falls back to
+  Markdown rendering otherwise.
 - Loading indicator.
 - Visible error states (API errors, timeout,
   session expired, KB ingest failures).
 
 ### Session UX
 - Session badge showing current `session_id`.
-- "New session" action that calls
-  `POST /v1/sessions` or clears the local session
-  and starts a fresh one.
+- "New session" action clears the in-memory session
+  and message history.
 - Expiry awareness: if the server returns
-  `SESSION_EXPIRED`, the UI clears the stale
-  `session_id` and prompts the user to start a new
-  session.
+  `SESSION_EXPIRED`, the UI automatically resets
+  the session and retries the message transparently.
 - Inactivity TTL is enforced server-side (DS019),
   not by the browser.
 
@@ -87,8 +89,9 @@ The Server (DS013) serves static files from
 - Accessible (labels, focus management, ARIA).
 - Minimal responsive (works on mobile).
 - English-only UI (consistent with DS001).
-- Session state survives page reload through
-  `localStorage`, until the server expires it.
+- Session ID is per-tab (in-memory), not persisted.
+  UI preferences (mode, profile, model) persist
+  in `localStorage` across tabs.
 
 ## Dependencies
 

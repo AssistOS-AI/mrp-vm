@@ -38,8 +38,10 @@ UtilityNote: <optional free-text explanation>
 | Claim       | Yes*     | Central assertion               |
 | Condition   | No       | Conditions, limitations         |
 | Procedure   | Yes*     | Steps (only for Procedure role) |
-| UtilityActs | Yes      | Pragmatic acts served (CSV)     |
+| UtilityActs | No       | Pragmatic acts served (CSV).    |
+|             |          | Inferred from Role if absent.   |
 | UtilityNote | No       | Free-text explanation           |
+| Hash        | No       | Content hash for deduplication  |
 
 *Claim is required for all roles except Procedure.
 Procedure is required only for the Procedure role.
@@ -63,6 +65,9 @@ On source update, all IDs are regenerated.
 - `Evaluation` — qualitative or quantitative eval
 - `Diagnostic` — identifies problems and causes
 - `Constraint` — expresses a constraint or rule
+- `Narrative` — events, actions, and story facts
+- `Description` — character traits, locations, and
+  settings
 
 ## UtilityActs — Structured Format
 

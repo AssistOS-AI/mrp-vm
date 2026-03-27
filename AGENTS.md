@@ -74,6 +74,7 @@ Agent conversations may use Romanian or other languages.
 | DS | File | Role |
 |----|------|------|
 | DS023 | [DS023-retrieval-strategies.md](docs/specs/DS023-retrieval-strategies.md) | Retrieval strategy interface: pluggable lexical, semantic, HDC/VSA, and symbolic relevance filters, plus risk profiles and fusion rules. |
+| DS024 | [DS024-hdc-vsa-retrieval.md](docs/specs/DS024-hdc-vsa-retrieval.md) | HDC/VSA associative retrieval: binary hypervectors, per-field structural matching, n-gram encoding, complementary to BM25. |
 
 ## Answer Synthesis
 

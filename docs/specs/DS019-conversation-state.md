@@ -36,8 +36,7 @@ Each session stores:
   preferredProcessingMode: "llm-assisted" |
     "symbolic-only",
   preferredRetrievalProfile: "fast" | "balanced" |
-    "wide-recall" | "symbolic-grounded" |
-    "meta-rational",
+    "wide-recall",
   messageLog: Message[],
   systemPrompt: string | null,
   sessionContextUnits: ContextUnit[],

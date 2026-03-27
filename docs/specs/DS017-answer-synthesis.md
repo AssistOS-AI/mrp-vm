@@ -76,8 +76,8 @@ Status: answered
     status: "answered" | "partial" |
       "no-context" | "plugin-error",
     currentTurnContext: ContextUnit[],
-    sessionSources: [{ unitId, score }],
-    kbSources: [{ sourceId, unitId, score }],
+    sessionSources: [{ unitId, score, unit }],
+    kbSources: [{ sourceId, unitId, score, unit }],
     pluginOutput: PluginOutput | null,
     answerMarkdown: string | null,
     warnings: string[]

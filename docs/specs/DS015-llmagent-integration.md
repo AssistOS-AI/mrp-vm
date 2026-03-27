@@ -121,9 +121,23 @@ Budget interaction:
   "defaultTemperature": 0.1,
   "maxTransportRetriesPerAttempt": 2,
   "timeoutMs": 30000,
-  "defaultModel": "fast"
+  "defaultModel": "test-fast",
+  "cache": true,
+  "cacheDir": "data/cache"
 }
 ```
+
+`cache` enables disk-based response caching. Each
+LLM call is keyed by SHA-256 of `mode + prompt`.
+Cached responses are stored as JSON files containing
+the full request prompt and response text. Only
+successful, non-empty responses are cached. Errors
+and empty responses are never cached.
+
+The cache directory defaults to `data/cache/` and
+is gitignored. It can be overridden per-environment
+(e.g., evaluation uses a shared project cache for
+deterministic, cost-free re-runs).
 
 ## Dependencies
 
