@@ -1,0 +1,95 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>CNL Formats - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html" class="current">CNL</a> <a href="retrieval-algorithms.html">Retrieval</a> <a href="processing-modes.html">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html">Cache</a></nav>
+
+<h1>CNL Formats — Intent &amp; Context <span class="badge done">IMPLEMENTED</span></h1>
+<p>Controlled Natural Language (CNL) is MRP-VM's internal representation — structured Markdown that is both human-readable and machine-parseable. All knowledge flows through CNL. Specs: <a href="../specs/DS004-intent-cnl.md">DS004</a>, <a href="../specs/DS005-context-cnl.md">DS005</a>, <a href="../specs/DS007-cnl-validator-parser.md">DS007</a>.</p>
+
+<h2>Intent CNL — What the User Wants</h2>
+<p>Produced by the Normalizer from raw NL. Each request becomes one or more Intent Groups:</p>
+<pre><code>## Intent Group 1
+Act: compare
+Intent: Compare BM25 and dense retrieval for CPU-only deployment
+Context: We deploy on CPU only
+Criterion: Latency, cost
+Evidence: Current system uses BM25
+Output: Structured comparison with recommendation</code></pre>
+
+<table>
+<tr><th>Field</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>Act</code></td><td>Yes</td><td>Pragmatic act from enum (see below)</td></tr>
+<tr><td><code>Intent</code></td><td>Yes</td><td>The action or question in English</td></tr>
+<tr><td><code>Context</code></td><td>No</td><td>Conditions, constraints from the request</td></tr>
+<tr><td><code>Criterion</code></td><td>No</td><td>Evaluation criteria</td></tr>
+<tr><td><code>Evidence</code></td><td>No</td><td>Observations from the input</td></tr>
+<tr><td><code>Output</code></td><td>Yes</td><td>Expected result type</td></tr>
+</table>
+
+<h2>Pragmatic Acts (10)</h2>
+<table>
+<tr><th>Act</th><th>Meaning</th><th>Example</th><th>Preferred Roles</th></tr>
+<tr><td>compare</td><td>Compare entities</td><td>"Compare X and Y"</td><td>Comparison, Evaluation</td></tr>
+<tr><td>explain</td><td>Causal explanation</td><td>"Why does X happen?"</td><td>Explanation, Diagnostic, Narrative</td></tr>
+<tr><td>recommend</td><td>Recommendation</td><td>"What should I use?"</td><td>Comparison, Evaluation, Procedure</td></tr>
+<tr><td>diagnose</td><td>Problem identification</td><td>"Why is X failing?"</td><td>Diagnostic, Explanation</td></tr>
+<tr><td>implement</td><td>Implementation steps</td><td>"How to build X?"</td><td>Procedure, Constraint</td></tr>
+<tr><td>verify</td><td>Logical verification</td><td>"Is X true given Y?"</td><td>Constraint, Definition</td></tr>
+<tr><td>define</td><td>Definition</td><td>"What is X?"</td><td>Definition, Explanation</td></tr>
+<tr><td>evaluate</td><td>Yes/no judgment</td><td>"Would X work for Y?"</td><td>Evaluation, Comparison, Narrative</td></tr>
+<tr><td>identify</td><td>Name/locate entity</td><td>"Which character did X?"</td><td>Narrative, Description, Definition</td></tr>
+<tr><td>describe</td><td>Describe properties</td><td>"Describe the setting"</td><td>Description, Narrative, Explanation</td></tr>
+</table>
+
+<h2>Context CNL — What the System Knows</h2>
+<p>Each piece of knowledge is a Context Unit with provenance:</p>
+<pre><code>## Context Unit src-001::chunk-002::unit-000
+SourceId: src-001
+ChunkId: src-001::chunk-002
+Role: Comparison
+Topic: BM25 and dense retrieval
+Claim: BM25 has lower CPU cost in lexical retrieval.
+Condition: CPU-only deployment.
+UtilityActs: compare, recommend
+Hash: a1b2c3d4...</code></pre>
+
+<table>
+<tr><th>Field</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>SourceId</code></td><td>Yes</td><td>ID of the original source document</td></tr>
+<tr><td><code>ChunkId</code></td><td>Yes</td><td>ID of the chunk within the source</td></tr>
+<tr><td><code>Role</code></td><td>Yes</td><td>Pragmatic role from enum (see below)</td></tr>
+<tr><td><code>Topic</code></td><td>Yes</td><td>Dominant subject</td></tr>
+<tr><td><code>Claim</code></td><td>Yes*</td><td>Central assertion (required except for Procedure role)</td></tr>
+<tr><td><code>Condition</code></td><td>No</td><td>Conditions, limitations</td></tr>
+<tr><td><code>Procedure</code></td><td>Yes*</td><td>Steps (required only for Procedure role, mutually exclusive with Claim)</td></tr>
+<tr><td><code>UtilityActs</code></td><td>No</td><td>Pragmatic acts served (CSV). <strong>Inferred from Role if absent.</strong></td></tr>
+<tr><td><code>UtilityNote</code></td><td>No</td><td>Free-text explanation</td></tr>
+<tr><td><code>Hash</code></td><td>No</td><td>Content hash for deduplication</td></tr>
+</table>
+
+<h2>Pragmatic Roles (9)</h2>
+<table>
+<tr><th>Role</th><th>Meaning</th><th>Inferred UtilityActs</th></tr>
+<tr><td>Comparison</td><td>Compares entities or approaches</td><td>compare</td></tr>
+<tr><td>Explanation</td><td>Explains causes or mechanisms</td><td>explain</td></tr>
+<tr><td>Procedure</td><td>Describes implementation steps</td><td>implement</td></tr>
+<tr><td>Definition</td><td>Defines a concept</td><td>define</td></tr>
+<tr><td>Evaluation</td><td>Qualitative or quantitative judgment</td><td>evaluate</td></tr>
+<tr><td>Diagnostic</td><td>Identifies problems and causes</td><td>diagnose</td></tr>
+<tr><td>Constraint</td><td>Expresses a rule or limitation</td><td>verify</td></tr>
+<tr><td>Narrative</td><td>Events, actions, story facts</td><td>explain, describe</td></tr>
+<tr><td>Description</td><td>Character traits, locations, settings</td><td>describe</td></tr>
+</table>
+
+<h2>Validation Rules</h2>
+<p>The validator (<a href="../specs/DS007-cnl-validator-parser.md">DS007</a>) checks — fully symbolic, no LLM:</p>
+<ul>
+  <li>Required fields present (<code>Act</code>, <code>Intent</code>, <code>Output</code> for intents; <code>SourceId</code>, <code>ChunkId</code>, <code>Role</code>, <code>Topic</code> for context)</li>
+  <li>No unknown fields</li>
+  <li><code>Act</code> value in the 10-act enum</li>
+  <li><code>Role</code> value in the 9-role enum</li>
+  <li><code>Claim</code> and <code>Procedure</code> are mutually exclusive</li>
+  <li>Heading format: <code>## Intent Group N</code> or <code>## Context Unit ID</code></li>
+  <li>Sequential group numbering (1, 2, 3...)</li>
+</ul>
+
+<div class="nav-bottom"><a href="../architecture/session-lifecycle.html" class="prev">← Sessions</a> <a href="retrieval-algorithms.html">Retrieval →</a></div>
+</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

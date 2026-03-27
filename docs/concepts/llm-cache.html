@@ -1,0 +1,61 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>LLM Cache - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html">Retrieval</a> <a href="processing-modes.html">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html" class="current">Cache</a></nav>
+
+<h1>LLM Response Cache <span class="badge done">IMPLEMENTED</span></h1>
+<p>All LLM calls go through a disk cache in <code>data/cache/</code>. Same prompt + model = same response, instantly. Spec: <a href="../specs/DS015-llmagent-integration.md">DS015</a>.</p>
+
+<h2>How It Works</h2>
+<ol>
+  <li>Before calling the LLM, compute <code>SHA-256(model + "\n" + prompt)</code></li>
+  <li>Check if <code>data/cache/{hash}.json</code> exists</li>
+  <li>If yes → return cached response (0ms, zero cost)</li>
+  <li>If no → call LLM, save response to cache file</li>
+</ol>
+
+<h2>Cache File Format</h2>
+<pre><code>{
+  "mode": "test-fast",
+  "prompt": "You are a normalization engine...\n\nCurrent request:\nCompare X and Y",
+  "response": "## Intent Group 1\nAct: compare\nIntent: Compare X and Y\nOutput: Comparison",
+  "cachedAt": "2026-03-27T12:00:00Z"
+}</code></pre>
+<p>Each file contains the full request and response — you can inspect them to debug LLM behavior.</p>
+
+<h2>What Gets Cached</h2>
+<table>
+<tr><th>Scenario</th><th>Cached?</th></tr>
+<tr><td>Successful, non-empty LLM response</td><td>✅ Yes</td></tr>
+<tr><td>LLM error (timeout, 429, network)</td><td>❌ No</td></tr>
+<tr><td>Empty response</td><td>❌ No</td></tr>
+<tr><td>Validation failure (bad CNL)</td><td>✅ Yes (the raw LLM output is valid text, just bad CNL)</td></tr>
+</table>
+
+<h2>Cache Stability</h2>
+<p>To ensure the same question produces the same cache key across server restarts:</p>
+<ul>
+  <li>Session IDs are <strong>excluded</strong> from synthesis prompts</li>
+  <li>Source IDs are <strong>normalized</strong> (<code>src-xxx</code> → <code>src-REF</code>) in synthesis prompts</li>
+  <li>Intent normalization and session context prompts don't contain session/source IDs</li>
+</ul>
+
+<h2>Performance Impact</h2>
+<table>
+<tr><th>Scenario</th><th>Without cache</th><th>With cache</th></tr>
+<tr><td>Full eval (48 questions)</td><td>~2 minutes</td><td>~2 seconds</td></tr>
+<tr><td>Single question (llm-assisted)</td><td>~3 seconds</td><td>~50 ms</td></tr>
+<tr><td>KB ingest (story)</td><td>~10 seconds</td><td>~100 ms</td></tr>
+</table>
+
+<h2>Configuration</h2>
+<pre><code>// config/llm.json
+{
+  "cache": true,           // set false to disable
+  "cacheDir": "data/cache" // override path
+}</code></pre>
+
+<h2>Clearing the Cache</h2>
+<pre><code>rm -f data/cache/*.json</code></pre>
+<p>Clear when: prompts change, LLM model changes, you want fresh non-deterministic results.</p>
+
+<div class="nav-bottom"><a href="evaluation.html" class="prev">← Evaluation</a> <a href="../future/agentic-loops.html">Agentic Loops →</a></div>
+</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

@@ -48,11 +48,9 @@ processing strategy requires LLMs.
 - v1 supports selectable processing modes:
   `llm-assisted` and `symbolic-only`.
 - v1 supports selectable retrieval profiles:
-  `fast`, `balanced`, `wide-recall`,
-  `symbolic-grounded`, and `meta-rational`.
-- v1 baseline retrieval is lexical BM25 only.
-  Semantic search is not part of the required
-  baseline.
+  `fast`, `balanced`, and `wide-recall`.
+- v1 baseline retrieval uses BM25 lexical search
+  and HDC/VSA associative matching.
 - Working language in v1: English-only. Input in other
   languages is unsupported and may produce
   unpredictable results. This constraint applies to

@@ -3,221 +3,111 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MRP-VM Documentation Portal</title>
+<title>MRP-VM Documentation</title>
+<link rel="stylesheet" href="assets/docs.css">
 <style>
-  :root {
-    --bg: #f8fafc;
-    --card-bg: #ffffff;
-    --text: #1e293b;
-    --accent: #0284c7;
-    --accent-dark: #0369a1;
-    --border: #e2e8f0;
-    --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  }
-  body {
-    font-family: system-ui, -apple-system, sans-serif;
-    line-height: 1.6;
-    color: var(--text);
-    background-color: var(--bg);
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-  }
-  .container {
-    max-width: 1000px;
-    margin: 0 auto;
-    padding: 2rem;
-    flex: 1;
-  }
-  header {
-    text-align: center;
-    margin-bottom: 3rem;
-  }
-  h1 { font-size: 2.25rem; color: #0f172a; margin-bottom: 0.5rem; }
-  .subtitle { font-size: 1.1rem; color: #64748b; }
-
-  /* Wizard/Step Logic */
-  .step { display: none; }
-  .step.active { display: block; animation: fadeIn 0.4s ease-out; }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
-  /* Dashboard Widgets */
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1.5rem;
-    margin-top: 2rem;
-  }
-  .card {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.5rem;
-    box-shadow: var(--shadow);
-    transition: transform 0.2s, border-color 0.2s;
-    cursor: pointer;
-    text-decoration: none;
-    color: inherit;
-    display: flex;
-    flex-direction: column;
-  }
-  .card:hover {
-    transform: translateY(-4px);
-    border-color: var(--accent);
-  }
-  .card h3 { margin-top: 0; color: var(--accent); font-size: 1.25rem; }
-  .card p { font-size: 0.95rem; color: #475569; flex: 1; }
-  .card .meta { font-size: 0.85rem; color: #94a3b8; margin-top: 1rem; font-weight: bold; text-transform: uppercase; }
-
-  /* Step 2 Content */
-  .content-box {
-    background: var(--card-bg);
-    padding: 2.5rem;
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-    border: 1px solid var(--border);
-  }
-  .btn-nav {
-    display: inline-block;
-    background: var(--accent);
-    color: white;
-    padding: 0.75rem 1.5rem;
-    border-radius: 6px;
-    text-decoration: none;
-    font-weight: 600;
-    margin-top: 2rem;
-    border: none;
-    cursor: pointer;
-  }
-  .btn-nav:hover { background: var(--accent-dark); }
-  .btn-outline {
-    background: transparent;
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    margin-right: 1rem;
-  }
-
-  /* Footer Widget */
-  footer {
-    background: #0f172a;
-    color: #f1f5f9;
-    padding: 3rem 2rem;
-    margin-top: auto;
-  }
-  .footer-grid {
-    max-width: 1000px;
-    margin: 0 auto;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 2rem;
-  }
-  .footer-widget h4 { color: #38bdf8; margin-bottom: 1rem; border-bottom: 1px solid #334155; padding-bottom: 0.5rem; }
-  .footer-links { list-style: none; padding: 0; }
-  .footer-links li { margin-bottom: 0.5rem; }
-  .footer-links a { color: #cbd5e1; text-decoration: none; font-size: 0.9rem; }
-  .footer-links a:hover { color: white; text-decoration: underline; }
-
-  @media (max-width: 640px) {
-    .container { padding: 1rem; }
-    h1 { font-size: 1.75rem; }
-    .content-box { padding: 1.5rem; }
-  }
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:1rem;margin:1rem 0}
+.card{border:1px solid var(--border);border-radius:8px;padding:1rem;background:var(--card);box-shadow:var(--shadow);transition:border-color .2s}
+.card:hover{border-color:var(--accent)}
+.card a{text-decoration:none;color:var(--text)}
+.card h3{margin:0 0 .3rem;color:var(--accent)}
+.card p{font-size:.88rem;margin:0}
+.card .badge{float:right;margin-top:2px}
 </style>
 </head>
 <body>
+<div class="page">
 
-  <div class="container">
-    <header>
-      <h1>MRP-VM</h1>
-      <p class="subtitle">Meta-Rational Pragmatics Virtual Machine Documentation</p>
-    </header>
+<nav class="top">
+  <a href="index.html" class="current">Home</a>
+  <a href="architecture/engine.html">Engine</a>
+  <a href="concepts/cnl-formats.html">CNL Formats</a>
+  <a href="concepts/retrieval-algorithms.html">Retrieval</a>
+  <a href="concepts/processing-modes.html">Processing Modes</a>
+  <a href="architecture/plugin-guide.html">Plugins</a>
+  <a href="architecture/session-lifecycle.html">Sessions</a>
+  <a href="future/agentic-loops.html">Agentic Loops</a>
+  <a href="future/symbolic-execution.html">Symbolic Exec</a>
+  <a href="concepts/evaluation.html">Evaluation</a>
+  <a href="concepts/llm-cache.html">LLM Cache</a>
+</nav>
 
-    <!-- Step 1: Dashboard -->
-    <div id="step1" class="step active">
-      <div class="grid">
-        <div class="card" onclick="showStep(2)">
-          <h3>01. The Vision</h3>
-          <p>A fundamental shift in agentic design: positioning MRP-VM as a governed neuro-symbolic control layer.</p>
-          <div class="meta">Introduction &rarr;</div>
-        </div>
-        <a href="ARCH-VM.html" class="card">
-          <h3>02. Architecture</h3>
-          <p>Deep-dive into the VM's structure, the Core Engine, and the transitions between reasoning regimes.</p>
-          <div class="meta">Technical Deep-Dive</div>
-        </a>
-        <a href="PIPELINE.html" class="card">
-          <h3>03. Execution Pipeline</h3>
-          <p>The lifecycle of an intent: from raw natural language normalization to grounded evidence synthesis.</p>
-          <div class="meta">Workflow & Lifecycle</div>
-        </a>
-        <a href="RETRIEVAL.html" class="card">
-          <h3>04. Knowledge & Retrieval</h3>
-          <p>Memory management across session contexts and persistent bases using multi-strategy indices.</p>
-          <div class="meta">Memory Systems</div>
-        </a>
-        <a href="PLUGINS.html" class="card">
-          <h3>05. Specialized Plugins</h3>
-          <p>The interpreter ecosystem: extending the VM's instruction set with symbolic regimes.</p>
-          <div class="meta">Extensibility</div>
-        </a>
-      </div>
-    </div>
+<h1>MRP-VM Documentation</h1>
+<p>MRP-VM (Meta-Rational-Pragmatics Virtual Machine) processes natural language requests through a multi-phase pipeline: intent decomposition, CNL normalization, Knowledge Base retrieval, and answer synthesis. It uses external plugins for specialized interpretation and communicates with LLMs exclusively through AchillesAgentLib.</p>
 
-    <!-- Step 2: Vision Content -->
-    <div id="step2" class="step">
-      <div class="content-box">
-        <h2>The Vision: A New Generation of Agentic Architectures</h2>
-        <p>The <strong>Meta-Rational Pragmatics Virtual Machine (MRP-VM)</strong> represents a fundamental shift in the design of autonomous agents and language-processing systems. Moving beyond the limitations of monolithic Large Language Models (LLMs) and opaque "agentic loops," MRP-VM introduces a disciplined <strong>neuro-symbolic control layer</strong>.</p>
+<h2>Overview (High-Level)</h2>
+<div class="cards">
+  <div class="card"><a href="overview/ARCH-VM.html">
+    <h3>The Vision <span class="badge done">done</span></h3>
+    <p>MRP-VM as a governed neuro-symbolic control layer. Architecture diagram and component overview.</p>
+  </a></div>
+  <div class="card"><a href="overview/PIPELINE.html">
+    <h3>Execution Pipeline <span class="badge done">done</span></h3>
+    <p>The lifecycle of an intent: from raw NL to grounded answer in 5 phases.</p>
+  </a></div>
+  <div class="card"><a href="overview/RETRIEVAL.html">
+    <h3>Knowledge &amp; Retrieval <span class="badge done">done</span></h3>
+    <p>Two evidence stores, two retrieval strategies, three risk profiles.</p>
+  </a></div>
+  <div class="card"><a href="overview/PLUGINS.html">
+    <h3>Plugin Ecosystem <span class="badge done">done</span></h3>
+    <p>External interpreters for symbolic grounding: Z3, custom code, any language.</p>
+  </a></div>
+</div>
 
-        <p>At its core, MRP-VM is a prototype for the <strong>Meta-Rational Pragmatics (MRP)</strong> approach—a framework that treats the coordination of multiple reasoning regimes (neural, symbolic, and retrieval-based) as a first-class architectural concern.</p>
+<h2>Architecture (Detailed)</h2>
+<div class="cards">
+  <div class="card"><a href="architecture/engine.html">
+    <h3>Core Engine &amp; Pipeline <span class="badge done">done</span></h3>
+    <p>12-phase processing pipeline, LLM budget, boot sequence, and failure handling.</p>
+  </a></div>
+  <div class="card"><a href="architecture/plugin-guide.html">
+    <h3>Plugin Development Guide <span class="badge done">done</span></h3>
+    <p>Build external interpreter plugins: manifest, protocol I/O, dispatch, and security.</p>
+  </a></div>
+  <div class="card"><a href="architecture/session-lifecycle.html">
+    <h3>Session Lifecycle <span class="badge done">done</span></h3>
+    <p>In-memory session management, turn preparation, commit, expiration, and context store.</p>
+  </a></div>
+</div>
 
-        <h3>From Model Continuation to Governed Execution</h3>
-        <p>In traditional AI systems, execution is often synonymous with model inference—a "black box" process that is difficult to audit or formally verify. MRP-VM reframes this by conceptualizing the <strong>Virtual Machine</strong> not as a processor of low-level binary instructions, but as an <strong>orchestrator of natural language interpreters</strong>.</p>
+<h2>Core Concepts</h2>
+<div class="cards">
+  <div class="card"><a href="concepts/cnl-formats.html">
+    <h3>CNL Formats <span class="badge done">done</span></h3>
+    <p>Intent CNL and Context CNL structure, fields, pragmatic acts, and provenance.</p>
+  </a></div>
+  <div class="card"><a href="concepts/retrieval-algorithms.html">
+    <h3>Retrieval Algorithms <span class="badge done">done</span></h3>
+    <p>BM25 indexing, HDC/VSA associative retrieval, fusion rules, and risk profiles.</p>
+  </a></div>
+  <div class="card"><a href="concepts/processing-modes.html">
+    <h3>Processing Modes <span class="badge partial">partial</span></h3>
+    <p>LLM-assisted vs symbolic-only strategies for normalization and synthesis.</p>
+  </a></div>
+  <div class="card"><a href="concepts/evaluation.html">
+    <h3>Evaluation <span class="badge partial">partial</span></h3>
+    <p>NL input/output behavior assessment, expected Markdown properties, quality metrics.</p>
+  </a></div>
+  <div class="card"><a href="concepts/llm-cache.html">
+    <h3>LLM Cache <span class="badge done">done</span></h3>
+    <p>Disk-based LLM response caching for deterministic re-runs and zero-cost evaluation.</p>
+  </a></div>
+</div>
 
-        <button class="btn-nav btn-outline" onclick="showStep(1)">&larr; Back to Index</button>
-        <a href="ARCH-VM.html" class="btn-nav">Explore Architecture &rarr;</a>
-      </div>
-    </div>
-  </div>
+<h2>Future / Proposals</h2>
+<div class="cards">
+  <div class="card"><a href="future/agentic-loops.html">
+    <h3>Agentic Loops <span class="badge planned">planned</span></h3>
+    <p>Multi-step plugin orchestration and continuation loops for complex tasks.</p>
+  </a></div>
+  <div class="card"><a href="future/symbolic-execution.html">
+    <h3>Symbolic Execution <span class="badge planned">planned</span></h3>
+    <p>Formal verification paths and symbolic reasoning integration.</p>
+  </a></div>
+</div>
 
-  <footer>
-    <div class="footer-grid">
-      <div class="footer-widget">
-        <h4>Quick Links</h4>
-        <ul class="footer-links">
-          <li><a href="index.html">Home / Vision</a></li>
-          <li><a href="ARCH-VM.html">Architecture</a></li>
-          <li><a href="PIPELINE.html">Execution Pipeline</a></li>
-          <li><a href="RETRIEVAL.html">Knowledge & Retrieval</a></li>
-          <li><a href="PLUGINS.html">Plugin Ecosystem</a></li>
-        </ul>
-      </div>
-      <div class="footer-widget">
-        <h4>Specifications</h4>
-        <ul class="footer-links">
-          <li><a href="./specs/DS001-general-architecture.md">DS001 Architecture</a></li>
-          <li><a href="./specs/DS002-mrp-vm-core.md">DS002 Core Engine</a></li>
-          <li><a href="./specs/DS003-plugin-system.md">DS003 Plugin System</a></li>
-        </ul>
-      </div>
-      <div class="footer-widget">
-        <h4>Resources</h4>
-        <ul class="footer-links">
-          <li><a href="https://agisystem2.com/MRP/index.html" target="_blank">MRP Research</a></li>
-          <li><a href="../README.md">Repository Root</a></li>
-        </ul>
-      </div>
-    </div>
-  </footer>
-
-  <script>
-    function showStep(n) {
-      document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
-      document.getElementById('step' + n).classList.add('active');
-      window.scrollTo(0, 0);
-    }
-  </script>
+</div>
+<footer>MRP-VM Documentation — <a href="index.html">Home</a></footer>
 </body>
 </html>

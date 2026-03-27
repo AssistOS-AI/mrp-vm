@@ -1,0 +1,77 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Session Lifecycle - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="engine.html">Engine</a> <a href="../concepts/cnl-formats.html">CNL</a> <a href="../concepts/retrieval-algorithms.html">Retrieval</a> <a href="../concepts/processing-modes.html">Modes</a> <a href="plugin-guide.html">Plugins</a> <a href="session-lifecycle.html" class="current">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="../concepts/evaluation.html">Evaluation</a> <a href="../concepts/llm-cache.html">Cache</a></nav>
+
+<h1>Session Lifecycle &amp; Conversation State <span class="badge done">IMPLEMENTED</span></h1>
+<p>Sessions are the unit of conversation in MRP-VM. Each session owns a message log, a temporary context store, and preferences. Sessions are in-memory only — no database, no cookies. Spec: <a href="../specs/DS019-conversation-state.md">DS019</a>.</p>
+
+<svg class="diagram" width="700" height="120" viewBox="0 0 700 120" xmlns="http://www.w3.org/2000/svg">
+  <rect x="20" y="40" width="120" height="40" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="80" y="65" text-anchor="middle" font-size="13" font-family="system-ui">Created</text>
+  <path d="M140 60 L200 60" stroke="#334155" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="200" y="40" width="180" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/><text x="290" y="65" text-anchor="middle" font-size="13" font-family="system-ui">Active (turns)</text>
+  <path d="M380 60 L440 60" stroke="#334155" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="440" y="40" width="120" height="40" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/><text x="500" y="65" text-anchor="middle" font-size="13" font-family="system-ui">Expired</text>
+  <path d="M290 80 C290 110 290 110 290 110 L250 110 L250 80" stroke="#16a34a" stroke-width="1.5" fill="none" stroke-dasharray="4" marker-end="url(#arr)"/><text x="310" y="108" font-size="10" fill="#16a34a" font-family="system-ui">next turn</text>
+  <defs><marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0 0 L8 3 L0 6" fill="#334155"/></marker></defs>
+</svg>
+
+<h2>Session Creation</h2>
+<p>A session is auto-created when a <code>POST /v1/chat/completions</code> arrives without <code>session_id</code>. In the browser, each tab holds its own session in a JS variable — no localStorage, no cookies. Refresh = new session.</p>
+
+<h2>Turn Preparation</h2>
+<ol>
+  <li>Resolve or create session</li>
+  <li>Check <code>expiresAt &lt; now</code> → delete if expired</li>
+  <li>Append any <code>system</code> message to session system prompt</li>
+  <li>Extract last <code>user</code> message as <code>currentMessage</code></li>
+  <li>Build bounded <code>historyForPrompt</code> (max 20 messages, 16K chars)</li>
+  <li>Resolve processing mode and retrieval profile</li>
+</ol>
+
+<h2>Session Context Store</h2>
+<p>Previous user turns are analyzed to extract reusable facts into a temporary in-memory KB.</p>
+<table>
+  <tr><th>Enters the store</th><th>Rejected</th></tr>
+  <tr><td>Factual statements ("X is Y")</td><td>Questions ("What is X?")</td></tr>
+  <tr><td>User preferences</td><td>Commands ("Please do X")</td></tr>
+  <tr><td>Environmental constraints</td><td>Assistant responses</td></tr>
+  <tr><td>Assumptions, definitions</td><td>Task lists</td></tr>
+</table>
+<p>Example session context unit:</p>
+<pre><code>## Context Unit session::turn::unit-000
+SourceId: session
+ChunkId: session::turn
+Role: Constraint
+Topic: Deployment environment
+Claim: We deploy on CPU only.
+UtilityActs: verify</code></pre>
+
+<h2>Turn Commit</h2>
+<p>Only after a successful response:</p>
+<ol>
+  <li>Append user + assistant messages to <code>messageLog</code></li>
+  <li>Add context units to <code>sessionContextUnits</code> with <strong>hash-based deduplication</strong> — if a unit with the same hash exists, skip it</li>
+  <li>Update <code>sessionIndex</code> (BM25 + HDC/VSA)</li>
+  <li>Update <code>lastActivityAt</code> and <code>expiresAt</code></li>
+</ol>
+<p>If the turn fails, nothing is committed.</p>
+
+<h2>Expiration</h2>
+<p>Sessions expire after <strong>30 minutes</strong> of inactivity (configurable). Checked lazily on access + periodic sweep every 60s. Expired sessions return <code>SESSION_EXPIRED</code> and cannot be revived. The UI auto-retries with a new session transparently.</p>
+
+<h2>Session State Schema</h2>
+<pre><code>{
+  sessionId: "sess-abc123",
+  createdAt: "2026-03-27T10:00:00Z",
+  lastActivityAt: "2026-03-27T10:05:00Z",
+  expiresAt: "2026-03-27T10:35:00Z",
+  preferredModel: "test-fast",
+  preferredProcessingMode: "llm-assisted",
+  preferredRetrievalProfile: "balanced",
+  messageLog: [{ role, content }, ...],
+  systemPrompt: "You are a helpful assistant",
+  sessionContextUnits: [ContextUnit, ...],
+  sessionIndex: KBIndex  // BM25 index over session units
+}</code></pre>
+
+<div class="nav-bottom"><a href="plugin-guide.html" class="prev">← Plugins</a> <a href="../concepts/cnl-formats.html">CNL Formats →</a></div>
+</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

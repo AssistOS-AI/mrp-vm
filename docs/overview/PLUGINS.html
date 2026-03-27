@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plugin Ecosystem - MRP-VM</title>
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="page">
+<nav class="top">
+  <a href="../index.html">Home</a>
+  <a href="ARCH-VM.html">Vision</a>
+  <a href="PIPELINE.html">Pipeline</a>
+  <a href="RETRIEVAL.html">Retrieval</a>
+  <a href="PLUGINS.html" class="current">Plugins</a>
+  <a href="../architecture/engine.html">Engine Detail</a>
+  <a href="../concepts/cnl-formats.html">CNL</a>
+  <a href="../concepts/retrieval-algorithms.html">Algorithms</a>
+  <a href="../architecture/plugin-guide.html">Plugin Guide</a>
+  <a href="../future/agentic-loops.html">Agentic Loops</a>
+</nav>
+
+<h1>Specialized Interpreters and Symbolic Grounding</h1>
+<h2>The Plugin Ecosystem</h2>
+<p>In MRP-VM, a plugin is a specialized engine that processes a resolved intent bundle within a specific reasoning regime. Plugins are external processes — they can be written in any language. See <a href="../specs/DS003-plugin-system.md">DS003</a>, <a href="../specs/DS016-wrapper-convention.md">DS016</a>.</p>
+
+<h3>Key Concepts</h3>
+<ul>
+  <li><strong>Encapsulated Processes</strong> — plugins run as separate OS processes (Node.js, Python, Rust, etc.)</li>
+  <li><strong>CNL I/O</strong> — communication via stdin/stdout using <a href="../concepts/cnl-formats.html">CNL Markdown</a></li>
+  <li><strong>Post-Retrieval</strong> — plugins receive the full resolved evidence bundle, not raw user input</li>
+  <li><strong>One per Intent</strong> — exactly one plugin is selected per intent group</li>
+</ul>
+
+<h3>The Wrapper Convention</h3>
+<pre><code>wrappers/z3-solver/
+├── manifest.json    # capabilities, keywords, command
+├── wrapper.js       # the actual interpreter
+└── README.md</code></pre>
+
+<h3>Plugin Result Format</h3>
+<pre><code>## Plugin Result
+Status: success
+Plugin: z3-solver
+Confidence: high
+Result: Constraint is satisfiable.
+Evidence: Z3 returned SAT in 12ms.</code></pre>
+
+<p>Plugin results are integrated as explicit <code>### Plugin Evidence</code> sections in the synthesis prompt — never merged silently with KB evidence.</p>
+
+<h3>Learn More</h3>
+<ul>
+  <li><a href="../architecture/plugin-guide.html">Plugin Development Guide</a> — step-by-step tutorial with manifest reference, protocol I/O examples, dispatch rules, security</li>
+  <li><a href="../future/agentic-loops.html">Agentic Plugin Loops</a> — proposed multi-step continuation protocol for iterative reasoning</li>
+  <li><a href="../future/symbolic-execution.html">Symbolic Execution Strategy</a> — proposed constraint-based candidate pruning</li>
+</ul>
+
+<div class="nav-bottom">
+  <a href="RETRIEVAL.html" class="prev">← Retrieval</a>
+  <a href="../architecture/plugin-guide.html">Plugin Guide →</a>
+</div>
+</div>
+<footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Evaluation System - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html">Retrieval</a> <a href="processing-modes.html">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="evaluation.html" class="current">Evaluation</a> <a href="llm-cache.html">Cache</a></nav>
+
+<h1>Evaluation System <span class="badge done">IMPLEMENTED</span></h1>
+<p>Suite-based NL evaluation with isolated servers, matrix testing across modes × profiles, and separate answer/context quality tracking. Spec: <a href="../specs/DS021-evaluation.md">DS021</a>.</p>
+
+<h2>Suite Structure</h2>
+<pre><code>test/evaluation/
+├── run.mjs              # Runner
+├── suite01/
+│   ├── story.nl         # Source text + questions
+│   └── eval.json        # Expected intents, context, answers
+└── suite02/
+    ├── story.nl
+    └── eval.json</code></pre>
+
+<h2>eval.json Format</h2>
+<pre><code>{
+  "suiteId": "suite01",
+  "title": "Lumina-7 — Single-Word Answers",
+  "storyFile": "story.nl",
+  "questions": [{
+    "id": "s01-q01",
+    "input": "Would Kaelen's neural implants help in the Frozen Abyss? One word.",
+    "expected": {
+      "intents": [{ "intentMustMention": ["Kaelen", "neural implants"] }],
+      "contextMustMention": ["neural implants"],
+      "contextMustNotMention": ["Flux Core", "Quartz Desert"],
+      "answerMustMention": ["No"],
+      "answerMustNotContain": ["maybe", "possibly"]
+    }
+  }]
+}</code></pre>
+
+<h2>What Gets Checked</h2>
+<table>
+<tr><th>Check</th><th>Category</th><th>What it verifies</th></tr>
+<tr><td>Intent matching</td><td>ANS</td><td>At least one intent group mentions expected terms (order-independent)</td></tr>
+<tr><td>Context recall</td><td>CTX</td><td>Retrieved context contains expected terms</td></tr>
+<tr><td>Context precision</td><td>CTX</td><td>Retrieved context does NOT contain unwanted terms</td></tr>
+<tr><td>Answer content</td><td>ANS</td><td>Answer contains expected terms</td></tr>
+<tr><td>Answer noise</td><td>ANS</td><td>Answer does NOT contain unwanted terms</td></tr>
+</table>
+<p>Failures are tagged <span style="color:#dc2626">[ANS]</span> or <span style="color:#ca8a04">[CTX]</span> so you can tell if the problem is synthesis or retrieval.</p>
+
+<h2>Matrix Evaluation</h2>
+<p>Runs all <code>mode × profile</code> combinations. One isolated server per suite (tmpdir with separate KB). Shared LLM cache for deterministic, cost-free re-runs.</p>
+
+<h2>Output Table</h2>
+<pre><code>Mode            Profile       All         Ans         Ctx         Recall  Prec    F1      ms
+────────────────────────────────────────────────────────────────────────────────────────────
+llm-assisted    fast          4/4 100%   4/4 100%   4/4 100%   1.00    1.00    1.00    157
+llm-assisted    balanced      3/4  75%   3/4  75%   4/4 100%   1.00    1.00    1.00     83
+symbolic-only   fast          2/4  50%   2/4  50%   3/4  75%   0.75    1.00    0.75      3</code></pre>
+
+<h2>CLI Options</h2>
+<pre><code>node test/evaluation/run.mjs                     # all suites, all combos
+node test/evaluation/run.mjs --suite suite01     # one suite
+node test/evaluation/run.mjs --profile fast      # one profile
+node test/evaluation/run.mjs --mode symbolic-only # one mode
+node test/evaluation/run.mjs --delay 3000        # delay between combos (rate limiting)
+node test/evaluation/run.mjs --port 5000         # custom base port</code></pre>
+
+<div class="nav-bottom"><a href="processing-modes.html" class="prev">← Modes</a> <a href="llm-cache.html">LLM Cache →</a></div>
+</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

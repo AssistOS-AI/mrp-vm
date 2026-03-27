@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Execution Pipeline - MRP-VM</title>
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="page">
+<nav class="top">
+  <a href="../index.html">Home</a>
+  <a href="ARCH-VM.html">Vision</a>
+  <a href="PIPELINE.html" class="current">Pipeline</a>
+  <a href="RETRIEVAL.html">Retrieval</a>
+  <a href="PLUGINS.html">Plugins</a>
+  <a href="../architecture/engine.html">Engine Detail</a>
+  <a href="../concepts/cnl-formats.html">CNL</a>
+  <a href="../concepts/retrieval-algorithms.html">Algorithms</a>
+  <a href="../architecture/plugin-guide.html">Plugin Guide</a>
+  <a href="../future/agentic-loops.html">Agentic Loops</a>
+</nav>
+
+<h1>The Lifecycle of an Intent</h1>
+<h2>From Raw Language to Grounded Answer</h2>
+<p>The MRP-VM pipeline is a deterministic sequence of transformations. See <a href="../specs/DS002-mrp-vm-core.md">DS002</a> for the full spec, or <a href="../architecture/engine.html">Engine Detail</a> for the 12-phase breakdown.</p>
+
+<h3>Phase 1: Intent Normalization and Validation</h3>
+<p>The pipeline begins with <strong>Neural Normalization</strong> (<a href="../specs/DS006-nl-normalizer.md">DS006</a>). The VM rewrites the request into <a href="../concepts/cnl-formats.html">Intent CNL</a>:</p>
+<pre><code>## Intent Group 1
+Act: compare
+Intent: Compare BM25 and dense retrieval for lexical search.
+Criterion: Fast response time, low memory.
+Output: Comparative recommendation.</code></pre>
+<p>The <a href="../concepts/processing-modes.html">processing mode</a> determines whether this uses an LLM or rule-based heuristics. The validator (<a href="../specs/DS007-cnl-validator-parser.md">DS007</a>) checks structure, enums, and required fields — fully symbolic, no LLM.</p>
+
+<h3>Phase 2: Intent Decomposition</h3>
+<p>Once validated, the intent is symbolically decomposed (<a href="../specs/DS011-intent-decomposition.md">DS011</a>) into targets, criteria, and a <strong>ContextProfile</strong> that guides retrieval: needed roles, query terms, act boost.</p>
+
+<h3>Phase 3: Evidence Selection</h3>
+<p>The VM executes a <strong>Retrieval Plan</strong> across session contexts and the Knowledge Base. Two strategies work together:</p>
+<ul>
+  <li><strong>BM25</strong> — exact lexical matching with per-field weighting</li>
+  <li><strong>HDC/VSA</strong> — structural pattern matching with 4096-bit hypervectors</li>
+</ul>
+<p>The active <a href="../concepts/retrieval-algorithms.html">retrieval profile</a> (fast/balanced/wide-recall) determines which strategies run and how results are fused. See <a href="../concepts/retrieval-algorithms.html">Retrieval Algorithms</a> for formulas and details.</p>
+
+<h3>Phase 4: Regulated Execution (Plugins)</h3>
+<p>If an intent matches a plugin's capabilities, the plugin is spawned as a separate process. It receives the resolved evidence on stdin and returns a result on stdout in CNL format. See <a href="../architecture/plugin-guide.html">Plugin Development Guide</a>.</p>
+<p>Currently single-pass only. <a href="../future/agentic-loops.html">Agentic continuation loops</a> are proposed but not yet implemented.</p>
+
+<h3>Phase 5: Synthesis and Grounding</h3>
+<p>Final response generation (<a href="../specs/DS017-answer-synthesis.md">DS017</a>) under a strict grounding policy: the answer must be based only on retrieved evidence. No hallucination, no unsupported claims. The response is structured Markdown grouped by intent.</p>
+
+<h3>Session Commit</h3>
+<p>Only after success: user message + assistant response are logged, context units are added to the <a href="../architecture/session-lifecycle.html">session store</a> with hash-based deduplication.</p>
+
+<div class="nav-bottom">
+  <a href="ARCH-VM.html" class="prev">← Architecture</a>
+  <a href="RETRIEVAL.html">Retrieval →</a>
+</div>
+</div>
+<footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer>
+</body>
+</html>

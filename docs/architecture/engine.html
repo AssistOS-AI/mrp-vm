@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Core Engine &amp; Pipeline — MRP-VM</title>
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="page">
+
+<nav class="top">
+  <a href="../index.html">Home</a>
+  <a href="engine.html" class="current">Engine</a>
+  <a href="../concepts/cnl-formats.html">CNL Formats</a>
+  <a href="../concepts/retrieval-algorithms.html">Retrieval</a>
+  <a href="../concepts/processing-modes.html">Processing Modes</a>
+  <a href="plugin-guide.html">Plugins</a>
+  <a href="session-lifecycle.html">Sessions</a>
+  <a href="../future/agentic-loops.html">Agentic Loops</a>
+  <a href="../future/symbolic-execution.html">Symbolic Exec</a>
+  <a href="../concepts/evaluation.html">Evaluation</a>
+  <a href="../concepts/llm-cache.html">LLM Cache</a>
+</nav>
+
+<h1>Core Engine &amp; Pipeline <span class="badge done">IMPLEMENTED</span></h1>
+<p>The MRP-VM core engine (<code>MRPEngine</code>) orchestrates a 12-phase pipeline for every chat turn. It receives a session-scoped NL request from the server, coordinates normalization, decomposition, retrieval, plugin invocation, and answer synthesis, then commits the turn to session state.</p>
+
+<h2>Pipeline Diagram</h2>
+
+<svg class="diagram" viewBox="0 0 520 920" xmlns="http://www.w3.org/2000/svg" font-family="system-ui,sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#64748b"/></marker>
+  </defs>
+  <!-- Phase boxes -->
+  <rect x="110" y="10" width="300" height="44" rx="6" fill="#94a3b8" opacity=".18" stroke="#94a3b8"/>
+  <text x="120" y="37" font-weight="600" fill="#475569">1. Receive Request</text><text x="370" y="37" fill="#64748b" font-size="11">Server</text>
+
+  <rect x="110" y="70" width="300" height="44" rx="6" fill="#94a3b8" opacity=".18" stroke="#94a3b8"/>
+  <text x="120" y="97" font-weight="600" fill="#475569">2. Prepare Turn</text><text x="370" y="97" fill="#64748b" font-size="11">Session</text>
+
+  <rect x="110" y="130" width="300" height="44" rx="6" fill="#86efac" opacity=".25" stroke="#16a34a"/>
+  <text x="120" y="157" font-weight="600" fill="#166534">3. Resolve Strategy</text><text x="370" y="157" fill="#16a34a" font-size="11">Symbolic</text>
+
+  <rect x="110" y="190" width="300" height="44" rx="6" fill="#93c5fd" opacity=".25" stroke="#2563eb"/>
+  <text x="120" y="217" font-weight="600" fill="#1e40af">4. NL → Intent CNL</text><text x="370" y="217" fill="#2563eb" font-size="11">LLM #1</text>
+
+  <rect x="110" y="250" width="300" height="44" rx="6" fill="#86efac" opacity=".25" stroke="#16a34a"/>
+  <text x="120" y="277" font-weight="600" fill="#166534">5. Validate Intent CNL</text><text x="370" y="277" fill="#16a34a" font-size="11">Symbolic</text>
+
+  <rect x="110" y="310" width="300" height="44" rx="6" fill="#93c5fd" opacity=".25" stroke="#2563eb"/>
+  <text x="120" y="337" font-weight="600" fill="#1e40af">6. NL → Session Context CNL</text><text x="370" y="337" fill="#2563eb" font-size="11">LLM #2</text>
+
+  <rect x="110" y="370" width="300" height="44" rx="6" fill="#86efac" opacity=".25" stroke="#16a34a"/>
+  <text x="120" y="397" font-weight="600" fill="#166534">7. Validate Session Context</text><text x="370" y="397" fill="#16a34a" font-size="11">Symbolic</text>
+
+  <rect x="110" y="430" width="300" height="44" rx="6" fill="#86efac" opacity=".25" stroke="#16a34a"/>
+  <text x="120" y="457" font-weight="600" fill="#166534">8. Decompose Intents</text><text x="370" y="457" fill="#16a34a" font-size="11">Symbolic</text>
+
+  <rect x="110" y="490" width="300" height="44" rx="6" fill="#fdba74" opacity=".3" stroke="#ea580c"/>
+  <text x="120" y="517" font-weight="600" fill="#9a3412">9. Retrieve Context</text><text x="370" y="517" fill="#ea580c" font-size="11">Retrieval</text>
+
+  <rect x="110" y="550" width="300" height="44" rx="6" fill="#c4b5fd" opacity=".3" stroke="#7c3aed"/>
+  <text x="120" y="577" font-weight="600" fill="#5b21b6">10. Invoke Plugins</text><text x="370" y="577" fill="#7c3aed" font-size="11">Plugin</text>
+
+  <rect x="110" y="610" width="300" height="44" rx="6" fill="#93c5fd" opacity=".25" stroke="#2563eb"/>
+  <text x="120" y="637" font-weight="600" fill="#1e40af">11. Synthesize Answer</text><text x="370" y="637" fill="#2563eb" font-size="11">LLM #3</text>
+
+  <rect x="110" y="670" width="300" height="44" rx="6" fill="#94a3b8" opacity=".18" stroke="#94a3b8"/>
+  <text x="120" y="697" font-weight="600" fill="#475569">12. Commit Turn</text><text x="370" y="697" fill="#64748b" font-size="11">Session</text>
+
+  <!-- Arrows -->
+  <line x1="260" y1="54" x2="260" y2="70" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="114" x2="260" y2="130" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="174" x2="260" y2="190" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="234" x2="260" y2="250" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="294" x2="260" y2="310" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="354" x2="260" y2="370" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="414" x2="260" y2="430" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="474" x2="260" y2="490" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="534" x2="260" y2="550" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="594" x2="260" y2="610" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="260" y1="654" x2="260" y2="670" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Legend -->
+  <rect x="110" y="740" width="16" height="16" rx="3" fill="#93c5fd" opacity=".4" stroke="#2563eb"/>
+  <text x="132" y="753" font-size="11" fill="#475569">LLM-backed</text>
+  <rect x="220" y="740" width="16" height="16" rx="3" fill="#86efac" opacity=".4" stroke="#16a34a"/>
+  <text x="242" y="753" font-size="11" fill="#475569">Symbolic</text>
+  <rect x="310" y="740" width="16" height="16" rx="3" fill="#fdba74" opacity=".4" stroke="#ea580c"/>
+  <text x="332" y="753" font-size="11" fill="#475569">Retrieval</text>
+  <rect x="110" y="762" width="16" height="16" rx="3" fill="#c4b5fd" opacity=".4" stroke="#7c3aed"/>
+  <text x="132" y="775" font-size="11" fill="#475569">Plugin</text>
+  <rect x="220" y="762" width="16" height="16" rx="3" fill="#94a3b8" opacity=".25" stroke="#94a3b8"/>
+  <text x="242" y="775" font-size="11" fill="#475569">Session / I/O</text>
+</svg>
+
+<h2>Phase Details</h2>
+
+<table>
+<tr><th>#</th><th>Phase</th><th>What Happens</th><th>Module</th><th>LLM?</th><th>Status</th></tr>
+<tr><td>1</td><td>Receive Request</td><td>Server passes <code>{ sessionId?, model?, processingMode?, retrievalProfile?, messages[] }</code></td><td>DS013 Server</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>2</td><td>Prepare Turn</td><td>Resolve/create session, check expiry, build history, extract current message</td><td>DS019 ConversationHandler</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>3</td><td>Resolve Strategy</td><td><code>strategyRegistry.resolve()</code> returns the active <code>LanguageProcessingStrategy</code></td><td>DS022 StrategyRegistry</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>4</td><td>NL → Intent CNL</td><td>Normalize current message + history + system prompt into Intent CNL</td><td>DS006 Normalizer</td><td>Yes</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>5</td><td>Validate Intent CNL</td><td>Structural validation and enum verification of produced Intent CNL</td><td>DS007 Validator</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>6</td><td>NL → Session Context CNL</td><td>Extract facts, preferences, constraints from current message into Context CNL</td><td>DS006 Normalizer</td><td>Yes</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>7</td><td>Validate Session Context</td><td>Structural validation and parsing of session context units</td><td>DS007 Validator/Parser</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>8</td><td>Decompose Intents</td><td>Extract <code>decomposedIntents[]</code> with context profiles from validated Intent CNL</td><td>DS011 IntentDecomposer</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>9</td><td>Retrieve Context</td><td>Per intent group: derive context profile, run retrieval strategies (BM25, HDC/VSA, etc.)</td><td>DS012 Retrieval</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>10</td><td>Invoke Plugins</td><td>If needed, dispatch one deterministic plugin per intent group keyed by <code>intentRef</code></td><td>DS003 PluginManager</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>11</td><td>Synthesize Answer</td><td>Combine resolved intents + plugin outputs into structured Markdown response</td><td>DS017 AnswerSynthesizer</td><td>Yes</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>12</td><td>Commit Turn</td><td>Persist user message, assistant response, context units, preferences to session</td><td>DS019 ConversationHandler</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+</table>
+
+<h2>LLM Budget</h2>
+
+<table>
+<tr><th>Parameter</th><th>Value</th><th>Notes</th></tr>
+<tr><td>Primary LLM stages per request</td><td>3</td><td>Intent normalization, session-context extraction, synthesis</td></tr>
+<tr><td>Max LLM attempts per request</td><td>5</td><td>Includes corrective retries for validation failures (configurable)</td></tr>
+<tr><td>Max correction retries per stage</td><td>1</td><td>Initial attempt + 1 retry on validation failure</td></tr>
+<tr><td>Total timeout</td><td>60s</td><td>Configurable via <code>requestTimeoutMs</code></td></tr>
+<tr><td>Budget exceeded error</td><td><code>ENGINE_BUDGET_EXCEEDED</code></td><td>No partial return on exhaustion</td></tr>
+</table>
+
+<h2>Failure Handling</h2>
+
+<table>
+<tr><th>Failure</th><th>Error Code</th><th>Behavior</th></tr>
+<tr><td>Intent normalization LLM fails</td><td><code>NORMALIZER_FAILED</code></td><td>Request fails</td></tr>
+<tr><td>Intent CNL invalid after retry</td><td><code>NORMALIZER_VALIDATION_FAILED</code></td><td>Request fails</td></tr>
+<tr><td>Session context LLM fails</td><td><code>SESSION_CONTEXT_FAILED</code></td><td>Request fails</td></tr>
+<tr><td>Session context invalid after retry</td><td><code>SESSION_CONTEXT_VALIDATION_FAILED</code></td><td>Request fails</td></tr>
+<tr><td>Zero intent groups</td><td><code>DECOMPOSER_EMPTY_RESULT</code></td><td>Request fails</td></tr>
+<tr><td>No evidence for a group</td><td>—</td><td>Group marked <code>no-context</code>, valid result</td></tr>
+<tr><td>Plugin failure/timeout</td><td>—</td><td>Group marked <code>plugin-error</code>, no fallback</td></tr>
+<tr><td>Synthesis fails</td><td><code>SYNTHESIS_FAILED</code></td><td>Request fails, no raw-context fallback</td></tr>
+</table>
+
+<h2>Related Specs</h2>
+<ul>
+  <li><a href="../specs/DS002-mrp-vm-core.md">DS002 — MRP-VM Core Engine</a></li>
+  <li><a href="../specs/DS006-nl-normalizer.md">DS006 — NL Normalizer</a></li>
+  <li><a href="../specs/DS007-cnl-validator-parser.md">DS007 — CNL Validator &amp; Parser</a></li>
+  <li><a href="../specs/DS011-intent-decomposition.md">DS011 — Intent Decomposition</a></li>
+  <li><a href="../specs/DS012-retrieval-context-matching.md">DS012 — Retrieval &amp; Context Matching</a></li>
+  <li><a href="../specs/DS017-answer-synthesis.md">DS017 — Answer Synthesis</a></li>
+</ul>
+
+</div>
+<footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer>
+</body>
+</html>

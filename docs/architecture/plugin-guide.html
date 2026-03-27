@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plugin Development Guide — MRP-VM</title>
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="page">
+
+<nav class="top">
+  <a href="../index.html">Home</a>
+  <a href="engine.html">Engine</a>
+  <a href="../concepts/cnl-formats.html">CNL Formats</a>
+  <a href="../concepts/retrieval-algorithms.html">Retrieval</a>
+  <a href="../concepts/processing-modes.html">Processing Modes</a>
+  <a href="plugin-guide.html" class="current">Plugins</a>
+  <a href="session-lifecycle.html">Sessions</a>
+  <a href="../future/agentic-loops.html">Agentic Loops</a>
+  <a href="../future/symbolic-execution.html">Symbolic Exec</a>
+  <a href="../concepts/evaluation.html">Evaluation</a>
+  <a href="../concepts/llm-cache.html">LLM Cache</a>
+</nav>
+
+<h1>Plugin Development Guide <span class="badge done">IMPLEMENTED</span></h1>
+
+<h2>1. What is a Plugin</h2>
+<p>A plugin is an external process that receives a resolved intent bundle on stdin (CNL Markdown) and returns a processing result on stdout. Plugins can be written in any language (Node.js, Python, Rust, etc.) as long as they follow the wrapper convention. They complement retrieval with specialized processing — they do not replace it.</p>
+
+<h2>2. Directory Structure</h2>
+<pre><code>wrappers/&lt;plugin-name&gt;/
+├── manifest.json       # Plugin metadata and dispatch config
+├── wrapper.js          # Entry point (or wrapper.py, etc.)
+└── README.md           # Plugin documentation</code></pre>
+<p>The engine auto-discovers plugins by scanning <code>wrappers/</code> at boot. Each subdirectory must contain a valid <code>manifest.json</code>.</p>
+
+<h2>3. manifest.json Reference</h2>
+
+<table>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>name</code></td><td>string</td><td>Yes</td><td>Unique plugin identifier</td></tr>
+<tr><td><code>version</code></td><td>string</td><td>Yes</td><td>Semver version</td></tr>
+<tr><td><code>protocolVersion</code></td><td>number</td><td>Yes</td><td>I/O protocol version (must be <code>1</code>)</td></tr>
+<tr><td><code>capabilities</code></td><td>string[]</td><td>Yes</td><td>Capabilities this plugin provides (e.g. <code>"logical-constraint"</code>, <code>"sat-check"</code>)</td></tr>
+<tr><td><code>keywords</code></td><td>string[]</td><td>Yes</td><td>Keywords for keyword-based dispatch matching</td></tr>
+<tr><td><code>command</code></td><td>string</td><td>Yes</td><td>Executable to run (e.g. <code>"node"</code>). No <code>..</code> or absolute paths allowed</td></tr>
+<tr><td><code>args</code></td><td>string[]</td><td>Yes</td><td>Arguments passed to the command (e.g. <code>["wrapper.js"]</code>)</td></tr>
+<tr><td><code>timeout</code></td><td>number</td><td>Yes</td><td>Max execution time in ms</td></tr>
+<tr><td><code>priority</code></td><td>number</td><td>Yes</td><td>Dispatch priority (higher = more preferred)</td></tr>
+<tr><td><code>exclusive</code></td><td>boolean</td><td>No</td><td>Reserved for future multi-plugin orchestration; ignored in v1</td></tr>
+<tr><td><code>maxInputSizeBytes</code></td><td>number</td><td>Yes</td><td>Max stdin payload size. Exceeding returns <code>PLUGIN_INPUT_TOO_LARGE</code></td></tr>
+<tr><td><code>description</code></td><td>string</td><td>No</td><td>Short human-readable description</td></tr>
+</table>
+
+<p>Example:</p>
+<pre><code>{
+  "name": "z3-solver",
+  "version": "0.1.0",
+  "protocolVersion": 1,
+  "capabilities": ["logical-constraint", "sat-check"],
+  "keywords": ["constraint", "satisfiable", "prove"],
+  "command": "node",
+  "args": ["wrapper.js"],
+  "timeout": 30000,
+  "priority": 10,
+  "exclusive": false,
+  "maxInputSizeBytes": 65536,
+  "description": "Z3 SMT solver wrapper"
+}</code></pre>
+
+<h2>4. Protocol I/O <span class="badge done">IMPLEMENTED</span></h2>
+
+<h3>Input (stdin)</h3>
+<p>The plugin receives <code>resolvedMarkdown</code> from DS012 — a Markdown document containing the normalized intent and all evidence layers. Encoding: UTF-8. Terminated with EOF (close stdin).</p>
+
+<pre><code>## Resolved Intent Group 1
+Act: verify
+Intent: Verify that constraint X is satisfiable.
+Output: Verification result.
+
+### Current-Turn Context
+#### sess-abc123::turn-003::unit-000
+Role: Constraint
+Claim: Variables are integers.
+
+### Session Context
+#### sess-abc123::turn-001::unit-000 (score: 0.74)
+Role: Condition
+Claim: All values must be positive.
+
+### Persistent KB Context
+#### src-001::chunk-000::unit-000 (score: 0.87)
+Role: Constraint
+Source: rules.md
+Claim: a + b must equal c.</code></pre>
+
+<h3>Output (stdout)</h3>
+<p>CNL Markdown with the processing result:</p>
+
+<pre><code>## Plugin Result
+Status: success
+Plugin: z3-solver
+Confidence: high
+Result: Constraint is satisfiable.
+Evidence: Z3 returned SAT in 12ms.</code></pre>
+
+<p>Output fields:</p>
+<ul>
+  <li><code>Status</code> — required: <code>success</code> | <code>error</code></li>
+  <li><code>Plugin</code> — required: plugin name</li>
+  <li><code>Confidence</code> — required on success: <code>high</code> | <code>medium</code> | <code>low</code></li>
+  <li><code>Result</code> — required on success</li>
+  <li><code>Evidence</code> — optional</li>
+</ul>
+
+<h3>Errors (stderr)</h3>
+<p>Structured JSON, one line:</p>
+<pre><code>{"code":"PARSE_ERROR","message":"...","details":{}}</code></pre>
+
+<h3>Exit Codes</h3>
+<table>
+<tr><th>Code</th><th>Meaning</th></tr>
+<tr><td>0</td><td>Success</td></tr>
+<tr><td>1</td><td>Processing error</td></tr>
+<tr><td>2</td><td>Invalid input</td></tr>
+<tr><td>3</td><td>Internal timeout</td></tr>
+</table>
+
+<h2>5. Plugin Selection <span class="badge done">IMPLEMENTED</span></h2>
+
+<p>The engine evaluates dispatch criteria in priority order for each resolved intent group:</p>
+<ol>
+  <li><strong>Explicit field</strong> — If the Normalizer emits an <code>Interpreter: z3</code> field in the Intent CNL, that plugin is selected directly.</li>
+  <li><strong>Act → capability mapping</strong> — The pragmatic act from the intent is matched against <code>capabilities</code> declared in manifests, using the canonical act→capability taxonomy from DS004.</li>
+  <li><strong>Keyword matching</strong> — Keywords from the intent text are matched against <code>keywords</code> in the manifest.</li>
+</ol>
+
+<h3>Conflict Resolution</h3>
+<p>When multiple plugins match the same intent:</p>
+<ol>
+  <li>Select the plugin with the higher <code>priority</code> value.</li>
+  <li>On tie: alphabetical order by <code>name</code> (deterministic tie-break).</li>
+  <li>The chosen plugin is final — no automatic fallback chain.</li>
+</ol>
+
+<h2>6. Testing <span class="badge done">IMPLEMENTED</span></h2>
+<p>Each wrapper must be independently testable via stdin/stdout:</p>
+<pre><code>cat test-input.cnl.md | node wrapper.js</code></pre>
+<p>Create a <code>test-input.cnl.md</code> file in your wrapper directory with a sample <code>resolvedMarkdown</code> payload and verify the output matches the expected format.</p>
+
+<h2>7. Security <span class="badge done">IMPLEMENTED</span></h2>
+<ul>
+  <li><strong>Allowlist</strong> — Only plugins listed in <code>config/engine.json → pluginAllowlist</code> can be executed.</li>
+  <li><strong>Timeout</strong> — Per-plugin timeout from manifest or engine config (default 30s).</li>
+  <li><strong>Memory limit</strong> — Configurable via <code>pluginMemoryLimitMB</code> (default 256 MB).</li>
+  <li><strong>Input size</strong> — Serialized <code>resolvedMarkdown</code> is checked against <code>maxInputSizeBytes</code> before spawning. Exceeding returns <code>PLUGIN_INPUT_TOO_LARGE</code>.</li>
+  <li><strong>Path sanitization</strong> — <code>command</code> cannot contain <code>..</code> or absolute paths.</li>
+  <li><strong>Output validation</strong> — Plugin stdout must parse under the DS016 contract; invalid stdout becomes <code>PLUGIN_INVALID_OUTPUT</code>.</li>
+  <li><strong>No OS-level sandboxing</strong> in v1 — plugins are trusted components.</li>
+</ul>
+
+<h2>8. Limitations</h2>
+<ul>
+  <li>Single plugin per intent group — no chaining or multi-plugin orchestration in v1.</li>
+  <li>No continuation loops — a plugin runs once and returns.</li>
+  <li>See <a href="../future/agentic-loops.html">Agentic Loops</a> for planned multi-step plugin orchestration.</li>
+</ul>
+
+</div>
+<footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer>
+</body>
+</html>

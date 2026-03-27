@@ -1,0 +1,69 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Proposal: Symbolic Execution - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="../concepts/cnl-formats.html">CNL</a> <a href="../concepts/retrieval-algorithms.html">Retrieval</a> <a href="../concepts/processing-modes.html">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="agentic-loops.html">Agentic Loops</a> <a href="symbolic-execution.html" class="current">Symbolic Exec</a> <a href="../concepts/evaluation.html">Evaluation</a> <a href="../concepts/llm-cache.html">Cache</a></nav>
+
+<h1>Proposal — Symbolic Execution Strategy <span class="badge planned">NOT IMPLEMENTED</span></h1>
+<p>A retrieval strategy that uses symbolic reasoning to verify or reject candidates based on logical consistency with the query's constraints.</p>
+
+<h2>The Idea</h2>
+<p>BM25 matches words. HDC/VSA matches structure. Neither checks <strong>logical consistency</strong>. If the user asks "What works for CPU-only deployment?" and a KB unit says "Requires GPU with 16GB VRAM", BM25 might score it high (matches "deployment") but it contradicts the constraint.</p>
+<p>A symbolic execution strategy would detect this contradiction and prune the candidate, even if its BM25 score is high.</p>
+
+<svg class="diagram" width="700" height="140" viewBox="0 0 700 140" xmlns="http://www.w3.org/2000/svg">
+  <rect x="20" y="50" width="120" height="40" rx="6" fill="#fef9c3" stroke="#ca8a04" stroke-width="2"/><text x="80" y="75" text-anchor="middle" font-size="11" font-family="system-ui">BM25 Results</text>
+  <path d="M140 70 L200 70" stroke="#334155" stroke-width="1.5" marker-end="url(#a3)"/>
+  <rect x="200" y="50" width="160" height="40" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/><text x="280" y="75" text-anchor="middle" font-size="11" font-family="system-ui">Symbolic Pruning</text>
+  <path d="M360 70 L420 70" stroke="#334155" stroke-width="1.5" marker-end="url(#a3)"/>
+  <rect x="420" y="50" width="130" height="40" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/><text x="485" y="75" text-anchor="middle" font-size="11" font-family="system-ui">Consistent Only</text>
+  <text x="280" y="115" text-anchor="middle" font-size="10" fill="#dc2626" font-family="system-ui">✗ "Requires GPU" contradicts "CPU-only"</text>
+  <defs><marker id="a3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0 0 L8 3 L0 6" fill="#334155"/></marker></defs>
+</svg>
+
+<h2>How It Would Work</h2>
+<ol>
+  <li><strong>Extract constraints</strong> from intent: <code>Context</code>, <code>Criterion</code>, <code>Evidence</code> fields</li>
+  <li><strong>Extract claims</strong> from each BM25 candidate</li>
+  <li><strong>Check consistency</strong>: does the claim contradict any constraint?</li>
+  <li><strong>Prune</strong> contradictory candidates (when <code>hardSymbolicPruning = true</code>)</li>
+</ol>
+
+<h2>Candidate Approaches</h2>
+<table>
+<tr><th>Approach</th><th>Complexity</th><th>Precision</th><th>Description</th></tr>
+<tr><td><strong>A: Pattern-based</strong></td><td>Low</td><td>Medium</td><td>Detect simple contradictions: "CPU-only" vs "requires GPU", "no network" vs "cloud-based". Keyword negation patterns.</td></tr>
+<tr><td><strong>B: Constraint graph</strong></td><td>Medium</td><td>High</td><td>Build a constraint graph from intent fields. Propagate constraints. Check if candidate claims are reachable/consistent.</td></tr>
+<tr><td><strong>C: Z3 integration</strong></td><td>High</td><td>Very high</td><td>Translate constraints and claims to SMT formulas. Use Z3 plugin to check satisfiability. Most powerful but slowest.</td></tr>
+</table>
+<p>Recommended starting point: <strong>Option A</strong> — simple, fast, covers the most common contradictions.</p>
+
+<h2>Profile Integration</h2>
+<p>Would be used in a new <code>symbolic-grounded</code> profile:</p>
+<pre><code>{
+  "symbolic-grounded": {
+    "primaryStrategies": ["bm25-lexical"],
+    "secondaryStrategies": ["symbolic-fixedpoint"],
+    "hardSymbolicPruning": true,
+    "maxResults": 5,
+    "minScore": 0.2,
+    "confidenceGapThreshold": 0.40
+  }
+}</code></pre>
+<p>BM25 runs first, then the symbolic strategy prunes inconsistent results. With <code>hardSymbolicPruning = true</code>, pruned candidates are removed even if their BM25 score is high.</p>
+
+<h2>Why Not Yet</h2>
+<ul>
+  <li>Requires well-structured constraints in Intent CNL — current normalization doesn't reliably produce <code>Criterion</code> and <code>Evidence</code> fields for all inputs</li>
+  <li>Evaluation framework needs constraint-specific test suites (e.g., "given CPU-only, should NOT retrieve GPU-dependent units")</li>
+  <li>Pattern-based approach (Option A) is straightforward to implement but needs a curated contradiction dictionary</li>
+</ul>
+
+<h2>Implementation Path</h2>
+<ol>
+  <li>Extend Intent CNL normalization to reliably extract structured constraints</li>
+  <li>Implement pattern-based contradiction detector (<code>src/retrieval/strategies/symbolic-fixedpoint.mjs</code>)</li>
+  <li>Add <code>symbolic-grounded</code> profile to <code>config/retrieval-strategies.json</code></li>
+  <li>Create evaluation suite with constraint-contradiction scenarios</li>
+  <li>Optionally: integrate with Z3 plugin for formal verification (Option C)</li>
+</ol>
+
+<div class="nav-bottom"><a href="agentic-loops.html" class="prev">← Agentic Loops</a> <a href="../index.html">Home →</a></div>
+</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

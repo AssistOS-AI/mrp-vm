@@ -1,0 +1,54 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Processing Modes - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html">Retrieval</a> <a href="processing-modes.html" class="current">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html">Cache</a></nav>
+
+<h1>Processing Modes <span class="badge done">IMPLEMENTED</span></h1>
+<p>Every language-processing step (normalization, context extraction, synthesis) goes through a <strong>strategy interface</strong> (<a href="../specs/DS022-processing-strategies.md">DS022</a>). Two modes are available:</p>
+
+<h2>Comparison</h2>
+<table>
+<tr><th>Aspect</th><th>llm-assisted</th><th>symbolic-only</th></tr>
+<tr><td>Latency per turn</td><td>~2–8 seconds</td><td>~2 ms</td></tr>
+<tr><td>LLM cost</td><td>3 calls/turn</td><td>Zero</td></tr>
+<tr><td>Quality on complex input</td><td>High</td><td>Lower</td></tr>
+<tr><td>Determinism</td><td>No (LLM variance)</td><td>Yes</td></tr>
+<tr><td>Model override</td><td>Yes</td><td>No</td></tr>
+<tr><td>Corrective retry</td><td>Yes (1 retry)</td><td>No</td></tr>
+</table>
+
+<h2>llm-assisted <span class="badge done">IMPLEMENTED</span></h2>
+<p>Uses AchillesAgentLib (<a href="../specs/DS015-llmagent-integration.md">DS015</a>) for 4 capabilities:</p>
+<table>
+<tr><th>Capability</th><th>Prompt file</th><th>When</th></tr>
+<tr><td>Intent normalization</td><td><code>config/prompts/normalize-intent.md</code></td><td>Every turn</td></tr>
+<tr><td>Session context extraction</td><td><code>config/prompts/normalize-session-context.md</code></td><td>Every turn</td></tr>
+<tr><td>Persistent context normalization</td><td><code>config/prompts/normalize-context.md</code></td><td>At KB ingest</td></tr>
+<tr><td>Answer synthesis</td><td><code>config/prompts/synthesize.md</code></td><td>Every turn</td></tr>
+</table>
+<p><strong>Corrective retry:</strong> if LLM output fails CNL validation, the error details are fed back to the LLM for one retry attempt. If that also fails, the request returns an explicit error.</p>
+
+<h2>symbolic-only <span class="badge done">IMPLEMENTED</span></h2>
+<p>Rule-based heuristics, no LLM calls.</p>
+
+<h3>Intent Normalization</h3>
+<p>Detects the pragmatic act by matching verbs in the input:</p>
+<pre><code>compare → ['compare','contrast','difference','versus','vs']
+explain → ['explain','why','how','cause','reason']
+recommend → ['recommend','suggest','advise','best']
+diagnose → ['diagnose','problem','issue','debug']
+implement → ['implement','build','create','setup','configure']
+verify → ['verify','check','validate','prove','confirm']
+define → ['define','what is','meaning','definition']
+evaluate → ['evaluate','assess','measure','rate','review']</code></pre>
+<p>Short inputs (&lt;200 chars) become a single Intent Group. Longer inputs are split by sentence.</p>
+
+<h3>Session Context Extraction</h3>
+<p>Filters sentences by verb patterns (<code>is, are, use, have, deploy, prefer, need...</code>). Excludes questions and commands. Assigns roles by keyword: <code>prefer/want</code> → Evaluation, <code>deploy/must/should</code> → Constraint, default → Explanation.</p>
+
+<h3>Answer Synthesis</h3>
+<p>Deterministic Markdown templates. Lists evidence claims as bullet points. No free-form prose generation. Status is <code>answered</code> if evidence exists, <code>no-context</code> otherwise.</p>
+
+<h2>Strategy Resolution</h2>
+<p>Priority order: request <code>processing_mode</code> → session preference → deployment default (<code>config/strategies.json</code>). No silent fallback — if the selected strategy can't handle the input, it returns an explicit error.</p>
+
+<div class="nav-bottom"><a href="retrieval-algorithms.html" class="prev">← Retrieval</a> <a href="evaluation.html">Evaluation →</a></div>
+</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

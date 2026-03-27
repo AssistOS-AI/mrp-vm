@@ -1,0 +1,86 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Retrieval Algorithms - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html" class="current">Retrieval</a> <a href="processing-modes.html">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html">Cache</a></nav>
+
+<h1>Retrieval Algorithms — BM25 &amp; HDC/VSA <span class="badge done">IMPLEMENTED</span></h1>
+<p>MRP-VM uses two complementary retrieval strategies to find relevant evidence. Specs: <a href="../specs/DS009-kb-indexing-retrieval.md">DS009</a>, <a href="../specs/DS023-retrieval-strategies.md">DS023</a>, <a href="../specs/DS024-hdc-vsa-retrieval.md">DS024</a>.</p>
+
+<svg class="diagram" width="750" height="200" viewBox="0 0 750 200" xmlns="http://www.w3.org/2000/svg">
+  <rect x="10" y="70" width="130" height="50" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="75" y="100" text-anchor="middle" font-size="12" font-family="system-ui" font-weight="bold">Query</text>
+  <path d="M140 85 L200 55" stroke="#334155" stroke-width="1.5" marker-end="url(#a)"/>
+  <path d="M140 105 L200 135" stroke="#334155" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="200" y="30" width="160" height="45" rx="6" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.5"/><text x="280" y="57" text-anchor="middle" font-size="12" font-family="system-ui">BM25 Lexical</text>
+  <rect x="200" y="115" width="160" height="45" rx="6" fill="#f3e8ff" stroke="#7c3aed" stroke-width="1.5"/><text x="280" y="142" text-anchor="middle" font-size="12" font-family="system-ui">HDC/VSA Associative</text>
+  <path d="M360 52 L440 80" stroke="#334155" stroke-width="1.5" marker-end="url(#a)"/>
+  <path d="M360 137 L440 105" stroke="#334155" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="440" y="65" width="130" height="50" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/><text x="505" y="94" text-anchor="middle" font-size="12" font-family="system-ui">Score Fusion</text>
+  <path d="M570 90 L620 90" stroke="#334155" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="620" y="65" width="110" height="50" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/><text x="675" y="87" text-anchor="middle" font-size="11" font-family="system-ui">Gap Pruning</text><text x="675" y="102" text-anchor="middle" font-size="11" font-family="system-ui">&amp; Top-N</text>
+  <defs><marker id="a" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0 0 L8 3 L0 6" fill="#334155"/></marker></defs>
+</svg>
+
+<h2>BM25 Lexical Search</h2>
+<p>Standard BM25 with per-field weighting. Matches exact tokens after stemming.</p>
+<pre><code>score(query, unit) = Σ fieldWeight[f] × BM25(query, unit[f]) × roleBoost
+BM25(q,d) = Σ IDF(t) × (tf × (k1+1)) / (tf + k1 × (1 - b + b × dl/avgdl))
+k1 = 1.2, b = 0.75</code></pre>
+
+<h3>Field Weights</h3>
+<table>
+<tr><th>Field</th><th>Weight</th><th>Why</th></tr>
+<tr><td>topic</td><td>1.5×</td><td>Most discriminative — what the unit is about</td></tr>
+<tr><td>claim</td><td>1.0×</td><td>Core assertion content</td></tr>
+<tr><td>procedure</td><td>1.0×</td><td>Step content (for Procedure role)</td></tr>
+<tr><td>utilityActs</td><td>0.8×</td><td>Pragmatic act matching</td></tr>
+<tr><td>utilityNote</td><td>0.6×</td><td>Supplementary context</td></tr>
+<tr><td>condition</td><td>0.6×</td><td>Constraints and limitations</td></tr>
+<tr><td>role</td><td>0.5×</td><td>Structural role matching</td></tr>
+</table>
+
+<h3>Tokenization</h3>
+<p>Lowercase → split on whitespace → strip edge punctuation → remove possessives (<code>'s</code>) → stopword removal → Porter stemming. Hyphenated terms: keep whole + index parts separately.</p>
+
+<h2>HDC/VSA Associative Search</h2>
+<p>Hyperdimensional Computing with 4096-bit binary vectors. Complements BM25 by capturing structural similarity when lexical overlap is partial.</p>
+
+<h3>Core Operations</h3>
+<table>
+<tr><th>Operation</th><th>Implementation</th><th>Purpose</th></tr>
+<tr><td>Random HV</td><td>Seeded PRNG from string hash → 4096 bits</td><td>Unique vector per token/symbol</td></tr>
+<tr><td>Bind (⊗)</td><td>Bitwise XOR</td><td>Associate field name with value</td></tr>
+<tr><td>Bundle (+)</td><td>Majority vote per bit</td><td>Combine multiple concepts</td></tr>
+<tr><td>Similarity</td><td>1 − Hamming(a,b) / 4096</td><td>Compare vectors (0.50 = random)</td></tr>
+</table>
+
+<h3>Per-Field Encoding</h3>
+<p>Each unit is encoded as <strong>separate field vectors</strong>, not one blob:</p>
+<ul>
+  <li><code>role</code> → <code>randomHV(roleName)</code> — exact match on role</li>
+  <li><code>topic</code> → <code>encodeNgrams(tokens)</code> — positional unigrams + bigrams</li>
+  <li><code>claim</code> → <code>encodeNgrams(tokens)</code> — captures word order</li>
+  <li><code>acts</code> → <code>encodeTokens(actList)</code> — bag-of-words</li>
+</ul>
+
+<h3>Scoring</h3>
+<pre><code>fieldScore = max(0, (similarity(query.field, unit.field) - 0.50) × 2)
+finalScore = 0.35×topic + 0.35×claim + 0.20×role + 0.10×acts</code></pre>
+<p>The 0.50 subtraction removes random noise (two random vectors have ~0.50 similarity).</p>
+
+<h2>Score Fusion</h2>
+<p>When both strategies find the same unit:</p>
+<pre><code>fusedScore = 1.0 × bm25_normalized + 0.7 × hdc_normalized + 0.15 (agreement bonus)</code></pre>
+
+<h2>Confidence Gap Pruning</h2>
+<p>After scoring and sorting, candidates with score below <code>topScore × gapThreshold</code> are removed. This prevents low-relevance noise from reaching synthesis.</p>
+
+<h2>Retrieval Profiles</h2>
+<table>
+<tr><th>Profile</th><th>Strategies</th><th>maxResults</th><th>minScore</th><th>Gap Threshold</th><th>Use Case</th></tr>
+<tr><td><strong>fast</strong></td><td>BM25 only</td><td>3</td><td>0.3</td><td>50%</td><td>Simple questions, max precision</td></tr>
+<tr><td><strong>balanced</strong></td><td>BM25 + HDC escalation</td><td>7</td><td>0.15</td><td>35%</td><td>Default, good tradeoff</td></tr>
+<tr><td><strong>wide-recall</strong></td><td>BM25 + HDC parallel</td><td>15</td><td>0.05</td><td>15%</td><td>Complex questions, max coverage</td></tr>
+</table>
+<p><strong>Escalation</strong> (balanced): HDC runs only when BM25 returns fewer than <code>minAcceptableCandidates</code>.<br>
+<strong>Parallel</strong> (wide-recall): both run simultaneously, results fused with agreement bonus.</p>
+
+<div class="nav-bottom"><a href="cnl-formats.html" class="prev">← CNL Formats</a> <a href="processing-modes.html">Processing Modes →</a></div>
+</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

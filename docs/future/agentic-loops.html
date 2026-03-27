@@ -1,0 +1,92 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Proposal: Agentic Plugin Loops - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="../concepts/cnl-formats.html">CNL</a> <a href="../concepts/retrieval-algorithms.html">Retrieval</a> <a href="../concepts/processing-modes.html">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="agentic-loops.html" class="current">Agentic Loops</a> <a href="symbolic-execution.html">Symbolic Exec</a> <a href="../concepts/evaluation.html">Evaluation</a> <a href="../concepts/llm-cache.html">Cache</a></nav>
+
+<h1>Proposal — Agentic Plugin Loops <span class="badge planned">NOT IMPLEMENTED</span></h1>
+<p>This page describes a proposed extension for multi-step plugin orchestration. Currently, plugins are single-pass: they receive evidence and return one result. This proposal enables iterative reasoning loops.</p>
+
+<h2>The Problem</h2>
+<p>Some tasks require multiple steps. Example: a Z3 solver determines a constraint set is UNSAT. To find a solution, it needs to relax a variable, which requires re-querying the KB for alternative values, then re-running Z3 with the new evidence.</p>
+<p>Current limitation: the plugin gets one shot. If it needs more information, it can't ask for it.</p>
+
+<svg class="diagram" width="700" height="180" viewBox="0 0 700 180" xmlns="http://www.w3.org/2000/svg">
+  <rect x="20" y="70" width="100" height="40" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="70" y="95" text-anchor="middle" font-size="11" font-family="system-ui">Engine</text>
+  <path d="M120 90 L180 90" stroke="#334155" stroke-width="1.5" marker-end="url(#a2)"/>
+  <rect x="180" y="70" width="100" height="40" rx="6" fill="#f3e8ff" stroke="#7c3aed" stroke-width="2"/><text x="230" y="95" text-anchor="middle" font-size="11" font-family="system-ui">Plugin</text>
+  <path d="M280 80 L340 50" stroke="#16a34a" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="330" y="42" font-size="10" fill="#16a34a" font-family="system-ui">success → done</text>
+  <path d="M280 100 L340 130" stroke="#ca8a04" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="355" y="125" font-size="10" fill="#ca8a04" font-family="system-ui">continuation</text>
+  <rect x="400" y="115" width="100" height="40" rx="6" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.5"/><text x="450" y="139" text-anchor="middle" font-size="11" font-family="system-ui">Retrieve</text>
+  <path d="M450 155 C450 175 230 175 230 110" stroke="#ca8a04" stroke-width="1.5" fill="none" stroke-dasharray="4" marker-end="url(#a2)"/>
+  <text x="350" y="172" font-size="10" fill="#ca8a04" font-family="system-ui">feed new evidence back</text>
+  <defs><marker id="a2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0 0 L8 3 L0 6" fill="#334155"/></marker></defs>
+</svg>
+
+<h2>Proposed Continuation Protocol</h2>
+<p>A plugin signals it needs more work by returning <code>Status: continuation</code>:</p>
+<pre><code>## Plugin Result
+Status: continuation
+Plugin: z3-solver
+Confidence: low
+
+## Continuation Request
+Action: retrieve
+Query: Alternative values for variable X when constraint Y is relaxed
+Reason: Initial constraint set is UNSAT. Need relaxation options.</code></pre>
+
+<p>The engine would then:</p>
+<ol>
+  <li>Parse the continuation request</li>
+  <li>Run a new retrieval cycle with the plugin's query</li>
+  <li>Feed the new evidence back to the same plugin on stdin</li>
+  <li>Repeat until <code>Status: success</code> or <code>Status: error</code> or budget exhausted</li>
+</ol>
+
+<h2>Task Dependencies (Multi-Step)</h2>
+<p>For complex reasoning, a plugin could return multiple sub-tasks with dependencies:</p>
+<pre><code>## Continuation Request
+Action: multi-step
+
+### Task 1
+Action: retrieve
+Query: Values of variable X
+DependsOn: none
+
+### Task 2
+Action: retrieve
+Query: Constraints involving variable X
+DependsOn: none
+
+### Task 3
+Action: plugin
+Plugin: z3-solver
+Input: Combine results of Task 1 and Task 2
+DependsOn: task-1, task-2</code></pre>
+
+<p>The engine would build a DAG, execute independent tasks in parallel, wait for dependencies, detect cycles → error.</p>
+
+<h2>Proposed Budget Controls</h2>
+<pre><code>{
+  "maxPluginContinuations": 3,
+  "maxPluginTotalTimeMs": 60000,
+  "continuationRetrievalProfile": "fast"
+}</code></pre>
+
+<h2>Why Not Yet</h2>
+<ul>
+  <li>Current evaluation suites don't require multi-step reasoning</li>
+  <li>Adds complexity to the plugin contract (backward-incompatible if not careful)</li>
+  <li>Budget management across loops needs careful design to prevent runaway costs</li>
+  <li>The single-pass model covers current use cases well</li>
+</ul>
+
+<h2>Implementation Path</h2>
+<ol>
+  <li>Add <code>continuation</code> status parsing to plugin manager</li>
+  <li>Add loop in engine with budget tracking</li>
+  <li>Add DAG executor for multi-task continuations</li>
+  <li>Create evaluation suite with multi-step scenarios</li>
+</ol>
+
+<div class="nav-bottom"><a href="../concepts/llm-cache.html" class="prev">← Cache</a> <a href="symbolic-execution.html">Symbolic Exec →</a></div>
+</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knowledge &amp; Retrieval - MRP-VM</title>
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="page">
+<nav class="top">
+  <a href="../index.html">Home</a>
+  <a href="ARCH-VM.html">Vision</a>
+  <a href="PIPELINE.html">Pipeline</a>
+  <a href="RETRIEVAL.html" class="current">Retrieval</a>
+  <a href="PLUGINS.html">Plugins</a>
+  <a href="../architecture/engine.html">Engine Detail</a>
+  <a href="../concepts/cnl-formats.html">CNL</a>
+  <a href="../concepts/retrieval-algorithms.html">Algorithms</a>
+  <a href="../architecture/plugin-guide.html">Plugin Guide</a>
+  <a href="../future/agentic-loops.html">Agentic Loops</a>
+</nav>
+
+<h1>Knowledge, Context, and Retrieval</h1>
+<h2>Memory: From Raw Data to Contextual Evidence</h2>
+<p>In MRP-VM, knowledge is an actively governed store of <strong>Context Units</strong> expressed in <a href="../concepts/cnl-formats.html">Context CNL</a>. See <a href="../specs/DS008-knowledge-base.md">DS008</a>.</p>
+
+<h3>The Knowledge Base Ingest Pipeline</h3>
+<ol>
+  <li><strong>Semantic Chunking</strong> (<a href="../specs/DS018-source-ingestion-chunking.md">DS018</a>) — segmenting documents into coherent fragments by Markdown headings or sliding window</li>
+  <li><strong>Context Normalization</strong> — enriching each chunk with pragmatic <strong>Roles</strong> (Comparison, Explanation, Narrative...) and <strong>UtilityActs</strong> via the active <a href="../concepts/processing-modes.html">processing strategy</a></li>
+  <li><strong>Indexing</strong> — adding units to BM25 inverted index + HDC/VSA vector cache</li>
+  <li><strong>Persistence</strong> (<a href="../specs/DS010-kb-persistence.md">DS010</a>) — atomic writes to <code>data/kb/</code></li>
+</ol>
+
+<h3>Two Evidence Stores</h3>
+<table>
+  <tr><th>Store</th><th>Scope</th><th>Lifetime</th><th>Source</th></tr>
+  <tr><td><strong>Session Context</strong></td><td>Per-session</td><td>Until session expires (30min)</td><td>Extracted from user messages each turn</td></tr>
+  <tr><td><strong>Persistent KB</strong></td><td>Global</td><td>Until source deleted</td><td>Ingested documents (.md, .txt)</td></tr>
+</table>
+<p>Both stores are searched by the same retrieval strategies. Session evidence gets a 1.15× boost. See <a href="../architecture/session-lifecycle.html">Session Lifecycle</a>.</p>
+
+<h3>Retrieval Strategies</h3>
+<p>Two complementary strategies find evidence. For full technical details see <a href="../concepts/retrieval-algorithms.html">Retrieval Algorithms</a>.</p>
+<table>
+  <tr><th>Strategy</th><th>Type</th><th>Strength</th></tr>
+  <tr><td><strong>BM25</strong></td><td>Lexical (term frequency)</td><td>Precise on exact token matches</td></tr>
+  <tr><td><strong>HDC/VSA</strong></td><td>Associative (hypervectors)</td><td>Structural similarity when lexical overlap is partial</td></tr>
+</table>
+
+<h3>Risk Profiles</h3>
+<p>Profiles control the precision/recall tradeoff:</p>
+<table>
+  <tr><th>Profile</th><th>Strategies</th><th>Results</th><th>Use Case</th></tr>
+  <tr><td><code>fast</code></td><td>BM25 only</td><td>Top 3</td><td>Simple questions, max precision</td></tr>
+  <tr><td><code>balanced</code></td><td>BM25 + HDC escalation</td><td>Top 7</td><td>Default, good tradeoff</td></tr>
+  <tr><td><code>wide-recall</code></td><td>BM25 + HDC parallel</td><td>Top 15</td><td>Complex questions, max coverage</td></tr>
+</table>
+<p>A <a href="../future/symbolic-execution.html">symbolic execution strategy</a> for constraint-based pruning is proposed but not yet implemented.</p>
+
+<div class="nav-bottom">
+  <a href="PIPELINE.html" class="prev">← Pipeline</a>
+  <a href="PLUGINS.html">Plugins →</a>
+</div>
+</div>
+<footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer>
+</body>
+</html>
