@@ -109,7 +109,16 @@ export class ContextMatcher {
       seen.add(hash);
       deduped.push(s);
     }
-    const top = deduped.slice(0, profileMaxResults);
+
+    // Confidence gap pruning: drop candidates scoring below threshold relative to top
+    const gapThreshold = profileConfig?.confidenceGapThreshold || 0;
+    let pruned = deduped;
+    if (gapThreshold > 0 && deduped.length > 0) {
+      const topScore = deduped[0].score;
+      pruned = deduped.filter(s => s.score >= topScore * gapThreshold);
+    }
+
+    const top = pruned.slice(0, profileMaxResults);
 
     // Split by store
     const sessionUnits = top.filter(s => s.store === 'session');

@@ -3,80 +3,76 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>The Lifecycle of an Intent - MRP-VM</title>
+<title>Execution Pipeline - MRP-VM</title>
 <style>
-  :root { --bg: #fff; --text: #333; --accent: #01579b; --border: #ddd; --code-bg: #f4f4f4; }
-  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: var(--text); max-width: 900px; margin: 0 auto; padding: 2rem; }
-  h1, h2, h3 { color: #111; }
-  h1 { border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; }
-  h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin-top: 2rem; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  ul { padding-left: 1.5rem; }
-  li { margin-bottom: 0.5rem; }
-  pre { background: var(--code-bg); padding: 1rem; border-radius: 4px; overflow-x: auto; border: 1px solid #e0e0e0; }
-  code { font-family: monospace; background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.9em;}
-  pre code { background: none; padding: 0; }
-  .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-style: italic; display: flex; justify-content: space-between; }
-  .nav a { font-weight: bold; }
+  :root { --bg: #f8fafc; --card-bg: #ffffff; --text: #1e293b; --accent: #0284c7; --border: #e2e8f0; --code-bg: #f1f5f9; }
+  body { font-family: system-ui, sans-serif; line-height: 1.6; color: var(--text); background: var(--bg); margin: 0; }
+  .container { max-width: 900px; margin: 0 auto; padding: 2rem; background: var(--card-bg); min-height: 100vh; box-shadow: 0 0 20px rgba(0,0,0,0.05); }
+  h1, h2, h3 { color: #0f172a; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  pre { background: var(--code-bg); padding: 1rem; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); }
+  code { font-family: monospace; font-size: 0.9em; }
+  .nav-btns { margin-top: 3rem; display: flex; justify-content: space-between; }
+  .btn { background: var(--accent); color: white; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 600; text-decoration: none; }
+  footer { background: #0f172a; color: #f1f5f9; padding: 3rem 2rem; }
+  .footer-grid { max-width: 900px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem; }
+  .footer-widget h4 { color: #38bdf8; margin-bottom: 1rem; border-bottom: 1px solid #334155; }
+  .footer-links { list-style: none; padding: 0; font-size: 0.9rem; }
+  .footer-links a { color: #cbd5e1; text-decoration: none; }
+  @media (max-width: 640px) { .container { padding: 1rem; } }
 </style>
 </head>
 <body>
-  <h1>The Lifecycle of an Intent (Execution Pipeline)</h1>
+  <div class="container">
+    <h1>The Lifecycle of an Intent (Execution Pipeline)</h1>
+    <h2>From Raw Language to Grounded Answer</h2>
+    <p>The MRP-VM pipeline is a deterministic sequence of transformations designed to turn a messy natural language request into a verifiable result [DS002].</p>
 
-  <h2>From Raw Language to Grounded Answer</h2>
-  <p>The MRP-VM pipeline is a deterministic sequence of transformations designed to turn a messy natural language request into a verifiable result [DS002].</p>
-
-  <h3>Phase 1: Intent Normalization and Validation</h3>
-  <p>The pipeline begins with <strong>Neural Normalization</strong> [DS006]. The VM does not attempt to "answer" the user's request at this stage. Instead, it rewrites the request into a <strong>Controlled Natural Language (CNL)</strong> format called <strong>Intent CNL</strong> [DS004].</p>
-
-  <p><strong>Intent CNL</strong> is characterized by the mandatory <strong>Act Invariant</strong>: every intent group must declare a <strong>Pragmatic Act</strong> (e.g., <em>compare</em>, <em>diagnose</em>, <em>verify</em>).</p>
-
-<pre><code class="language-markdown">## Intent Group 1
+    <h3>Phase 1: Intent Normalization and Validation</h3>
+    <p>The pipeline begins with <strong>Neural Normalization</strong> [DS006]. The VM rewrites the request into <strong>Intent CNL</strong> [DS004].</p>
+<pre><code>## Intent Group 1
 Act: compare
 Intent: Compare BM25 and dense retrieval for lexical search.
 Criterion: Fast response time, low memory.
-Output: Comparative recommendation.
-</code></pre>
+Output: Comparative recommendation.</code></pre>
 
-  <p>The normalized output is immediately passed through a <strong>Symbolic Validator</strong> [DS007] to ensure it adheres to the CNL schema. If validation fails, the VM attempts a single corrective retry before failing explicitly—no "guessing" is allowed.</p>
+    <h3>Phase 2: Intent Decomposition</h3>
+    <p>Once validated, the intent is symbolically decomposed [DS011] into targets and criteria.</p>
 
-  <h3>Phase 2: Intent Decomposition and Context Profiling</h3>
-  <p>Once validated, the intent is symbolically decomposed [DS011].</p>
-  <ul>
-    <li><strong>Target Extraction</strong>: The VM identifies the core subject of the intent (e.g., "BM25 and dense retrieval").</li>
-    <li><strong>Context Profiling</strong>: The system derives a "profile" that specifies the type of evidence needed and the preferred roles (e.g., <em>Comparison</em>, <em>Evaluation</em>) based on the pragmatic act.</li>
-  </ul>
+    <h3>Phase 3: Evidence Selection</h3>
+    <p>The VM executes a <strong>Retrieval Plan</strong> [DS012, DS023] across session contexts and the Knowledge Base.</p>
 
-  <h3>Phase 3: Evidence Selection (The Retrieval Layer)</h3>
-  <p>The VM then executes a <strong>Retrieval Plan</strong> [DS012, DS023]. Unlike standard RAG systems, MRP-VM matches the <strong>Intent Profile</strong> against structured <strong>Context Units</strong> [DS005] across two memory layers:</p>
-  <ol>
-    <li><strong>Session Temporary Context</strong>: Facts and preferences established in the current conversation [DS019].</li>
-    <li><strong>Persistent Knowledge Base</strong>: Documents ingested and normalized into the system's long-term memory [DS008].</li>
-  </ol>
-  <p>Retrieval is governed by <strong>Risk Profiles</strong> (e.g., <em>balanced</em>, <em>symbolic-grounded</em>, <em>meta-rational</em>), allowing the VM to escalate search strategies if initial evidence is weak [DS023].</p>
+    <h3>Phase 4: Regulated Execution (Plugins)</h3>
+    <p>Dispatches to specialized interpreters (e.g., Z3) for formal proof [DS003].</p>
 
-  <h3>Phase 4: Regulated Execution (Plugins)</h3>
-  <p>If an intent group's pragmatic act matches a specialized capability (e.g., <em>verify</em> &rarr; logical proof), the VM dispatches the <strong>Resolved Intent</strong> (intent + all retrieved context) to an <strong>External Interpreter</strong> (Plugin) [DS003].</p>
+    <h3>Phase 5: Synthesis and Grounding</h3>
+    <p>Final response generation [DS017] under a strict grounding policy.</p>
 
-  <p>Plugins operate in a "clean room" environment:</p>
-  <ul>
-    <li>They receive a structured CNL document as input [DS016].</li>
-    <li>They execute specialized logic (e.g., SMT solving, custom calculations).</li>
-    <li>They return results as <strong>Plugin Evidence</strong> in CNL format.</li>
-  </ul>
-
-  <h3>Phase 5: Synthesis and Grounding</h3>
-  <p>Finally, the <strong>Answer Synthesizer</strong> [DS017] receives the full bundle of resolved intents, retrieved evidence, and plugin results. It uses an LLM to generate a final response, but under a strict <strong>Grounding Policy</strong>:</p>
-  <ul>
-    <li>The answer must be based <strong>only</strong> on the provided evidence.</li>
-    <li>Every claim in the answer must cite a specific context unit or plugin result.</li>
-    <li>If no evidence is found, the system returns a <code>no-context</code> status instead of hallucinating.</li>
-  </ul>
-
-  <div class="nav">
-    <span>&larr; <a href="ARCH-VM.html">The Virtual Machine Architecture</a></span>
-    <span>Next: <a href="RETRIEVAL.html">Knowledge, Context, and Retrieval Profiles</a> &rarr;</span>
+    <div class="nav-btns">
+      <a href="ARCH-VM.html" class="btn" style="background:#64748b">&larr; Architecture</a>
+      <a href="RETRIEVAL.html" class="btn">Retrieval &rarr;</a>
+    </div>
   </div>
+
+  <footer>
+    <div class="footer-grid">
+      <div class="footer-widget">
+        <h4>Quick Links</h4>
+        <ul class="footer-links">
+          <li><a href="index.html">Home / Vision</a></li>
+          <li><a href="ARCH-VM.html">Architecture</a></li>
+          <li><a href="PIPELINE.html">Execution Pipeline</a></li>
+          <li><a href="RETRIEVAL.html">Knowledge & Retrieval</a></li>
+          <li><a href="PLUGINS.html">Plugin Ecosystem</a></li>
+        </ul>
+      </div>
+      <div class="footer-widget">
+        <h4>Specifications</h4>
+        <ul class="footer-links">
+          <li><a href="./specs/DS004-intent-cnl.md">DS004 Intent CNL</a></li>
+          <li><a href="./specs/DS006-nl-normalizer.md">DS006 Normalizer</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>

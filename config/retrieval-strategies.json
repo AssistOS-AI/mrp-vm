@@ -10,7 +10,7 @@
       "maxResults": 3,
       "minScore": 0.3,
       "minAcceptableCandidates": 2,
-      "confidenceGapThreshold": 0.20,
+      "confidenceGapThreshold": 0.50,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 200
     },
@@ -22,7 +22,7 @@
       "maxResults": 7,
       "minScore": 0.15,
       "minAcceptableCandidates": 4,
-      "confidenceGapThreshold": 0.15,
+      "confidenceGapThreshold": 0.35,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 500
     },
@@ -34,7 +34,7 @@
       "maxResults": 15,
       "minScore": 0.05,
       "minAcceptableCandidates": 6,
-      "confidenceGapThreshold": 0.10,
+      "confidenceGapThreshold": 0.15,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 1500
     }
