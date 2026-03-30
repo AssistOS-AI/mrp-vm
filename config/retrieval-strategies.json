@@ -26,18 +26,6 @@
       "hardSymbolicPruning": false,
       "targetLatencyMs": 500
     },
-    "wide-recall": {
-      "primaryStrategies": ["bm25-lexical", "hdc-vsa"],
-      "secondaryStrategies": [],
-      "allowParallel": true,
-      "maxStrategiesPerIntent": 2,
-      "maxResults": 15,
-      "minScore": 0.05,
-      "minAcceptableCandidates": 6,
-      "confidenceGapThreshold": 0.15,
-      "hardSymbolicPruning": false,
-      "targetLatencyMs": 1500
-    },
     "thinkingdb": {
       "primaryStrategies": ["bm25-lexical"],
       "secondaryStrategies": ["thinkingdb-symbolic"],

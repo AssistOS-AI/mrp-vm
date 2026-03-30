@@ -1,5 +1,7 @@
-// DS021 — Evaluation Runner (matrix: mode × profile, context precision)
-// Usage: node test/evaluation/run.mjs [--suite suite01] [--port 4000] [--mode llm-assisted] [--profile balanced]
+// DS021 — Evaluation Runner (legacy compatibility matrix for
+// processing_mode/retrieval_profile plus plugin-aware reporting)
+// Usage: node test/evaluation/run.mjs [--suite suite01] [--port 4000]
+//   [--mode llm-assisted] [--profile balanced]
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, cpSync, statSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,9 +19,6 @@ const PROFILE_FILTER = arg('--profile');
 const DELAY_MS = parseInt(arg('--delay') || '2000', 10);
 
 const ALL_MODES = ['llm-assisted', 'symbolic-only'];
-// `wide-recall` is kept only as obsolete
-// compatibility coverage and is not part of the
-// default evaluation matrix.
 const ALL_PROFILES = ['fast', 'balanced', 'thinkingdb'];
 
 const C = {

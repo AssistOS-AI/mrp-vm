@@ -3,6 +3,8 @@
   "maxLLMAttemptsPerRequest": 5,
   "requestTimeoutMs": 60000,
   "maxValidationCorrectionRetriesPerStage": 1,
+  "maxPluginsPerStage": 4,
+  "defaultPlannerPlugin": "planner-default",
   "pluginAllowlist": ["z3-solver"],
   "pluginTimeoutMs": 30000,
   "pluginMemoryLimitMB": 256

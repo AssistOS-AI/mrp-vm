@@ -23,19 +23,29 @@ export class PluginManager {
       const manifestPath = join(dir, entry.name, 'manifest.json');
       if (!existsSync(manifestPath)) { logger.warn(MOD, `No manifest.json in ${entry.name}`); continue; }
       try {
-        const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-        if (!this.allowlist.includes(manifest.name)) {
-          logger.warn(MOD, `Plugin ${manifest.name} not in allowlist, skipping`);
+        const rawManifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+        const manifest = {
+          ...rawManifest,
+          id: rawManifest.id || rawManifest.name,
+          name: rawManifest.name || rawManifest.id,
+          type: rawManifest.type || 'gs-plugin'
+        };
+        if (!manifest.id) {
+          logger.warn(MOD, `Wrapper in ${entry.name} is missing both id and name`);
+          continue;
+        }
+        if (!this.allowlist.includes(manifest.id) && !this.allowlist.includes(manifest.name)) {
+          logger.warn(MOD, `Plugin ${manifest.id} not in allowlist, skipping`);
           continue;
         }
         // Sanitize command
         if (manifest.command?.includes('..') || manifest.command?.startsWith('/')) {
-          logger.warn(MOD, `Plugin ${manifest.name} has unsafe command path, skipping`);
+          logger.warn(MOD, `Plugin ${manifest.id} has unsafe command path, skipping`);
           continue;
         }
         manifest._dir = join(dir, entry.name);
-        this._plugins.set(manifest.name, manifest);
-        logger.info(MOD, `Registered plugin: ${manifest.name}`);
+        this._plugins.set(manifest.id, manifest);
+        logger.info(MOD, `Registered plugin: ${manifest.id}`);
       } catch (e) {
         logger.warn(MOD, `Invalid manifest in ${entry.name}: ${e.message}`);
       }
@@ -59,7 +69,7 @@ export class PluginManager {
     }
     if (candidates.length === 0) return null;
     // DS003 conflict resolution: highest priority, then alphabetical name
-    candidates.sort((a, b) => (b.priority || 0) - (a.priority || 0) || (a.name || '').localeCompare(b.name || ''));
+    candidates.sort((a, b) => (b.priority || 0) - (a.priority || 0) || (a.id || '').localeCompare(b.id || ''));
     return candidates[0];
   }
 
@@ -94,11 +104,11 @@ export class PluginManager {
       proc.stderr.on('data', d => { stderr += d; });
       proc.on('close', (code) => {
         if (code === 0) {
-          const parsed = this._parseOutput(stdout, manifest.name);
+          const parsed = this._parseOutput(stdout, manifest.name || manifest.id);
           res(parsed);
         } else {
           res({
-            intentRef: 0, pluginName: manifest.name, capabilityUsed: manifest.capabilities?.[0] || '',
+            intentRef: 0, pluginName: manifest.name || manifest.id, capabilityUsed: manifest.capabilities?.[0] || '',
             status: code === 3 ? 'timeout' : 'error', resultCNL: null, confidence: null, artifacts: [],
             error: { code: `PLUGIN_EXIT_${code}`, message: stderr.trim() || `Exit code ${code}` }
           });
@@ -106,7 +116,7 @@ export class PluginManager {
       });
       proc.on('error', (e) => {
         res({
-          intentRef: 0, pluginName: manifest.name, capabilityUsed: manifest.capabilities?.[0] || '',
+          intentRef: 0, pluginName: manifest.name || manifest.id, capabilityUsed: manifest.capabilities?.[0] || '',
           status: 'error', resultCNL: null, confidence: null, artifacts: [],
           error: { code: 'PLUGIN_SPAWN_ERROR', message: e.message }
         });

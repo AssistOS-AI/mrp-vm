@@ -1,41 +1,76 @@
-# MRP-VM Project Review (Gemini-CLI)
+# MRP-VM Review Report — Gemini Analysis
 
-## 1. Project Overview
-The **MRP-VM (Meta-Rational-Pragmatics Virtual Machine)** is a sophisticated neuro-symbolic architecture implemented in Node.js. It aims to bridge the gap between high-level natural language reasoning and formal symbolic execution by decomposing user intents into structured **Controlled Natural Language (CNL)** and orchestrating specialized "interpreters" (plugins) to fulfill them.
+## Overview
+This report identifies discrepancies between the intended "plugin-kernel" architecture (DS001, DS002) and the current implementation in `src/`. It also highlights internal spec inconsistencies and partial/superficial implementations.
 
-## 2. Specification Compliance (DS001 - DS024)
+---
 
-The implementation exhibits high fidelity to the 24 Design Specification documents provided in `docs/specs/`.
+## 1. Architectural Discrepancies (Kernel vs. Plugins)
 
-### Core Pipeline (DS002, DS006, DS011, DS012, DS017)
-- **Engine**: `src/core/engine.mjs` correctly orchestrates the 12-phase pipeline described in DS002.
-- **Normalization**: `src/normalizer/nl-normalizer.mjs` implements the NL→CNL transformation with corrective retry logic as per DS006.
-- **Decomposition**: `src/intent/decomposer.mjs` follows the deterministic "act removal" rule for target extraction defined in DS011.
-- **Retrieval**: `src/retrieval/kb-index.mjs` implements a zero-dependency BM25 engine with field-weighting and act-based role boosting as specified in DS009 and DS012.
-- **Synthesis**: `src/synthesis/answer-synthesizer.mjs` and the `LanguageProcessingStrategy` interface (DS017/DS022) handle both LLM-assisted and symbolic-only response generation.
+### 1.1 "Thin Core" is Still Thick
+- **Specification (DS001):** "The core is intentionally thin. All domain behavior... and retrieval behavior... live in plugins."
+- **Implementation (`src/core/engine.mjs`):** The `MRPEngine` still directly coordinates several domain-specific steps that should ideally be encapsulated within plugins or handled more generically:
+  - It explicitly calls `this.parser.parseIntentCNL` and `this.decomposer.decompose`.
+  - it hardcodes the invocation of "external helper plugins" between the KB and Goal stages.
+  - It handles the "Resolved Intent" to "Resolved Markdown" mapping implicitly via components it owns.
 
-### Knowledge Base & Ingest (DS008, DS010, DS018)
-- **Ingest**: `src/ingest/source-ingestor.mjs` segments documents into semantic chunks with provenance tracking.
-- **Persistence**: `src/kb/persistence.mjs` provides the file-based + memory strategy required for v1 (DS010).
+### 1.2 Escalation Logic Misplacement
+- **Specification (DS001):** "old retrieval profile escalation -> planner logic."
+- **Implementation (`src/retrieval/context-matcher.mjs`):** The `ContextMatcher` still contains hardcoded escalation logic (`if (candidateCount < minAcceptable) { escalated = true; ... }`).
+- **Consequence:** The `mrp-plan-plugin` (specifically `DefaultPlannerPlugin`) only decides the *initial* order of plugins. It does not truly manage the escalation from cheap to expensive retrieval *across* multiple `kb-plugin` calls as intended. Instead, a single `kb-plugin` (like `kb-balanced`) internally escalates using multiple strategies.
 
-### Specialized Features
-- **HDC/VSA Retrieval**: Implementation of DS024 (`src/lib/hdc.mjs` and `src/retrieval/strategies/hdc-vsa.mjs`) is present and integrated as an optional strategy in `src/retrieval/strategies/registry.mjs`. This exceeds the "baseline BM25" requirement as a functional extension.
-- **Session Management**: `src/conversation/handler.mjs` manages session-scoped context and transcript history as defined in DS019.
+### 1.3 Hardcoded External Plugin Pipeline
+- **Specification (DS002):** "Optionally invoke external helper plugins... in step 8."
+- **Implementation (`src/core/engine.mjs`):** The engine has a hardcoded loop that selects and invokes external plugins from the `externalPluginManager`. These are NOT treated as `gs-plugin` or any other typed plugin, making them special cases in the kernel rather than modular components.
 
-## 3. Discrepancies and Observations
+---
 
-| Specification | Status | Observation |
-|:--- |:--- |:--- |
-| **Wrappers (DS016)** | **Incomplete** | The `wrappers/` directory is currently empty. While the `PluginManager` is ready to discover and invoke them, no reference interpreters (e.g., Z3) are provided. |
-| **HDC/VSA (DS024)** | **Implemented** | While DS023 marks this as "optional/future", it is fully implemented and available in the codebase. |
-| **AchillesAgentLib (DS015)** | **External** | The integration expects `AchillesAgentLib` to be located in the parent directory (configurable in `config/llm.json`). The code correctly handles dynamic imports and model discovery. |
-| **Pragmatic Acts (DS004)** | **Strict** | The "Act Invariant" is strictly enforced in `cnl-validator-parser.mjs` and `decomposer.mjs`, ensuring every intent has a formal pragmatic category. |
+## 2. Superficial & Partial Implementations
 
-## 4. Architectural Analysis
-The project successfully realizes the vision of a **Neuro-Symbolic Orchestrator**. 
-- It treats LLMs as **Normalizers** (translating messy NL to clean CNL) rather than "black boxes" that directly answer questions.
-- It uses **Context Preparation** as a first-class citizen, ensuring that specialized plugins receive a well-defined problem in a structured format.
-- The **Strategy Registry** (DS022) allows for graceful degradation or performance optimization via the `symbolic-only` mode.
+### 2.1 Plugins as Thin Wrappers
+- **Problem:** Most "plugins" in `src/plugins/builtin-plugins.mjs` are merely thin wrappers around legacy classes (`LLMAssistedStrategy`, `ContextMatcher`).
+- **Example:** `RetrievalKBPlugin` doesn't implement retrieval logic; it just calls `this.contextMatcher.resolve(...)` with a legacy `profileId`. This effectively keeps the old "retrieval profile" system alive under a different name, rather than refactoring retrieval logic into self-contained plugins.
 
-## 5. Conclusion
-The codebase is exceptionally well-structured and disciplined, reflecting a strict adherence to its formal specifications. The zero-dependency production requirement is respected (vendored stemmer and stopwords). The main area for future growth is the population of the `wrappers/` directory with functional interpreters to leverage the "Virtual Machine" aspect of the architecture.
+### 2.2 Dummy Hooks (DS003)
+- **Specification (DS003):** "Source Text Propagation: ... the raw text plus units are offered to all enabled kb-plugins through their ingest hook."
+- **Implementation:** `RetrievalKBPlugin.onSourceText` returns a dummy message: `"No plugin-private ingest artifact generated by built-in plugin"`. No actual plugin-specific indexing or derived memory storage is implemented.
+
+### 2.3 Reactive Budgeting
+- **Specification (DS002):** "The core is responsible only for executing the plan faithfully and reporting outcomes... but the core enforces hard limits."
+- **Implementation:** The `llmCallCount` check in `MRPEngine` happens *after* a plugin completes its execution. If a plugin (especially an expensive `sd-plugin` or `gs-plugin`) overshoots the budget during its internal loops, the core doesn't stop it until it returns, potentially violating the budget significantly.
+
+---
+
+## 3. Legacy Terminology Persistence
+
+### 3.1 `processing_mode` and `retrieval_profile`
+- **Specification (DS001):** "Legacy config files... MAY still exist temporarily... but the core architecture no longer depends on them."
+- **Implementation:** `ConversationHandler` and `MRPServer` still treat `processing_mode` and `retrieval_profile` as primary request parameters.
+- **Inconsistency:** Instead of the client requesting a specific `sd-plugin` or `gs-plugin`, it still requests `llm-assisted` or `symbolic-only`, which the core then maps to plugins using `mapLegacyProcessingMode`. This "compatibility layer" has become a permanent fixture that prevents true plugin-based selection from reaching the API.
+
+---
+
+## 4. Internal Specification Inconsistencies
+
+### 4.1 DS004 vs. DS007 (Act Field)
+- **DS004** states `Act` is mandatory and provides a strict enum.
+- **DS007** (Validator) correctly implements this.
+- **DS011** (Decomposer) also enforces it.
+- **Discrepancy:** While the "Act Invariant" is strong, the fallback behavior in `DS017` (Answer Synthesis) for "no-context" rendering is poorly defined in the implementation. If no context is found, the `gs-llm-fast` plugin still attempts to answer, which might contradict the intended "deterministic no-context rendering path".
+
+### 4.2 DS013 (Server API)
+- The API defined in `DS013` (implicit in some cases) hasn't been updated to reflect the new plugin fields (`planner_plugin`, `kb_plugin`, etc.) as first-class citizens, though they are accepted as optional parameters. The documentation still emphasizes legacy modes.
+
+---
+
+## 5. Summary of Errors & Inconsistencies
+
+1.  **Logical Leakage**: Escalation logic leaked from Planner to `ContextMatcher`.
+2.  **Special-Case Handling**: External plugins are a special-case hardcoded loop in the engine.
+3.  **Incomplete Lifecycle**: The ingest cycle (DS003) is missing its implementation in KB plugins.
+4.  **Budget Lag**: Core budgeting is reactive, not proactive.
+5.  **Interface Stall**: API and Session state are still anchored to legacy "modes" and "profiles".
+6.  **Plugin Invisibility**: The planner cannot "see" inside the wrappers (strategies) to make fine-grained decisions about cost vs. utility; it only sees the plugin wrapper.
+
+---
+*Report generated by Gemini CLI.*

@@ -1,0 +1,8 @@
+{
+  "defaultPlannerPlugin": "planner-default",
+  "defaultSeedDetectorPlan": ["sd-symbolic", "sd-llm-fast", "sd-llm-deep"],
+  "defaultKBPlan": ["kb-fast", "kb-balanced", "kb-thinkingdb"],
+  "defaultGoalSolverPlan": ["gs-symbolic", "gs-llm-fast", "gs-llm-deep"],
+  "statsFile": "data/settings/plugin-stats.json",
+  "maxPluginsPerStage": 4
+}

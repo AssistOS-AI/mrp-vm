@@ -72,16 +72,15 @@ finalScore = 0.35×topic + 0.35×claim + 0.20×role + 0.10×acts</code></pre>
 <h2>Confidence Gap Pruning</h2>
 <p>After scoring and sorting, candidates with score below <code>topScore × gapThreshold</code> are removed. This prevents low-relevance noise from reaching synthesis.</p>
 
-<h2>Retrieval Profiles</h2>
+<h2>KB Plugin Defaults</h2>
 <table>
-<tr><th>Profile</th><th>Strategies</th><th>maxResults</th><th>minScore</th><th>Gap Threshold</th><th>Use Case</th></tr>
-<tr><td><strong>fast</strong></td><td>BM25 only</td><td>3</td><td>0.3</td><td>50%</td><td>Simple questions, max precision</td></tr>
-<tr><td><strong>balanced</strong></td><td>BM25 + HDC escalation</td><td>7</td><td>0.15</td><td>35%</td><td>Default, good tradeoff</td></tr>
-<tr><td><strong>wide-recall</strong></td><td>Legacy BM25 + HDC parallel</td><td>15</td><td>0.05</td><td>15%</td><td>Obsolete compatibility profile, not recommended</td></tr>
+<tr><th>KB Plugin</th><th>Strategies</th><th>maxResults</th><th>minScore</th><th>Gap Threshold</th><th>Use Case</th></tr>
+<tr><td><strong>kb-fast</strong></td><td>BM25 only</td><td>3</td><td>0.3</td><td>50%</td><td>Simple questions, max precision</td></tr>
+<tr><td><strong>kb-balanced</strong></td><td>BM25 + HDC escalation</td><td>7</td><td>0.15</td><td>35%</td><td>Default, good tradeoff</td></tr>
+<tr><td><strong>kb-thinkingdb</strong></td><td>BM25 + bounded symbolic expansion</td><td>8</td><td>0.12</td><td>25%</td><td>Multi-hop or relation-sensitive retrieval</td></tr>
 </table>
 <p><strong>Escalation</strong> (balanced): HDC runs only when BM25 returns fewer than <code>minAcceptableCandidates</code>.<br>
-<strong>Legacy Parallel</strong> (wide-recall): documented for compatibility only and excluded from the default evaluation matrix.<br>
-<strong>Planned Successor</strong> (thinkingdb): bounded symbolic closure over normalized facts as specified by DS025.</p>
+<strong>ThinkingDB</strong>: bounded symbolic closure over normalized facts as specified by DS025.</p>
 
 <div class="nav-bottom"><a href="cnl-formats.html" class="prev">← CNL Formats</a> <a href="processing-modes.html">Processing Modes →</a></div>
 </div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

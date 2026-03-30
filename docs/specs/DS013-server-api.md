@@ -1,372 +1,92 @@
 # DS013 — Server & API
 
 ## Purpose
-Native Node.js HTTP server that exposes OpenAI-shaped
-minimal APIs, session management APIs, and serves a
-static chat page.
+Defines the API after replacing modes/profiles with
+typed plugin selections and shared settings.
 
-## Compatibility Note
+## Chat Request
 
-The API is "OpenAI-shaped minimal" — it uses the same
-request/response envelope style as OpenAI for the
-subset supported in v1, but adds explicit session
-extensions and is not a complete implementation of
-the OpenAI specification.
+`POST /chat/completions`
 
-## API Endpoints
-
-### POST /chat/completions
-Main endpoint.
-
-Request:
 ```json
 {
   "session_id": "sess-abc123",
-  "processing_mode": "llm-assisted",
-  "retrieval_profile": "balanced",
+  "planner_plugin": "planner-default",
+  "seed_detector_plugin": "sd-llm-fast",
+  "kb_plugin": "kb-balanced",
+  "goal_solver_plugin": "gs-llm-fast",
   "model": "provider/model-name",
   "messages": [
-    { "role": "system", "content": "..." },
-    { "role": "user", "content": "Please compare..." }
-  ],
-  "stream": false
+    { "role": "user", "content": "..." }
+  ]
 }
 ```
 
 Rules:
-- `session_id` is optional.
-- `processing_mode` is optional.
-- `retrieval_profile` is optional.
-- If absent, the server creates a new session before
-  processing the turn.
-- If present, the server loads that session and
-  appends only the new delta messages from this
-  request.
-- The client does NOT need to resend full history
-  when `session_id` is present.
-- At least one new `user` message is required.
-- Client-authored `assistant` messages are not
-  accepted in v1 session mode.
 
-Supported processing modes in v1:
-- `llm-assisted`
-- `symbolic-only`
+- explicit plugin IDs are optional
+- if omitted, session preference is used
+- if no session preference exists, the default
+  planner decides
+- `model` is a generic override only; plugins SHOULD
+  prefer DS028 role-based settings
+- legacy `processing_mode` and `retrieval_profile`
+  MAY be accepted temporarily as compatibility aliases
+- legacy discovery endpoints MAY remain temporarily:
+  `GET /processing-strategies` and
+  `GET /retrieval-profiles`
 
-If `processing_mode` is absent, the session
-preference is used; if none exists, the deployment
-default from DS022 applies.
+## Response
 
-If `retrieval_profile` is absent, the session
-preference is used; if none exists, the deployment
-default from DS023 applies.
+Success response additionally returns:
 
-Supported client roles in v1: `user`, `system`.
-Other roles return 400.
-
-`model` field is active in v1. If provided, it is
-passed to LLMBridge as the requested model and also
-stored as the session preference for subsequent turns.
-If absent, the session preference is used; if the
-session has none, the default selection policy from
-DS015 applies.
-
-If `processing_mode` does not support model override
-(for example `symbolic-only`) and `model` is
-provided, return 400
-`STRATEGY_DOES_NOT_ACCEPT_MODEL`.
-
-`stream: true` is not supported in v1. If
-requested, returns 400.
-
-Response (success):
 ```json
 {
-  "id": "mrp-<requestId>",
-  "object": "chat.completion",
-  "created": 1711440000,
-  "session_id": "sess-abc123",
-  "processing_mode": "llm-assisted",
-  "retrieval_profile": "balanced",
-  "expires_at": "2026-03-26T10:00:00Z",
-  "choices": [{
-    "index": 0,
-    "message": {
-      "role": "assistant",
-      "content": "# MRP Response\n\n## Intent Group 1\n..."
-    },
-    "finish_reason": "stop"
-  }],
-  "usage": {
-    "prompt_tokens": 0,
-    "completion_tokens": 0,
-    "total_tokens": 0
-  }
+  "planner_plugin": "planner-default",
+  "seed_detector_plugin": "sd-symbolic",
+  "kb_plugin": "kb-fast",
+  "goal_solver_plugin": "gs-llm-fast",
+  "execution_trace": {}
 }
 ```
 
-`choices[0].message.content` is Markdown generated
-from DS017. It is grouped by normalized intent and
-includes the intent-local context used for the answer.
+The response MAY still echo deprecated compatibility
+fields such as `processing_mode` and
+`retrieval_profile` during migration.
 
-`usage` is populated with 0 in v1 unless
-AchillesAgentLib exposes provider token counts.
+## Discovery Endpoints
 
-Response (error):
+- `GET /plugins`
+- `GET /plugins?type=sd-plugin`
+- `GET /plugins?type=kb-plugin`
+- `GET /plugins?type=gs-plugin`
+- `GET /plugins?type=mrp-plan-plugin`
+
+## Settings Endpoints
+
+- `GET /settings/llm-roles`
+- `PUT /settings/llm-roles`
+
+## Session Endpoints
+
+`POST /sessions` MAY accept:
+
 ```json
 {
-  "error": {
-    "code": "SESSION_EXPIRED",
-    "message": "...",
-    "type": "processing_error"
-  }
+  "planner_plugin": "planner-default",
+  "seed_detector_plugin": "sd-symbolic",
+  "kb_plugin": "kb-fast",
+  "goal_solver_plugin": "gs-symbolic",
+  "kb_id": "default"
 }
 ```
 
-HTTP status codes:
-- 200 — success
-- 400 — invalid input, invalid role, stream requested
-- 404 — unknown endpoint
-- 410 — session expired
-- 500 — internal error
-- 504 — timeout
-
-### POST /sessions
-Creates an empty in-memory session explicitly.
-
-Request:
-```json
-{
-  "processing_mode": "llm-assisted",
-  "retrieval_profile": "balanced",
-  "model": "provider/model-name"
-}
-```
-
-Rules:
-- `processing_mode` is optional.
-- If absent, the deployment default from DS022 is
-  used.
-- `retrieval_profile` is optional.
-- If absent, the deployment default from DS023 is
-  used.
-- `model` is optional.
-- If the selected `processing_mode` does not support
-  model override, providing `model` returns 400
-  `STRATEGY_DOES_NOT_ACCEPT_MODEL`.
-- If `model` is absent, the session starts with no
-  model preference and the DS015 default selection
-  applies later when an LLM-backed turn needs one.
-
-Response:
-```json
-{
-  "session_id": "sess-abc123",
-  "created_at": "2026-03-26T09:30:00Z",
-  "expires_at": "2026-03-26T10:00:00Z",
-  "processing_mode": "llm-assisted",
-  "retrieval_profile": "balanced",
-  "model": "provider/model-name"
-}
-```
-
-### GET /sessions/:sessionId
-Returns session metadata only.
-
-Response:
-```json
-{
-  "session_id": "sess-abc123",
-  "created_at": "2026-03-26T09:30:00Z",
-  "last_activity_at": "2026-03-26T09:44:00Z",
-  "expires_at": "2026-03-26T10:14:00Z",
-  "message_count": 6,
-  "session_context_unit_count": 8,
-  "processing_mode": "llm-assisted",
-  "retrieval_profile": "balanced",
-  "model": "provider/model-name"
-}
-```
-
-### DELETE /sessions/:sessionId
-Deletes a session immediately. Response: 204 No
-Content.
-
-### GET /models
-Returns available LLM providers and models
-discovered by AchillesAgentLib.
-
-Response:
-```json
-{
-  "models": [
-    {
-      "id": "provider/model-name",
-      "provider": "provider",
-      "tags": ["fast"]
-    }
-  ]
-}
-```
-
-### GET /processing-strategies
-Returns the available language processing modes.
-
-Response:
-```json
-{
-  "strategies": [
-    {
-      "id": "llm-assisted",
-      "uses_llm": true,
-      "supports_model_override": true,
-      "capabilities": [
-        "normalize-intent",
-        "extract-session-context",
-        "normalize-persistent-context",
-        "synthesize-response"
-      ]
-    },
-    {
-      "id": "symbolic-only",
-      "uses_llm": false,
-      "supports_model_override": false,
-      "capabilities": [
-        "normalize-intent",
-        "extract-session-context",
-        "normalize-persistent-context",
-        "synthesize-response"
-      ]
-    }
-  ]
-}
-```
-
-### GET /retrieval-profiles
-Returns the available retrieval-risk profiles.
-
-Response:
-```json
-{
-  "profiles": [
-    {
-      "id": "fast",
-      "enabled_strategies": ["bm25-lexical"]
-    },
-    {
-      "id": "balanced",
-      "enabled_strategies": ["bm25-lexical"]
-    },
-    {
-      "id": "wide-recall",
-      "enabled_strategies": ["bm25-lexical"]
-    },
-    {
-      "id": "symbolic-grounded",
-      "enabled_strategies": ["bm25-lexical"]
-    },
-    {
-      "id": "meta-rational",
-      "enabled_strategies": ["bm25-lexical"]
-    }
-  ]
-}
-```
-
-`wide-recall` MAY still appear in profile discovery
-for backward compatibility, but it is obsolete and
-excluded from the default evaluation matrix.
-
-### GET /kbs
-Lists persistent KB repositories available for
-mounting in a session.
-
-### POST /sessions/:sessionId/kb/mount
-Mounts a KB repository into an existing session.
-If the session has unsaved draft changes, the server
-MUST require explicit discard confirmation.
-
-### POST /sessions/:sessionId/kb/fork
-Creates a new KB repository from the current
-session draft and mounts it immediately.
-
-### POST /sessions/:sessionId/kb/save
-Saves the current session draft into the mounted KB
-repository or another explicit target.
-
-### GET /sessions/:sessionId/workspace
-Returns mounted KB metadata and the current draft
-workspace status for the session.
-
-### POST /sessions/:sessionId/workspace/sources
-Stages a source in the current session draft
-workspace without modifying the mounted KB
-repository.
-
-This is the single public write path for source
-content. Files enter a session draft first and
-become persistent KB content only after explicit
-`save` or `fork`.
-
-### GET /health
-Liveness check. Response: `{ "status": "ok" }`
-
-### GET /ready
-Readiness check. Verifies:
-- Config valid
-- KB loaded
-- Index available
-- Session manager ready
-- Wrappers scanned
-
-Response:
-```json
-{
-  "ready": true,
-  "checks": {
-    "config": true,
-    "kb": true,
-    "index": true,
-    "sessions": true,
-    "wrappers": true
-  }
-}
-```
-
-## Implementation
-
-- Native Node.js HTTP server (`http.createServer`),
-  no Express or other frameworks.
-- Simple manual routing based on path + method.
-- Manual JSON body parsing.
-- Configurable CORS headers.
-- Request ID generated per request, propagated
-  in logging.
-- Limits: configurable max body size.
-
-## Configuration
-
-`config/server.json`:
-```json
-{
-  "port": 3000,
-  "host": "127.0.0.1",
-  "cors": {
-    "origin": "http://localhost:3000"
-  },
-  "maxBodySizeBytes": 2097152
-}
-```
+The session metadata response SHOULD also include the
+selected plugin IDs alongside any deprecated
+compatibility fields still carried for migration.
 
 ## Dependencies
 
-- DS002 (Core) — request processing.
-- DS008 (KB) — source CRUD operations.
-- DS014 (Chat UI) — static page serving.
-- DS015 (LLMBridge) — model discovery for
-  `/models`.
-- DS022 (Processing Strategies) — mode discovery and
-  default mode resolution.
-- DS023 (Retrieval Strategies) — retrieval-profile
-  discovery and default profile resolution.
-- DS019 (Conversation) — session lifecycle and
-  current-turn extraction.
+- DS014 — UI
+- DS019 — session preferences
+- DS028 — settings payloads

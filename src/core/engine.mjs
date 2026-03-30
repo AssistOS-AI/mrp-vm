@@ -1,42 +1,81 @@
-// DS002 — MRP-VM Core Engine
+// DS002 — MRP-VM Core Kernel
 import { randomUUID } from 'node:crypto';
 import { MRPError } from '../lib/errors.mjs';
 import { logger } from '../lib/logger.mjs';
-import { CNLParser } from '../parser/cnl-validator-parser.mjs';
 
 const MOD = 'core';
 
 export class MRPEngine {
-  constructor(config, normalizer, parser, decomposer, retrieval, synthesizer,
-    pluginManager, conversationHandler, strategyRegistry, retrievalStrategyRegistry, kbIndex) {
+  constructor(config, pluginRegistry, conversationHandler, parser, decomposer,
+    externalPluginManager, modelSettings, kbIndex) {
     this.config = config;
-    this.normalizer = normalizer;
-    this.parser = parser || new CNLParser();
-    this.decomposer = decomposer;
-    this.retrieval = retrieval;
-    this.synthesizer = synthesizer;
-    this.pluginManager = pluginManager;
+    this.pluginRegistry = pluginRegistry;
     this.conversationHandler = conversationHandler;
-    this.strategyRegistry = strategyRegistry;
-    this.retrievalStrategyRegistry = retrievalStrategyRegistry;
+    this.parser = parser;
+    this.decomposer = decomposer;
+    this.externalPluginManager = externalPluginManager;
+    this.modelSettings = modelSettings;
     this.kbIndex = kbIndex;
-    this.maxLLMAttempts = config.maxLLMAttemptsPerRequest || 5;
+    this.maxLLMAttempts = config.maxLLMAttemptsPerRequest || 6;
     this.requestTimeout = config.requestTimeoutMs || 60000;
+    this.maxPluginsPerStage = config.maxPluginsPerStage || 4;
+    this.defaultPlannerPlugin = config.defaultPlannerPlugin || 'planner-default';
     this._ready = false;
   }
 
   isReady() { return this._ready; }
   setReady(v) { this._ready = v; }
 
+  _buildPluginContext(requestId, session) {
+    return {
+      requestId,
+      session,
+      conversation: this.conversationHandler,
+      parser: this.parser,
+      decomposer: this.decomposer,
+      modelSettings: this.modelSettings,
+      logger,
+      budgets: {
+        maxLLMAttemptsPerRequest: this.maxLLMAttempts,
+        requestTimeoutMs: this.requestTimeout,
+        maxPluginsPerStage: this.maxPluginsPerStage
+      }
+    };
+  }
+
   async processChatTurn(request) {
     const requestId = `req-${randomUUID().substring(0, 12)}`;
     const startTime = Date.now();
     let llmCallCount = 0;
+    let planner = null;
+    let pluginCtx = null;
+    const executionTrace = {
+      requestId,
+      sessionId: null,
+      plannerPluginId: null,
+      stages: [],
+      finalStatus: 'failure'
+    };
+
+    const addStageTrace = (stage, pluginId, status, startedAt, llmCalls = 0, sufficient = null, error = null) => {
+      executionTrace.stages.push({
+        stage,
+        pluginId,
+        status,
+        durationMs: Date.now() - startedAt,
+        llmCalls,
+        sufficient,
+        error
+      });
+    };
 
     const checkBudget = () => {
-      if (llmCallCount >= this.maxLLMAttempts) {
-        throw new MRPError('ENGINE_BUDGET_EXCEEDED', MOD,
-          `LLM attempt budget exhausted (${this.maxLLMAttempts})`);
+      if (llmCallCount > this.maxLLMAttempts) {
+        throw new MRPError(
+          'ENGINE_BUDGET_EXCEEDED',
+          MOD,
+          `LLM attempt budget exhausted (${this.maxLLMAttempts})`
+        );
       }
     };
 
@@ -45,127 +84,242 @@ export class MRPEngine {
     );
 
     const processPromise = (async () => {
-      const rx = { reqId: requestId };
-
-      // 1. Prepare turn
-      logger.debug(MOD, 'Phase 1/12: Preparing turn', { sessionId: request.session_id || '(new)' }, rx);
-      const { session, currentMessage, historyForPrompt, systemPrompt,
-        requestedModel, requestedProcessingMode, requestedRetrievalProfile
-      } = await this.conversationHandler.prepareTurn(
-        request.session_id, request.messages,
-        request.model, request.processing_mode, request.retrieval_profile, request.kb_id || null
-      );
-      const sx = { ...rx, sessionId: session.sessionId };
-      logger.debug(MOD, 'Turn prepared', { historyLen: historyForPrompt.length, msgPreview: currentMessage.slice(0, 80) }, sx);
-
-      // 2. Resolve strategy
-      const strategy = this.strategyRegistry.resolve(
-        requestedProcessingMode, session.preferredProcessingMode,
-        this.config.defaultProcessingMode || 'llm-assisted'
-      );
-      logger.debug(MOD, 'Phase 2/12: Strategy resolved', { strategy: strategy.id, usesLLM: strategy.usesLLM() }, sx);
-
-      // 3. Resolve and validate retrieval profile
-      const retrievalProfileId = requestedRetrievalProfile || session.preferredRetrievalProfile || 'balanced';
-      this.retrievalStrategyRegistry.resolveProfile(
-        retrievalProfileId, null, retrievalProfileId
-      );
-      logger.debug(MOD, 'Phase 3/12: Retrieval profile resolved', { profile: retrievalProfileId }, sx);
-
-      const model = requestedModel || session.preferredModel || null;
-
-      // 4. Intent normalization
-      logger.info(MOD, 'Phase 4/12: Normalizing intent', { model }, sx);
-      if (strategy.usesLLM()) checkBudget();
-      const intentCNL = await this.normalizer.toIntentCNL(
-        currentMessage, historyForPrompt, systemPrompt, strategy, model
-      );
-      if (strategy.usesLLM()) llmCallCount++;
-      logger.debug(MOD, 'Intent CNL produced', { length: intentCNL?.length || 0 }, sx);
-
-      // 5. Parse intent CNL
-      logger.debug(MOD, 'Phase 5/12: Parsing intent CNL', {}, sx);
-      const intentGroups = this.parser.parseIntentCNL(intentCNL);
-      if (intentGroups.length === 0) {
-        throw new MRPError('DECOMPOSER_EMPTY_RESULT', MOD, 'No intent groups produced');
-      }
-      logger.debug(MOD, 'Intent groups parsed', { count: intentGroups.length }, sx);
-
-      // 6. Session context extraction
-      logger.info(MOD, 'Phase 6/12: Extracting session context', {}, sx);
-      if (strategy.usesLLM()) checkBudget();
-      let currentTurnContextCNL;
       try {
-        currentTurnContextCNL = await this.normalizer.toSessionContextCNL(
-          currentMessage, systemPrompt, strategy, model
+        const prepared = await this.conversationHandler.prepareTurn(
+          request.session_id,
+          request.messages,
+          request.model,
+          request.processing_mode,
+          request.retrieval_profile,
+          request.kb_id || null,
+          request.planner_plugin || null,
+          request.seed_detector_plugin || null,
+          request.kb_plugin || null,
+          request.goal_solver_plugin || null
         );
-        if (strategy.usesLLM()) llmCallCount++;
-      } catch (e) {
-        if (e.code?.startsWith('SESSION_CONTEXT_') || e.code === 'ENGINE_BUDGET_EXCEEDED') throw e;
-        throw new MRPError('SESSION_CONTEXT_FAILED', MOD, e.message);
-      }
 
-      // 7. Parse current-turn context units
-      logger.debug(MOD, 'Phase 7/12: Parsing context units', {}, sx);
-      let currentTurnUnits = [];
-      if (currentTurnContextCNL?.trim()) {
-        currentTurnUnits = this.parser.parseContextCNL(currentTurnContextCNL);
-      }
-      logger.debug(MOD, 'Context units parsed', { count: currentTurnUnits.length }, sx);
+        const {
+          session,
+          currentMessage,
+          historyForPrompt,
+          systemPrompt,
+          requestedModel,
+          requestedPlannerPlugin,
+          requestedSeedDetectorPlugin,
+          requestedKBPlugin,
+          requestedGoalSolverPlugin
+        } = prepared;
 
-      // 8. Decompose intents
-      logger.debug(MOD, 'Phase 8/12: Decomposing intents', {}, sx);
-      const decomposedIntents = this.decomposer.decompose(intentGroups);
-      const contextProfiles = decomposedIntents.map(d => this.decomposer.deriveContextProfile(d));
-      logger.debug(MOD, 'Intents decomposed', { count: decomposedIntents.length }, sx);
+        executionTrace.sessionId = session.sessionId;
+        pluginCtx = this._buildPluginContext(requestId, session);
 
-      // 9. Retrieval per intent group
-      logger.info(MOD, 'Phase 9/12: Running retrieval', { profile: retrievalProfileId }, sx);
-      const resolvedIntents = await this.retrieval.resolve(
-        decomposedIntents, contextProfiles, currentTurnUnits,
-        session, retrievalProfileId, session.workspace?.getIndex() || this.kbIndex
-      );
-      logger.debug(MOD, 'Retrieval complete', { resolvedCount: resolvedIntents.length }, sx);
+        planner = this.pluginRegistry.resolve(
+          'mrp-plan-plugin',
+          requestedPlannerPlugin,
+          session.preferredPlannerPlugin,
+          this.defaultPlannerPlugin
+        );
+        executionTrace.plannerPluginId = planner.getDescriptor().id;
 
-      // 10. Plugin invocation per intent group
-      logger.debug(MOD, 'Phase 10/12: Plugin invocation', {}, sx);
-      const pluginOutputs = [];
-      for (const ri of resolvedIntents) {
-        const manifest = this.pluginManager.selectPlugin(ri.intentGroup);
-        if (manifest) {
-          logger.info(MOD, `Invoking plugin ${manifest.name}`, {}, sx);
-          const po = await this.pluginManager.invoke(manifest, ri.resolvedMarkdown);
+        const plan = await planner.buildPlan({
+          request,
+          currentMessage,
+          historyForPrompt,
+          systemPrompt,
+          explicitSelections: {
+            seedDetectorPlugin: requestedSeedDetectorPlugin,
+            kbPlugin: requestedKBPlugin,
+            goalSolverPlugin: requestedGoalSolverPlugin
+          },
+          sessionPreferences: {
+            seedDetectorPlugin: session.preferredSeedDetectorPlugin,
+            kbPlugin: session.preferredKBPlugin,
+            goalSolverPlugin: session.preferredGoalSolverPlugin
+          }
+        }, pluginCtx);
+
+        let seedResult = null;
+        let selectedSeedDetectorPlugin = null;
+        const seedCandidates = (plan.seedDetectorOrder || []).slice(0, this.maxPluginsPerStage);
+        for (const pluginId of seedCandidates) {
+          const plugin = this.pluginRegistry.get('sd-plugin', pluginId);
+          if (!plugin) continue;
+          const startedAt = Date.now();
+          const result = await plugin.detectSeeds({
+            currentMessage,
+            historyForPrompt,
+            systemPrompt,
+            requestedModel,
+            sessionModel: session.preferredModel
+          }, pluginCtx);
+          llmCallCount += result.metadata?.llmCalls || 0;
+          checkBudget();
+          addStageTrace(
+            'seed-detector',
+            pluginId,
+            result.status,
+            startedAt,
+            result.metadata?.llmCalls || 0,
+            result.status === 'success',
+            result.error || null
+          );
+          if (result.status === 'success') {
+            seedResult = result;
+            selectedSeedDetectorPlugin = pluginId;
+            break;
+          }
+        }
+        if (!seedResult) {
+          throw new MRPError(
+            'PLUGIN_STAGE_EXHAUSTED',
+            MOD,
+            'No seed detector plugin produced valid seeds',
+            { stage: 'seed-detector', pluginsTried: seedCandidates }
+          );
+        }
+
+        const intentGroups = this.parser.parseIntentCNL(seedResult.intentCNL);
+        if (intentGroups.length === 0) {
+          throw new MRPError('DECOMPOSER_EMPTY_RESULT', MOD, 'No intent groups produced');
+        }
+
+        let currentTurnUnits = [];
+        if (seedResult.currentTurnContextCNL?.trim()) {
+          currentTurnUnits = this.parser.parseContextCNL(seedResult.currentTurnContextCNL);
+        }
+
+        const decomposedIntents = this.decomposer.decompose(intentGroups);
+        const contextProfiles = decomposedIntents.map(d => this.decomposer.deriveContextProfile(d));
+
+        let kbResult = null;
+        let selectedKBPlugin = null;
+        const kbCandidates = (plan.kbPluginOrder || []).slice(0, this.maxPluginsPerStage);
+        for (const pluginId of kbCandidates) {
+          const plugin = this.pluginRegistry.get('kb-plugin', pluginId);
+          if (!plugin) continue;
+          const startedAt = Date.now();
+          const result = await plugin.retrieve({
+            decomposedIntents,
+            contextProfiles,
+            currentTurnUnits,
+            session,
+            kbIndex: session.workspace?.getIndex() || this.kbIndex
+          }, pluginCtx);
+          addStageTrace(
+            'kb',
+            pluginId,
+            result.status,
+            startedAt,
+            0,
+            result.sufficient,
+            result.error || null
+          );
+          if (result.status === 'success') {
+            kbResult = result;
+            selectedKBPlugin = pluginId;
+            break;
+          }
+          if (result.status === 'insufficient') {
+            kbResult = result;
+            selectedKBPlugin = pluginId;
+          }
+        }
+        if (!kbResult) {
+          throw new MRPError(
+            'PLUGIN_STAGE_EXHAUSTED',
+            MOD,
+            'No KB plugin produced a retrieval result',
+            { stage: 'kb', pluginsTried: kbCandidates }
+          );
+        }
+
+        const resolvedIntents = kbResult.resolvedIntents || [];
+        const pluginOutputs = [];
+        for (const ri of resolvedIntents) {
+          const manifest = this.externalPluginManager.selectPlugin(ri.intentGroup);
+          if (!manifest) continue;
+          const po = await this.externalPluginManager.invoke(manifest, ri.resolvedMarkdown);
           po.intentRef = ri.intentRef;
           pluginOutputs.push(po);
         }
+
+        let goalResult = null;
+        let selectedGoalSolverPlugin = null;
+        const goalCandidates = (plan.goalSolverOrder || []).slice(0, this.maxPluginsPerStage);
+        for (const pluginId of goalCandidates) {
+          const plugin = this.pluginRegistry.get('gs-plugin', pluginId);
+          if (!plugin) continue;
+          const startedAt = Date.now();
+          const result = await plugin.solve({
+            sessionId: session.sessionId,
+            resolvedIntents,
+            pluginOutputs,
+            systemPrompt,
+            requestedModel,
+            sessionModel: session.preferredModel
+          }, pluginCtx);
+          llmCallCount += result.metadata?.llmCalls || 0;
+          checkBudget();
+          addStageTrace(
+            'goal-solver',
+            pluginId,
+            result.status,
+            startedAt,
+            result.metadata?.llmCalls || 0,
+            result.status === 'success',
+            result.error || null
+          );
+          if (result.status === 'success') {
+            goalResult = result;
+            selectedGoalSolverPlugin = pluginId;
+            break;
+          }
+        }
+        if (!goalResult) {
+          throw new MRPError(
+            'PLUGIN_STAGE_EXHAUSTED',
+            MOD,
+            'No goal solver plugin produced a final answer',
+            { stage: 'goal-solver', pluginsTried: goalCandidates }
+          );
+        }
+
+        this.conversationHandler.commitSuccessfulTurn(
+          session,
+          currentMessage,
+          goalResult.responseMarkdown,
+          currentTurnUnits,
+          requestedModel,
+          request.processing_mode || null,
+          request.retrieval_profile || null,
+          planner.getDescriptor().id,
+          selectedSeedDetectorPlugin,
+          selectedKBPlugin,
+          selectedGoalSolverPlugin
+        );
+
+        executionTrace.finalStatus = 'success';
+        await planner.recordOutcome(executionTrace, pluginCtx);
+
+        return {
+          sessionId: session.sessionId,
+          responseMarkdown: goalResult.responseMarkdown,
+          responseDocument: goalResult.responseDocument,
+          requestId,
+          llmCallCount,
+          durationMs: Date.now() - startTime,
+          executionTrace
+        };
+      } catch (error) {
+        if (planner) {
+          try {
+            await planner.recordOutcome(executionTrace, pluginCtx);
+          } catch (plannerError) {
+            logger.warn(MOD, `Planner outcome recording failed: ${plannerError.message}`);
+          }
+        }
+        throw error;
       }
-
-      // 11. Synthesis
-      logger.info(MOD, 'Phase 11/12: Synthesizing answer', { llmCalls: llmCallCount }, sx);
-      if (strategy.usesLLM()) checkBudget();
-      const { responseDocument, responseMarkdown } = await this.synthesizer.synthesize(
-        session.sessionId, resolvedIntents, pluginOutputs, systemPrompt, strategy, model
-      );
-      if (strategy.usesLLM()) llmCallCount++;
-
-      // 12. Commit turn
-      logger.debug(MOD, 'Phase 12/12: Committing turn', {}, sx);
-      this.conversationHandler.commitSuccessfulTurn(
-        session, currentMessage, responseMarkdown, currentTurnUnits,
-        requestedModel, requestedProcessingMode, requestedRetrievalProfile
-      );
-
-      const durationMs = Date.now() - startTime;
-      logger.info(MOD, 'Turn complete', { durationMs, llmCalls: llmCallCount, plugins: pluginOutputs.length }, sx);
-
-      return {
-        sessionId: session.sessionId,
-        responseMarkdown,
-        responseDocument,
-        requestId,
-        llmCallCount,
-        durationMs
-      };
     })();
 
     return Promise.race([processPromise, timeoutPromise]);

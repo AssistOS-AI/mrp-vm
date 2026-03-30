@@ -1,146 +1,132 @@
-# DS003 — Plugin System (External Interpreters)
+# DS003 — Typed Plugin System
 
 ## Purpose
-Manages interpretation plugins — external modules
-that process resolved intent bundles and return
-results also in CNL. Examples: Z3 solver, custom
-code, other interpreters.
+Defines the common runtime, discovery, registration,
+and execution rules for all MRP-VM plugin types.
 
-## Principles
+## Supported Plugin Types
 
-- Each plugin is a separate process.
-- Communication via stdin/stdout in CNL format.
-- Plugins can be written in any language
-  (Node.js, Python, Rust, etc.) as long as they
-  respect the wrapper convention (see DS016).
-- Plugins are auto-discovered from `wrappers/`.
-- v1 provides no OS-level sandboxing. Plugins are
-  trusted components guarded only by allowlists,
-  input limits, timeouts, and memory limits.
+- `sd-plugin`
+- `kb-plugin`
+- `gs-plugin`
+- `mrp-plan-plugin`
 
-## Plugin Lifecycle
+Type-specific interfaces are defined in DS027.
 
-1. At boot, the engine scans `wrappers/`.
-2. Each wrapper declares a `manifest.json`
-   with: name, version, capabilities, command.
-3. Engine validates the manifest and checks
-   the allowlist (`config/engine.json`).
-4. Engine registers the plugin.
-5. At runtime, when an intent requires a specific
-   type of processing, the engine selects exactly
-   one plugin based on dispatch rules.
-6. The process is spawned, CNL is sent on stdin,
-   CNL is read from stdout.
+## Common Descriptor
 
-## When a Plugin Is Invoked
-
-Dispatch criteria (in priority order):
-
-1. **Explicit field in Intent CNL**: if the
-   Normalizer emits an `Interpreter: z3` field
-   (optional extension, not mandatory).
-2. **Act → capability mapping**: the pragmatic act
-   matches `eligibleCapabilities` from the
-   canonical taxonomy.
-3. **Keyword matching**: keywords from the intent
-   match `keywords` in the manifest.
-
-Invocation timing in pipeline (v1):
-- **Post-retrieval**: the plugin receives the
-  `ResolvedIntent` (intent + current-turn context +
-  session context + persistent KB context).
-- The plugin does NOT replace retrieval but
-  complements it with specialized processing.
-- Dispatch unit: one plugin decision per
-  `ResolvedIntent`, therefore per normalized
-  Intent Group / `intentRef`.
-- If a request contains multiple intent groups,
-  plugin dispatch is evaluated independently for
-  each one.
-
-## manifest.json
-
-```json
-{
-  "name": "z3-solver",
-  "version": "0.1.0",
-  "protocolVersion": 1,
-  "capabilities": ["logical-constraint", "sat-check"],
-  "keywords": ["constraint", "satisfiable", "prove"],
-  "command": "node",
-  "args": ["wrapper.js"],
-  "timeout": 30000,
-  "priority": 10,
-  "exclusive": false,
-  "maxInputSizeBytes": 65536,
-  "description": "Z3 SMT solver wrapper"
-}
-```
-
-### Fields
-- `protocolVersion` — I/O protocol version.
-- `keywords` — keywords for matching.
-- `priority` — numeric priority (higher = more
-  preferred). For conflict resolution.
-- `exclusive` — reserved for future multi-plugin
-  orchestration; in v1 a single plugin is selected.
-
-## Conflict Resolution
-
-When two plugins declare the same capability:
-1. Select the one with higher `priority`.
-2. On tie: alphabetical order by `name`
-   (deterministic tie-break).
-3. The chosen plugin is final for that intent.
-   No automatic fallback chain is allowed.
-
-## PluginOutput (Canonical Structure)
-
-The plugin result integrates into the pipeline
-as a standard structure:
+Every plugin MUST expose a descriptor equivalent to:
 
 ```javascript
 {
-  intentRef: 1,
-  pluginName: "z3-solver",
-  capabilityUsed: "logical-constraint",
-  status: "success" | "error" | "timeout",
-  resultCNL: string | null,
-  confidence: "high" | "medium" | "low" | null,
-  artifacts: [],
-  error: null | { code, message }
+  id: "kb-balanced",
+  type: "kb-plugin",
+  name: "Balanced KB Retriever",
+  version: "1.0.0",
+  description: "...",
+  costClass: "cheap" | "moderate" | "expensive",
+  usesLLM: boolean,
+  modelRoles: ["kb-ingest"],
+  tags: ["builtin", "balanced"],
+  timeoutMs: 30000,
+  provides: ["retrieve-context"],
+  accepts: ["chat-turn", "source-text"]
 }
 ```
 
-- `intentRef` links the output to the specific
-  Intent Group it was invoked for.
-- Plugin output is treated as explicit evidence
-  in answer synthesis (DS017), never merged
-  anonymously.
-- Multiple plugin outputs from one user request are
-  aggregated only by `intentRef`; there is no
-  cross-group merging.
+## Discovery Modes
+
+### Built-in plugins
+
+Registered programmatically at boot.
+
+### External wrapper plugins
+
+Loaded from wrapper directories that include a
+manifest declaring:
+
+- `id` or legacy `name`
+- `type` or a legacy implicit helper-plugin default
+- `command`
+- `args`
+- `protocolVersion`
+
+Wrapper plugins are trusted components gated by
+allowlist, timeout, input size, and manifest
+validation. There is still no OS-level sandboxing.
+
+## Runtime Context
+
+The core passes a shared execution context to every
+plugin call:
+
+```javascript
+{
+  requestId,
+  session,
+  conversation,
+  parser,
+  decomposer,
+  modelSettings,
+  logger,
+  budgets
+}
+```
+
+Additional fields MAY be added later, but plugins
+must treat the context as read-only except for
+explicit callback surfaces.
+
+## Execution Rules
+
+- A planner plugin decides stage order and plugin
+  order.
+- The core MAY execute only plugins whose type
+  matches the current stage.
+- Explicit user/session selection overrides planner
+  reordering for that stage.
+- Plugin failures are isolated and recorded in the
+  execution trace.
+- A plugin may declare `usesLLM: false` and still be
+  selected before an LLM-backed alternative.
+
+## Source Text Propagation
+
+When a source document is uploaded or staged:
+
+1. the source text is normalized into semantic units
+   by the chosen seed detector for ingest
+2. the raw text plus units are offered to all
+   enabled `kb-plugin`s through their ingest hook
+3. each KB plugin MAY build plugin-private indices,
+   derived notes, or caches
+
+This is how old retrieval-profile-specific indexing
+behavior moves out of the core.
 
 ## Security
 
-- Only plugins in the allowlist
-  (`config/engine.json`) can be executed.
-- Timeout per plugin (from manifest or config).
-- Memory limit per plugin (configurable).
-- Sanitized paths — `command` cannot contain
-  `..` or absolute paths.
-- Input size enforcement: before spawning the
-  plugin process, the engine checks that the
-  serialized `resolvedMarkdown` does not exceed
-  `maxInputSizeBytes` from the manifest. If it
-  does, return `PLUGIN_INPUT_TOO_LARGE`.
-- Plugin stdout must parse under the DS016
-  contract; invalid stdout becomes
-  `PLUGIN_INVALID_OUTPUT`.
+- allowlist for external plugins
+- timeout per plugin
+- input size limits
+- sanitized executable paths
+- manifest validation
+
+## Registry Interface
+
+```javascript
+class TypedPluginRegistry {
+  register(plugin) -> void
+  get(type, id) -> Plugin | null
+  list(type = null) -> PluginDescriptor[]
+  listByType(type) -> PluginDescriptor[]
+}
+```
 
 ## Dependencies
 
-- DS016 (Wrapper Convention) — defines the contract.
-- DS002 (MRP-VM Core) — invokes plugins.
-- DS004 (Intent CNL) — pragmatic acts.
-- DS017 (Synthesis) — consumes PluginOutput.
+- DS002 — core executes typed plugins
+- DS016 — wrapper protocol for external plugins
+- DS027 — typed interfaces
+- DS028 — shared LLM role settings
+- DS029 — planner plugins

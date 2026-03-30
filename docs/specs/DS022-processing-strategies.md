@@ -1,198 +1,67 @@
-# DS022 — Processing Strategies
+# DS022 — Seed Detectors and Goal Solvers
 
 ## Purpose
-Defines the pluggable strategy interface for all
-language-processing capabilities that may currently
-be implemented with LLMs. This allows MRP-VM to run
-with different backends, including a faster
-`symbolic-only` mode.
+Defines how the old concept of "processing strategy"
+is decomposed into two plugin families:
 
-## Scope
+- `sd-plugin` for seed detection
+- `gs-plugin` for goal solving
 
-DS022 covers the capabilities currently fulfilled in
-the LLM-assisted path by DS006 and DS017:
-- intent normalization
-- session-context extraction
-- persistent context normalization for ingest
-- answer synthesis
+This DS replaces the old first-class notion of
+`processing_mode`.
 
-It does NOT replace:
-- DS007 validation/parsing
-- DS011 symbolic decomposition
-- DS012 retrieval
-- DS003 plugin execution
+## Design Rule
 
-## Design Goal
+The core MUST NOT select between `symbolic-only` and
+`llm-assisted` as hardcoded modes. Those behaviors
+must be expressed as plugins.
 
-Every place in the architecture that currently uses
-LLM-backed language processing must depend on a
-strategy object, not directly on a concrete LLM
-backend.
+## Built-In Seed Detector Plugins
 
-This enables:
-- `llm-assisted` implementation using
-  AchillesAgentLib
-- `symbolic-only` implementation using wink-nlp,
-  regex/rule pipelines, deterministic templates,
-  or similar tooling
-- future hybrid or more advanced implementations
+- `sd-symbolic`
+- `sd-llm-fast`
+- `sd-llm-deep`
 
-## Core Interface
+### Responsibilities of an `sd-plugin`
 
-```javascript
-class LanguageProcessingStrategy {
-  getId() → string
-  usesLLM() → boolean
-  supportsModelOverride() → boolean
-  getCapabilities() → string[]
+- normalize user request into Intent CNL
+- extract current-turn/session context seeds
+- normalize persistent context during ingest
+- report validation or unsupported-input failures
 
-  async normalizeIntent(input) → {
-    intentCNL: string
-  }
+## Built-In Goal Solver Plugins
 
-  async extractSessionContext(input) → {
-    contextCNL: string
-  }
+- `gs-symbolic`
+- `gs-llm-fast`
+- `gs-llm-deep`
 
-  async normalizePersistentContext(input) → {
-    contextCNL: string
-  }
+### Responsibilities of a `gs-plugin`
 
-  async synthesizeResponse(input) → {
-    responseDocument,
-    responseMarkdown
-  }
-}
-```
+- consume resolved intents plus optional helper
+  plugin output
+- produce final grounded Markdown response
+- render deterministic `no-context` response when
+  configured to do so
 
-Input contracts:
+## Legacy Mapping
 
-```javascript
-// normalizeIntent
-{
-  rawNL: string,
-  history: Message[],
-  systemPrompt: string | null,
-  requestedModel: string | null
-}
+- `symbolic-only` -> `sd-symbolic` + `gs-symbolic`
+- `llm-assisted` -> planner chooses among
+  `sd-llm-fast`, `sd-llm-deep`, `gs-llm-fast`,
+  `gs-llm-deep`
 
-// extractSessionContext
-{
-  rawNL: string,
-  systemPrompt: string | null,
-  requestedModel: string | null
-}
+## Selection Semantics
 
-// normalizePersistentContext
-{
-  chunkText: string,
-  provenance: object,
-  requestedModel: string | null
-}
-
-// synthesizeResponse
-{
-  sessionId: string,
-  resolvedIntents: ResolvedIntent[],
-  pluginOutputs: PluginOutput[],
-  systemPrompt: string | null,
-  requestedModel: string | null
-}
-```
-
-## Strategy Registry
-
-```javascript
-class StrategyRegistry {
-  register(strategy) → void
-  get(strategyId) → LanguageProcessingStrategy | null
-  list() → StrategyInfo[]
-  resolve(requestedMode, sessionMode, defaultMode) →
-    LanguageProcessingStrategy
-}
-
-// StrategyInfo
-{
-  id: "llm-assisted" | "symbolic-only",
-  usesLLM: boolean,
-  supportsModelOverride: boolean,
-  capabilities: string[]
-}
-```
-
-Resolution order:
-1. request explicit `processing_mode`
-2. session preference
-3. deployment default
-
-There is no silent fallback from one strategy to
-another. If the selected strategy is unavailable or
-cannot handle the input, return an explicit error.
-
-## Built-In Modes
-
-### `llm-assisted`
-- Uses AchillesAgentLib through DS015.
-- Supports all v1 capabilities.
-- Supports model override.
-- Uses corrective retry rules from DS006.
-
-### `symbolic-only`
-- Uses no LLM.
-- Does not support model override.
-- May be implemented with wink-nlp, deterministic
-  tokenizers, regex rules, and Markdown templates.
-- If wink-nlp is used, it is an implementation
-  backend of this strategy, not a core dependency
-  of MRP-VM.
-
-Expected v1 limits of `symbolic-only`:
-- lower recall and narrower NL coverage
-- better latency and cost profile
-- deterministic failure on unsupported inputs
-
-## Symbolic-Only Capability Envelope
-
-The initial symbolic-only implementation is allowed
-to support only a restricted subset well:
-- intent normalization for common request patterns
-- session-context extraction for stable facts,
-  preferences, and constraints
-- persistent context normalization for structured
-  technical prose and procedural text
-- answer synthesis via deterministic Markdown
-  templates, not free-form prose generation
-
-If a request falls outside this supported envelope,
-the strategy should return:
-- `STRATEGY_UNSUPPORTED_INPUT`, or
-- `STRATEGY_CAPABILITY_NOT_AVAILABLE`
-
-It must not silently delegate to LLM.
-
-## Configuration
-
-`config/strategies.json`:
-```json
-{
-  "defaultMode": "llm-assisted",
-  "enabledModes": ["llm-assisted", "symbolic-only"]
-}
-```
-
-## UI/API Integration
-
-- DS013 exposes `processing_mode` in chat/session
-  requests and `GET /processing-strategies`.
-- DS014 exposes a strategy selector in the chat UI.
-- DS019 stores the selected mode as a session
-  preference.
+- The planner chooses ordered candidates per stage.
+- The user may pin a specific seed detector plugin,
+  goal solver plugin, or both.
+- A session stores plugin preferences, not a single
+  monolithic mode.
 
 ## Dependencies
 
-- DS006 — normalization capabilities
-- DS017 — synthesis capability
-- DS015 — `llm-assisted` backend
-- DS013 — API surface
-- DS014 — UI selector
-- DS019 — session preference
+- DS015 — LLM bridge
+- DS017 — synthesis semantics used by `gs-plugin`
+- DS027 — plugin contracts
+- DS028 — model-role settings
+- DS029 — planner ordering

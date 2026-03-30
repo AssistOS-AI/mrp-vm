@@ -64,11 +64,11 @@
   <li><strong>Session State</strong> — In-memory conversation management. <a href="../architecture/session-lifecycle.html">Session lifecycle →</a></li>
 </ol>
 
-<h3>Two Processing Modes</h3>
-<p>Every language step goes through a <a href="../concepts/processing-modes.html">strategy interface</a>: <strong>llm-assisted</strong> (LLM-backed, high quality) or <strong>symbolic-only</strong> (rule-based, zero cost, ~2ms).</p>
+<h3>Typed Plugins</h3>
+<p>Execution is organized around typed plugins: seed detectors, KB plugins, goal solvers, and planner plugins. Built-in symbolic and LLM-backed variants remain available, but they are selected as plugins rather than as global VM modes.</p>
 
-<h3>Retrieval Profiles</h3>
-<p>Evidence selection is governed by <a href="../concepts/retrieval-algorithms.html">risk profiles</a>: <strong>fast</strong> (BM25 only, 3 results), <strong>balanced</strong> (BM25 + HDC escalation, 7 results), and a planned <strong>thinkingdb</strong> profile for bounded symbolic closure. <strong>wide-recall</strong> remains documented only as obsolete compatibility coverage.</p>
+<h3>KB Plugins</h3>
+<p>Evidence selection is governed by <a href="../concepts/retrieval-algorithms.html">KB plugins</a>: <strong>kb-fast</strong> (BM25 only), <strong>kb-balanced</strong> (BM25 + HDC escalation), and <strong>kb-thinkingdb</strong> (bounded symbolic closure).</p>
 
 <div class="nav-bottom">
   <a href="../index.html" class="prev">← Home</a>

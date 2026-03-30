@@ -9,6 +9,11 @@ import { ContextMatcher } from '../retrieval/context-matcher.mjs';
 import { AnswerSynthesizer } from '../synthesis/answer-synthesizer.mjs';
 import { ConversationHandler } from '../conversation/handler.mjs';
 import { PluginManager } from '../plugins/manager.mjs';
+import { TypedPluginRegistry } from '../plugins/typed-registry.mjs';
+import { StrategySeedDetectorPlugin, RetrievalKBPlugin, StrategyGoalSolverPlugin } from '../plugins/builtin-plugins.mjs';
+import { LLMRoleSettingsStore } from '../plugins/settings.mjs';
+import { PlannerStatsStore } from '../plugins/planner-stats.mjs';
+import { DefaultPlannerPlugin } from '../plugins/default-planner.mjs';
 import { StrategyRegistry } from '../strategies/registry.mjs';
 import { LLMAssistedStrategy } from '../strategies/llm-assisted.mjs';
 import { SymbolicOnlyStrategy } from '../strategies/symbolic-only.mjs';
@@ -35,6 +40,8 @@ async function boot() {
   const retrievalConfig = loadConfig('retrieval');
   const retrievalStrategiesConfig = loadConfig('retrieval-strategies');
   const thinkingdbConfig = loadConfig('thinkingdb');
+  const pluginsConfig = loadConfig('plugins');
+  const llmRoleSettingsConfig = loadConfig('llm-role-settings');
   const kbConfig = loadConfig('kb');
   const conversationConfig = loadConfig('conversation');
 
@@ -85,11 +92,127 @@ async function boot() {
   const decomposer = new IntentDecomposer();
   const retrieval = new ContextMatcher(retrievalStrategyRegistry, retrievalConfig);
   const synthesizer = new AnswerSynthesizer(strategyRegistry, engineConfig);
+  const typedPluginRegistry = new TypedPluginRegistry();
+  const llmRoleSettings = new LLMRoleSettingsStore(llmRoleSettingsConfig, llmBridge);
+  const plannerStats = new PlannerStatsStore(pluginsConfig);
+  const symbolicStrategy = strategyRegistry.get('symbolic-only');
+  const llmStrategy = strategyRegistry.get('llm-assisted');
+
+  if (symbolicStrategy) {
+    typedPluginRegistry.register(new StrategySeedDetectorPlugin(
+      'sd-symbolic',
+      symbolicStrategy,
+      normalizer,
+      {
+        description: 'Deterministic symbolic seed detector.',
+        costClass: 'cheap'
+      }
+    ));
+  }
+  if (llmStrategy) {
+    typedPluginRegistry.register(new StrategySeedDetectorPlugin(
+      'sd-llm-fast',
+      llmStrategy,
+      normalizer,
+      {
+        description: 'LLM-backed seed detector using the fast seed role.',
+        costClass: 'moderate',
+        modelRole: 'seed-fast',
+        ingestModelRole: 'kb-ingest'
+      }
+    ));
+    typedPluginRegistry.register(new StrategySeedDetectorPlugin(
+      'sd-llm-deep',
+      llmStrategy,
+      normalizer,
+      {
+        description: 'LLM-backed seed detector using the deep seed role.',
+        costClass: 'expensive',
+        modelRole: 'seed-deep',
+        ingestModelRole: 'kb-ingest'
+      }
+    ));
+  }
+  typedPluginRegistry.register(new RetrievalKBPlugin(
+    'kb-fast',
+    retrieval,
+    'fast',
+    {
+      description: 'Cheap lexical-first KB plugin.',
+      costClass: 'cheap'
+    }
+  ));
+  typedPluginRegistry.register(new RetrievalKBPlugin(
+    'kb-balanced',
+    retrieval,
+    'balanced',
+    {
+      description: 'Balanced lexical + associative KB plugin.',
+      costClass: 'moderate'
+    }
+  ));
+  typedPluginRegistry.register(new RetrievalKBPlugin(
+    'kb-thinkingdb',
+    retrieval,
+    'thinkingdb',
+    {
+      description: 'Symbolic ThinkingDB KB plugin.',
+      costClass: 'expensive'
+    }
+  ));
+  if (symbolicStrategy) {
+    typedPluginRegistry.register(new StrategyGoalSolverPlugin(
+      'gs-symbolic',
+      symbolicStrategy,
+      synthesizer,
+      {
+        description: 'Deterministic symbolic goal solver.',
+        costClass: 'cheap'
+      }
+    ));
+  }
+  if (llmStrategy) {
+    typedPluginRegistry.register(new StrategyGoalSolverPlugin(
+      'gs-llm-fast',
+      llmStrategy,
+      synthesizer,
+      {
+        description: 'LLM-backed goal solver using the fast goal role.',
+        costClass: 'moderate',
+        modelRole: 'goal-fast'
+      }
+    ));
+    typedPluginRegistry.register(new StrategyGoalSolverPlugin(
+      'gs-llm-deep',
+      llmStrategy,
+      synthesizer,
+      {
+        description: 'LLM-backed goal solver using the deep goal role.',
+        costClass: 'expensive',
+        modelRole: 'goal-deep'
+      }
+    ));
+  }
+  typedPluginRegistry.register(new DefaultPlannerPlugin(
+    typedPluginRegistry,
+    plannerStats,
+    pluginsConfig
+  ));
 
   // Build engine
   const engine = new MRPEngine(
-    engineConfig, normalizer, parser, decomposer, retrieval, synthesizer,
-    pluginManager, conversationHandler, strategyRegistry, retrievalStrategyRegistry, kbIndex
+    {
+      ...engineConfig,
+      defaultPlannerPlugin: pluginsConfig.defaultPlannerPlugin || 'planner-default',
+      maxPluginsPerStage: pluginsConfig.maxPluginsPerStage || engineConfig.maxPluginsPerStage || 4
+    },
+    typedPluginRegistry,
+    conversationHandler,
+    parser,
+    decomposer,
+    pluginManager,
+    llmRoleSettings,
+    kbIndex
   );
 
   // 9. Mark readiness
@@ -97,7 +220,17 @@ async function boot() {
   logger.info(MOD, 'Engine ready');
 
   // 10. Start HTTP server
-  const server = new MRPServer(engine, kbRepositoryManager, conversationHandler, llmBridge, strategyRegistry, retrievalStrategyRegistry, serverConfig);
+  const server = new MRPServer(
+    engine,
+    kbRepositoryManager,
+    conversationHandler,
+    llmBridge,
+    strategyRegistry,
+    retrievalStrategyRegistry,
+    typedPluginRegistry,
+    llmRoleSettings,
+    serverConfig
+  );
   server.start();
 
   // Periodic session cleanup

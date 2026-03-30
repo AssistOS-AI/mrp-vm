@@ -49,15 +49,15 @@
   <tr><td><strong>HDC/VSA</strong></td><td>Associative (hypervectors)</td><td>Structural similarity when lexical overlap is partial</td></tr>
 </table>
 
-<h3>Risk Profiles</h3>
-<p>Profiles control the precision/recall tradeoff:</p>
+<h3>KB Plugins</h3>
+<p>KB plugins control the precision/recall tradeoff:</p>
 <table>
-  <tr><th>Profile</th><th>Strategies</th><th>Results</th><th>Use Case</th></tr>
-  <tr><td><code>fast</code></td><td>BM25 only</td><td>Top 3</td><td>Simple questions, max precision</td></tr>
-  <tr><td><code>balanced</code></td><td>BM25 + HDC escalation</td><td>Top 7</td><td>Default, good tradeoff</td></tr>
-  <tr><td><code>wide-recall</code></td><td>Legacy BM25 + HDC parallel</td><td>Top 15</td><td>Obsolete compatibility profile, not recommended</td></tr>
+  <tr><th>KB Plugin</th><th>Strategies</th><th>Results</th><th>Use Case</th></tr>
+  <tr><td><code>kb-fast</code></td><td>BM25 only</td><td>Top 3</td><td>Simple questions, max precision</td></tr>
+  <tr><td><code>kb-balanced</code></td><td>BM25 + HDC escalation</td><td>Top 7</td><td>Default, good tradeoff</td></tr>
+  <tr><td><code>kb-thinkingdb</code></td><td>BM25 + bounded symbolic expansion</td><td>Top 8</td><td>Multi-hop or relation-sensitive retrieval</td></tr>
 </table>
-<p><code>wide-recall</code> is now treated as obsolete and incomplete. The planned replacement is <code>thinkingdb</code>, a bounded symbolic retrieval profile specified in DS025. A separate <a href="../future/symbolic-execution.html">symbolic execution strategy</a> <a href="../future/thinkingdb.html">ThinkingDB</a> for constraint-based pruning is also proposed but not yet implemented.</p>
+<p><code>kb-thinkingdb</code> is the current symbolic expansion path specified in DS025. A separate <a href="../future/symbolic-execution.html">symbolic execution strategy</a> <a href="../future/thinkingdb.html">ThinkingDB</a> for stronger constraint-based pruning is still future work.</p>
 
 <div class="nav-bottom">
   <a href="PIPELINE.html" class="prev">← Pipeline</a>

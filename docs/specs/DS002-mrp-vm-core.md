@@ -1,229 +1,206 @@
-# DS002 — MRP-VM Core Engine
+# DS002 — MRP-VM Core Kernel
 
 ## Purpose
-Central engine of the VM. Orchestrates the processing
-pipeline: receives session-scoped NL requests from the
-Server, coordinates normalization, session-context
-extraction, retrieval, plugins, and answer synthesis.
+Defines the lightweight orchestration kernel of the
+ VM.
 
-## Responsibilities
+## Responsibility Boundary
 
-- Receives raw NL requests from Server (DS013).
-- Resolves the active session and current turn through
-  ConversationHandler (DS019).
-- Resolves the active language processing strategy
-  through StrategyRegistry (DS022).
-- Resolves the active retrieval profile and evidence
-  selection plan through DS023.
-- Invokes Normalizer for NL → Intent CNL.
-- Invokes Normalizer for current-turn NL →
-  Session Context CNL.
-- Sends each intent group through the decomposition
-  and retrieval pipeline.
-- Coordinates calls to external plugins/interpreters
-  when an intent requires specialized processing.
-- Invokes AnswerSynthesizer for the final Markdown
-  response.
-- Commits the turn to session state only after a
-  successful response is produced.
-- Manages the request lifecycle and operational
-  budgets.
+The core owns only:
+
+- request lifecycle
+- session/workspace lifecycle
+- budget enforcement
+- typed plugin resolution
+- execution tracing
+- shared utility injection
+- commit/rollback semantics
+
+The core does NOT own concrete retrieval profiles,
+processing modes, or reasoning algorithms.
 
 ## Main Interface
 
 ```javascript
 class MRPEngine {
-  constructor(config, normalizer, parser,
-    decomposer, retrieval, synthesizer,
-    pluginManager, conversationHandler,
-    strategyRegistry)
+  constructor(config, pluginRegistry,
+    conversationHandler, parser, decomposer,
+    externalPluginManager, modelSettings,
+    kbIndex)
 
-  async processChatTurn(request) → {
-    sessionId: string,
-    responseMarkdown: string,
-    responseDocument: ResponseDocument,
-    requestId: string,
-    llmCallCount: number,
-    durationMs: number
+  async processChatTurn(request) -> {
+    sessionId,
+    responseMarkdown,
+    responseDocument,
+    requestId,
+    llmCallCount,
+    durationMs,
+    executionTrace
   }
 
-  async boot() → void
+  async boot() -> void
 }
 ```
 
 ## Internal Pipeline
 
-1. Server passes:
-   `{ sessionId?, model?, processingMode?,
-   retrievalProfile?, messages[] }`.
-2. `ConversationHandler.prepareTurn(...)` resolves or
-   creates the session and returns:
-   `{ session, currentMessage, historyForPrompt,
-   systemPrompt, requestedModel,
-   requestedProcessingMode,
-   requestedRetrievalProfile }`.
-3. `strategyRegistry.resolve(...)` returns the active
-   `LanguageProcessingStrategy`.
-4. Retrieval profile resolution picks the active
-   `RetrievalRiskProfile`.
-5. `currentMessage + historyForPrompt + systemPrompt`
-   → `Normalizer.toIntentCNL(..., strategy)` →
-   `intentCNL` (LLM call #1).
-6. `intentCNL` → Validator → validated or error.
-7. `currentMessage + systemPrompt` →
-   `Normalizer.toSessionContextCNL(..., strategy)` →
-   `currentTurnContextCNL` (LLM call #2).
-8. `currentTurnContextCNL` → Validator/Parser →
-   `currentTurnContextUnits[]`.
-9. `intentCNL` → IntentDecomposer →
-   `decomposedIntents[]`.
-10. For each decomposed intent:
-   a. Derive context profile.
-   b. Retrieval runs through DS012 using the active
-      retrieval profile. It may execute one or more
-      retrieval strategies sequentially or in
-      parallel.
-   c. If needed, invoke one deterministic plugin
-      keyed by `intentRef`.
-11. `resolvedIntents[] + pluginOutputs[]` →
-   `AnswerSynthesizer.synthesize(..., strategy)` →
-   `responseDocument` and `responseMarkdown`
-   (LLM call #3 only if at least one group has
-   evidence to synthesize).
-12. `ConversationHandler.commitSuccessfulTurn(...)`
-    persists:
-    - current user message
-    - assistant Markdown response
-    - current-turn context units
-    - selected model preference
-    - selected processing mode
-    - selected retrieval profile
-13. Return response.
+1. Resolve/create session.
+2. Resolve explicit plugin selections, session
+   preferences, and default planner plugin.
+3. Build a plugin execution context containing:
+   - parser helpers
+   - decomposer helpers
+   - session/conversation handles
+   - shared model-role settings
+   - logging/budget helpers
+4. Invoke the selected `mrp-plan-plugin`.
+5. Execute the seed-detection stage:
+   - try `sd-plugin` candidates in order
+   - stop at first valid seed bundle
+6. Parse seed output and derive decomposition/context
+   metadata.
+7. Execute the KB stage:
+   - try `kb-plugin` candidates in planner order
+   - stop when evidence is sufficient
+8. Optionally invoke external helper plugins for
+   intent-local specialized work.
+9. Execute the goal-solving stage:
+   - try `gs-plugin` candidates in planner order
+   - stop at first successful final answer
+10. Record planner outcome/trace.
+11. Commit the successful turn, including the plugin
+    IDs actually used.
 
-## Operational Budget Per Request
+## Canonical Stage Outputs
 
-- Primary LLM stages per request: 3
-  (intent normalization, session-context
-  extraction, synthesis).
-- Max actual LLM attempts per request: 5
-  (configurable). This includes corrective retries
-  for validation failures.
-- Total timeout: 60s (configurable).
-- Parallel calls allowed: retrieval per intent
-  group (when multiple groups exist).
-- Retrieval strategies inside one intent group may
-  also run in parallel when the active retrieval
-  profile allows it.
-- If the budget is exceeded, return
-  `ENGINE_BUDGET_EXCEEDED`.
-- There is no partial return on budget exhaustion.
+### Seed stage
 
-## Boot Sequence
+```javascript
+{
+  pluginId: "sd-symbolic",
+  intentCNL: string,
+  currentTurnContextCNL: string,
+  metadata: {
+    valid: true,
+    llmCalls: 0
+  }
+}
+```
 
-Initialization order at startup:
+### KB stage
 
-1. Validate config (fatal if invalid).
-2. Initialize StrategyRegistry.
-3. Initialize enabled strategies:
-   a. Initialize LLMBridge if `llm-assisted`
-      strategy is enabled (fatal if fails).
-   b. Initialize symbolic-only strategy if enabled.
-4. Initialize SessionManager/ConversationHandler.
-5. Scan wrappers → register plugins
-   (warning if a wrapper is invalid).
-6. Load persistent KB from persistence:
-   a. Read CNL files.
-   b. Validate each with Validator (skip +
-      warning if invalid).
-   c. Load into memory.
-7. Rebuild or load BM25 index
-   (rebuild if index does not match).
-8. Initialize RetrievalStrategyRegistry and enabled
-   retrieval strategies (fatal if a required
-   strategy cannot initialize).
-9. Mark readiness.
-10. Start HTTP server.
+```javascript
+{
+  pluginId: "kb-balanced",
+  resolvedIntents: ResolvedIntent[],
+  sufficient: boolean,
+  retrievalTrace: object
+}
+```
 
-Fatal errors stop boot. Warnings are logged
-and boot continues.
+### Goal stage
+
+```javascript
+{
+  pluginId: "gs-llm-fast",
+  responseMarkdown: string,
+  responseDocument: object,
+  metadata: {
+    llmCalls: 1
+  }
+}
+```
+
+## Planner Interaction
+
+The planner returns an `ExecutionPlan`:
+
+```javascript
+{
+  plannerPluginId: "planner-default",
+  seedDetectorOrder: ["sd-symbolic", "sd-llm-fast"],
+  kbPluginOrder: ["kb-fast", "kb-balanced"],
+  goalSolverOrder: ["gs-symbolic", "gs-llm-fast"],
+  notes: ["cheap-first"]
+}
+```
+
+The core is responsible only for executing the plan
+faithfully and reporting outcomes back.
+
+## Operational Budget
+
+Budgets remain enforced centrally:
+
+- max LLM attempts per request
+- request timeout
+- per-plugin timeout
+- maximum plugin candidates per stage
+
+The planner may propose order, but the core enforces
+hard limits.
 
 ## Failure Handling
 
-### Intent normalization failure
-- Initial attempt + max 1 corrective retry.
-- If the LLM call itself fails: return
-  `NORMALIZER_FAILED`.
-- If the produced CNL remains invalid after the
-  corrective retry: return
-  `NORMALIZER_VALIDATION_FAILED`.
+### Seed detector failure
 
-### Session-context extraction failure
-- Initial attempt + max 1 corrective retry.
-- If the LLM call itself fails: return
-  `SESSION_CONTEXT_FAILED`.
-- If the produced CNL remains invalid after the
-  corrective retry: return
-  `SESSION_CONTEXT_VALIDATION_FAILED`.
+- One plugin failure is non-fatal if more seed
+  detector candidates remain.
+- If all seed detector candidates fail or produce
+  invalid output, return `PLUGIN_STAGE_EXHAUSTED`
+  with `stage: "seed-detector"`.
 
-### Decomposition failure
-- If parsing succeeds but decomposition yields
-  zero intent groups: return
-  `DECOMPOSER_EMPTY_RESULT`.
+### KB plugin failure
 
-### Retrieval result = no evidence
-- This is a valid result state.
-- The corresponding intent group is marked
-  `no-context` in the final Markdown.
-- No LLM fallback is attempted.
+- One KB plugin failure is non-fatal if more
+  candidates remain.
+- If all candidates fail, return
+  `PLUGIN_STAGE_EXHAUSTED` with `stage: "kb"`.
 
-### Mixed group outcomes in one request
-- Requests with multiple intent groups are handled
-  per group, not all-or-nothing.
-- Some groups may be `answered` while others are
-  `no-context` or `plugin-error`.
-- `AnswerSynthesizer` always receives the full
-  per-group result set and renders one section per
-  `intentRef`.
-- A request fails only when a critical global stage
-  fails before per-group resolution can complete
-  (normalization, session-context extraction,
-  decomposition, or synthesis).
+### No evidence
 
-### Plugin failure or timeout
-- The corresponding intent group is marked
-  `plugin-error`.
-- The exact plugin error is surfaced in the
-  response document.
-- No secondary plugin is tried automatically.
+- No evidence is a valid state only if the selected
+  goal solver can render deterministic `no-context`
+  output.
 
-### Synthesis failure
-- Return `SYNTHESIS_FAILED`.
-- No raw-context fallback is emitted.
+### Goal solver failure
+
+- One goal solver failure is non-fatal if more
+  candidates remain.
+- If all fail, return `PLUGIN_STAGE_EXHAUSTED` with
+  `stage: "goal-solver"`.
+
+## Boot Sequence
+
+1. Validate config.
+2. Initialize shared services.
+3. Initialize the typed plugin registry.
+4. Register built-in plugins.
+5. Scan external wrappers and register typed external
+   plugins when valid.
+6. Load KB repositories/workspaces.
+7. Initialize planner statistics/settings stores.
+8. Mark readiness.
 
 ## Configuration
 
 `config/engine.json`:
+
 ```json
 {
-  "maxPrimaryLLMStagesPerRequest": 3,
-  "maxLLMAttemptsPerRequest": 5,
+  "maxLLMAttemptsPerRequest": 6,
   "requestTimeoutMs": 60000,
-  "maxValidationCorrectionRetriesPerStage": 1,
-  "pluginAllowlist": ["z3-solver"],
   "pluginTimeoutMs": 30000,
-  "pluginMemoryLimitMB": 256
+  "maxPluginsPerStage": 4,
+  "defaultPlannerPlugin": "planner-default",
+  "pluginAllowlist": ["z3-solver"]
 }
 ```
 
-## Internal Dependencies
+## Dependencies
 
-- `src/conversation/` (DS019)
-- `src/normalizer/` (DS006)
-- `src/strategies/` (DS022)
-- `src/parser/` (DS007)
-- `src/intent/` (DS011)
-- `src/retrieval/` (DS012)
-- `src/retrieval/strategies/` (DS023)
-- `src/synthesis/` (DS017)
-- `src/plugins/` (DS003)
-- `src/llm/` (DS015)
+- DS003 — plugin registry/runtime
+- DS019 — session state
+- DS027 — typed plugin contracts
+- DS028 — shared LLM role settings
+- DS029 — planner plugins

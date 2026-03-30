@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { MRPError } from '../lib/errors.mjs';
 import { KBIndex } from '../retrieval/kb-index.mjs';
 import { SessionWorkspace } from '../kb/session-workspace.mjs';
+import { mapLegacyProcessingMode, mapLegacyRetrievalProfile } from '../plugins/aliases.mjs';
 
 export class ConversationHandler {
   constructor(config = {}) {
@@ -13,6 +14,7 @@ export class ConversationHandler {
     this.maxSessions = config.maxSessions || 1000;
     this.defaultProcessingMode = config.defaultProcessingMode || 'llm-assisted';
     this.defaultRetrievalProfile = config.defaultRetrievalProfile || 'balanced';
+    this.defaultPlannerPlugin = config.defaultPlannerPlugin || 'planner-default';
     this.defaultKbId = config.defaultKbId || 'default';
     this._sessions = new Map();
     this.kbRepositoryManager = null;
@@ -22,13 +24,24 @@ export class ConversationHandler {
     this.kbRepositoryManager = manager;
   }
 
-  async createSession(model, processingMode, retrievalProfile, kbId = null) {
+  async createSession(
+    model,
+    processingMode,
+    retrievalProfile,
+    kbId = null,
+    plannerPlugin = null,
+    seedDetectorPlugin = null,
+    kbPlugin = null,
+    goalSolverPlugin = null
+  ) {
     if (this._sessions.size >= this.maxSessions) {
       this.expireInactiveSessions();
       if (this._sessions.size >= this.maxSessions) {
         throw new MRPError('SESSION_INTERNAL_LIMIT', 'conversation', 'Max sessions reached');
       }
     }
+    const legacyMode = mapLegacyProcessingMode(processingMode || this.defaultProcessingMode);
+    const effectiveKBPlugin = kbPlugin || mapLegacyRetrievalProfile(retrievalProfile || this.defaultRetrievalProfile);
     const now = new Date();
     const session = {
       sessionId: `sess-${randomUUID().substring(0, 12)}`,
@@ -38,6 +51,10 @@ export class ConversationHandler {
       preferredModel: model || null,
       preferredProcessingMode: processingMode || this.defaultProcessingMode,
       preferredRetrievalProfile: retrievalProfile || this.defaultRetrievalProfile,
+      preferredPlannerPlugin: plannerPlugin || this.defaultPlannerPlugin,
+      preferredSeedDetectorPlugin: seedDetectorPlugin || legacyMode.seedDetectorPlugin || null,
+      preferredKBPlugin: effectiveKBPlugin || null,
+      preferredGoalSolverPlugin: goalSolverPlugin || legacyMode.goalSolverPlugin || null,
       messageLog: [],
       systemPrompt: null,
       sessionContextUnits: [],
@@ -68,7 +85,18 @@ export class ConversationHandler {
     this.kbRepositoryManager?.removeWorkspace(sessionId);
   }
 
-  async prepareTurn(sessionId, messages, model, processingMode, retrievalProfile, kbId = null) {
+  async prepareTurn(
+    sessionId,
+    messages,
+    model,
+    processingMode,
+    retrievalProfile,
+    kbId = null,
+    plannerPlugin = null,
+    seedDetectorPlugin = null,
+    kbPlugin = null,
+    goalSolverPlugin = null
+  ) {
     let session;
     if (sessionId) {
       session = this.getSession(sessionId);
@@ -83,6 +111,8 @@ export class ConversationHandler {
     } else {
       session = await this.createSession(model, processingMode, retrievalProfile, kbId);
     }
+    const legacyMode = mapLegacyProcessingMode(processingMode || session.preferredProcessingMode);
+    const legacyKBPlugin = mapLegacyRetrievalProfile(retrievalProfile || session.preferredRetrievalProfile);
     // Process new messages
     let systemPrompt = session.systemPrompt;
     let currentMessage = null;
@@ -104,7 +134,14 @@ export class ConversationHandler {
       systemPrompt,
       requestedModel: model || session.preferredModel,
       requestedProcessingMode: processingMode || session.preferredProcessingMode,
-      requestedRetrievalProfile: retrievalProfile || session.preferredRetrievalProfile
+      requestedRetrievalProfile: retrievalProfile || session.preferredRetrievalProfile,
+      requestedPlannerPlugin: plannerPlugin || session.preferredPlannerPlugin,
+      requestedSeedDetectorPlugin:
+        seedDetectorPlugin || legacyMode.seedDetectorPlugin || session.preferredSeedDetectorPlugin,
+      requestedKBPlugin:
+        kbPlugin || legacyKBPlugin || session.preferredKBPlugin,
+      requestedGoalSolverPlugin:
+        goalSolverPlugin || legacyMode.goalSolverPlugin || session.preferredGoalSolverPlugin
     };
   }
 
@@ -169,7 +206,19 @@ export class ConversationHandler {
     return this.getSessionMeta(sessionId);
   }
 
-  commitSuccessfulTurn(session, currentUserMessage, assistantMarkdown, currentTurnContextUnits, selectedModel, selectedProcessingMode, selectedRetrievalProfile) {
+  commitSuccessfulTurn(
+    session,
+    currentUserMessage,
+    assistantMarkdown,
+    currentTurnContextUnits,
+    selectedModel,
+    selectedProcessingMode,
+    selectedRetrievalProfile,
+    selectedPlannerPlugin = null,
+    selectedSeedDetectorPlugin = null,
+    selectedKBPlugin = null,
+    selectedGoalSolverPlugin = null
+  ) {
     session.messageLog.push({ role: 'user', content: currentUserMessage });
     session.messageLog.push({ role: 'assistant', content: assistantMarkdown });
     // Add context units (respecting limit and deduplicating by hash)
@@ -190,6 +239,10 @@ export class ConversationHandler {
     if (selectedModel) session.preferredModel = selectedModel;
     if (selectedProcessingMode) session.preferredProcessingMode = selectedProcessingMode;
     if (selectedRetrievalProfile) session.preferredRetrievalProfile = selectedRetrievalProfile;
+    if (selectedPlannerPlugin) session.preferredPlannerPlugin = selectedPlannerPlugin;
+    if (selectedSeedDetectorPlugin) session.preferredSeedDetectorPlugin = selectedSeedDetectorPlugin;
+    if (selectedKBPlugin) session.preferredKBPlugin = selectedKBPlugin;
+    if (selectedGoalSolverPlugin) session.preferredGoalSolverPlugin = selectedGoalSolverPlugin;
     const now = new Date();
     session.lastActivityAt = now.toISOString();
     session.expiresAt = new Date(now.getTime() + this.ttlMinutes * 60000).toISOString();
@@ -235,6 +288,10 @@ export class ConversationHandler {
       session_context_unit_count: s.sessionContextUnits.length,
       processing_mode: s.preferredProcessingMode,
       retrieval_profile: s.preferredRetrievalProfile,
+      planner_plugin: s.preferredPlannerPlugin,
+      seed_detector_plugin: s.preferredSeedDetectorPlugin,
+      kb_plugin: s.preferredKBPlugin,
+      goal_solver_plugin: s.preferredGoalSolverPlugin,
       model: s.preferredModel,
       kb_id: s.mountedKbId,
       kb_name: s.mountedKbName,

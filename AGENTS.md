@@ -3,12 +3,17 @@
 ## About This Project
 
 MRP-VM (Meta-Rational-Pragmatics Virtual Machine) is
-a Node.js system that processes natural language requests
-through intent decomposition, CNL (Controlled Natural
-Language) normalization, Knowledge Base retrieval, and
-answer synthesis. It uses external plugins for
-specialized interpretation (Z3, custom code, etc.)
-and communicates with LLMs exclusively through
+a Node.js system organized as a lightweight plugin
+kernel. The core manages sessions, budgets, and
+generic orchestration. Most behavior is implemented
+through typed plugins:
+
+- `sd-plugin` — seed detectors
+- `kb-plugin` — context retrievers / KB backends
+- `gs-plugin` — goal solvers
+- `mrp-plan-plugin` — meta-rational planners
+
+It communicates with LLMs exclusively through
 AchillesAgentLib.
 
 ## Language Policy
@@ -16,7 +21,8 @@ AchillesAgentLib.
 All documentation, code, comments, and Markdown files
 MUST be written in English. Temporary review files
 (e.g. `*.review.md`) may be in any language.
-Agent conversations may use Romanian or other languages.
+Agent conversations may use Romanian or other
+languages.
 
 ---
 
@@ -24,139 +30,113 @@ Agent conversations may use Romanian or other languages.
 
 | DS | File | Role |
 |----|------|------|
-| DS001 | [DS001-general-architecture.md](docs/specs/DS001-general-architecture.md) | General architecture: components, data flow, cross-cutting conventions (error model, logging, security, testing, NFRs), directory structure. |
-| DS002 | [DS002-mrp-vm-core.md](docs/specs/DS002-mrp-vm-core.md) | Central VM engine: session-scoped pipeline orchestration, boot sequence, operational budget, explicit failure handling. |
+| DS001 | [DS001-general-architecture.md](docs/specs/DS001-general-architecture.md) | General architecture: plugin-kernel model, data flow, cross-cutting conventions, and configuration surface. |
+| DS002 | [DS002-mrp-vm-core.md](docs/specs/DS002-mrp-vm-core.md) | Lightweight VM kernel: session-scoped orchestration, plugin-stage execution, budgets, and tracing. |
+| DS003 | [DS003-plugin-system.md](docs/specs/DS003-plugin-system.md) | Typed plugin runtime: discovery, registration, execution context, security, and source-text propagation. |
+| DS027 | [DS027-plugin-types.md](docs/specs/DS027-plugin-types.md) | Rigorous interfaces for `sd-plugin`, `kb-plugin`, `gs-plugin`, and `mrp-plan-plugin`. |
+| DS029 | [DS029-mrp-plan-plugins.md](docs/specs/DS029-mrp-plan-plugins.md) | Planner plugins: execution-order planning, logging, learning, and adaptive escalation. |
 
 ## Plugin System & External Interpreters
 
 | DS | File | Role |
 |----|------|------|
-| DS003 | [DS003-plugin-system.md](docs/specs/DS003-plugin-system.md) | Plugin system: discovery, dispatch rules, conflict resolution, canonical PluginOutput, security. |
-| DS016 | [DS016-wrapper-convention.md](docs/specs/DS016-wrapper-convention.md) | Wrapper convention: manifest.json, protocol I/O v1, format input/output exact, exit codes. |
+| DS016 | [DS016-wrapper-convention.md](docs/specs/DS016-wrapper-convention.md) | Wrapper convention for external plugin processes and manifest-driven execution. |
 
 ## CNL (Controlled Natural Language)
 
 | DS | File | Role |
 |----|------|------|
-| DS004 | [DS004-intent-cnl.md](docs/specs/DS004-intent-cnl.md) | Intent CNL: format with explicit Act field, pragmatic acts enum, canonical act→roles mapping, parsing rules and edge cases. |
-| DS005 | [DS005-context-cnl.md](docs/specs/DS005-context-cnl.md) | Context CNL: format with provenance (sourceId, chunkId), structured UtilityActs, deterministic ID schema, roles enum. |
-| DS007 | [DS007-cnl-validator-parser.md](docs/specs/DS007-cnl-validator-parser.md) | Validator & symbolic parser: structural validation separated from parsing, standardized error codes, enum verification. |
+| DS004 | [DS004-intent-cnl.md](docs/specs/DS004-intent-cnl.md) | Intent CNL schema. |
+| DS005 | [DS005-context-cnl.md](docs/specs/DS005-context-cnl.md) | Context CNL schema. |
+| DS007 | [DS007-cnl-validator-parser.md](docs/specs/DS007-cnl-validator-parser.md) | Validator and parser for the shared CNL formats. |
 
 ## NL ↔ CNL Normalization
 
 | DS | File | Role |
 |----|------|------|
-| DS006 | [DS006-nl-normalizer.md](docs/specs/DS006-nl-normalizer.md) | Normalizer: NL→Intent CNL (with Act), NL→Context CNL, CNL→NL. Input limits, English-only v1. |
+| DS006 | [DS006-nl-normalizer.md](docs/specs/DS006-nl-normalizer.md) | Shared normalizer helpers used by seed detectors and KB ingest flows. |
 
 ## Intent Processing
 
 | DS | File | Role |
 |----|------|------|
-| DS011 | [DS011-intent-decomposition.md](docs/specs/DS011-intent-decomposition.md) | Intent decomposition: DecomposedIntent extraction, ContextProfile derivation, reference to canonical mapping in DS004. |
+| DS011 | [DS011-intent-decomposition.md](docs/specs/DS011-intent-decomposition.md) | Symbolic decomposition and context-profile derivation used by plugins and core helpers. |
 
 ## Knowledge Base
 
 | DS | File | Role |
 |----|------|------|
-| DS008 | [DS008-knowledge-base.md](docs/specs/DS008-knowledge-base.md) | KB: 3 file types, CRUD with atomic writes, per-source metadata, dirty/ready status, configurable limits. |
-| DS009 | [DS009-kb-indexing-retrieval.md](docs/specs/DS009-kb-indexing-retrieval.md) | Internal BM25 indexing: complete indexed fields schema, English tokenization with hyphen/possessives rules, vendored stemming, scoring formula. |
-| DS010 | [DS010-kb-persistence.md](docs/specs/DS010-kb-persistence.md) | File+memory persistence: atomic writes, boot validation, quarantine for invalid files, indexData format with schemaVersion. |
-| DS018 | [DS018-source-ingestion-chunking.md](docs/specs/DS018-source-ingestion-chunking.md) | Ingest & Chunking: NL document segmentation, semantic chunking on Markdown structure, source→chunk→unit mapping, idempotency. |
+| DS008 | [DS008-knowledge-base.md](docs/specs/DS008-knowledge-base.md) | KB substrate, semantic units, derived memories, and repository/workspace semantics. |
+| DS009 | [DS009-kb-indexing-retrieval.md](docs/specs/DS009-kb-indexing-retrieval.md) | BM25 lexical backend reused by KB plugins. |
+| DS010 | [DS010-kb-persistence.md](docs/specs/DS010-kb-persistence.md) | Persistence for KB data plus plugin-private artifacts. |
+| DS018 | [DS018-source-ingestion-chunking.md](docs/specs/DS018-source-ingestion-chunking.md) | Semantic-unit extraction and source ingest. |
+| DS026 | [DS026-kb-repositories-workspaces.md](docs/specs/DS026-kb-repositories-workspaces.md) | KB repositories and session workspaces. |
 
 ## Retrieval & Matching
 
 | DS | File | Role |
 |----|------|------|
-| DS012 | [DS012-retrieval-context-matching.md](docs/specs/DS012-retrieval-context-matching.md) | Intent CNL ↔ Context CNL matching: retrieval pipeline, deduplication, context aggregation with provenance, plugin handoff. |
+| DS012 | [DS012-retrieval-context-matching.md](docs/specs/DS012-retrieval-context-matching.md) | Resolved-intent assembly and evidence bundling across KB plugins. |
+| DS023 | [DS023-retrieval-strategies.md](docs/specs/DS023-retrieval-strategies.md) | KB plugin family and goal-conditioned retrieval principles. |
+| DS024 | [DS024-hdc-vsa-retrieval.md](docs/specs/DS024-hdc-vsa-retrieval.md) | HDC/VSA backend used by `kb-balanced` or similar plugins. |
+| DS025 | [DS025-thinkingdb-symbolic-retrieval.md](docs/specs/DS025-thinkingdb-symbolic-retrieval.md) | ThinkingDB backend used by `kb-thinkingdb` or future symbolic KB plugins. |
 
-## Retrieval Strategies
-
-| DS | File | Role |
-|----|------|------|
-| DS023 | [DS023-retrieval-strategies.md](docs/specs/DS023-retrieval-strategies.md) | Retrieval strategy interface: pluggable lexical, semantic, HDC/VSA, and symbolic relevance filters, plus risk profiles and fusion rules. |
-| DS024 | [DS024-hdc-vsa-retrieval.md](docs/specs/DS024-hdc-vsa-retrieval.md) | HDC/VSA associative retrieval: binary hypervectors, per-field structural matching, n-gram encoding, complementary to BM25. |
-| DS025 | [DS025-thinkingdb-symbolic-retrieval.md](docs/specs/DS025-thinkingdb-symbolic-retrieval.md) | ThinkingDB symbolic retrieval: bounded local closure over Context CNL symbolic facts, proof-bearing ranking, and a future `thinkingdb` profile replacing `wide-recall`. |
-| DS026 | [DS026-kb-repositories-workspaces.md](docs/specs/DS026-kb-repositories-workspaces.md) | KB repositories and session workspaces: mounted KB selection, draft overlays, explicit save/fork semantics, and UI/API clarity for persistent versus unsaved knowledge. |
-
-## Answer Synthesis
+## Goal Formation & Solving
 
 | DS | File | Role |
 |----|------|------|
-| DS017 | [DS017-answer-synthesis.md](docs/specs/DS017-answer-synthesis.md) | Answer synthesis: structured Markdown output, grounding policy, plugin output integration, explicit no-context rendering, LLM budget. |
+| DS017 | [DS017-answer-synthesis.md](docs/specs/DS017-answer-synthesis.md) | Final answer semantics consumed by goal solver plugins. |
+| DS022 | [DS022-processing-strategies.md](docs/specs/DS022-processing-strategies.md) | Seed detector and goal solver plugin families, replacing monolithic processing modes. |
 
-## Server & Interface
+## Server, Settings & Interface
 
 | DS | File | Role |
 |----|------|------|
-| DS013 | [DS013-server-api.md](docs/specs/DS013-server-api.md) | Native HTTP server: OpenAI-shaped minimal API, KB CRUD endpoints, model discovery, retrieval-profile discovery, error payloads, health/readiness, HTTP status codes. |
-| DS014 | [DS014-chat-ui.md](docs/specs/DS014-chat-ui.md) | Static chat page: text file attachment, ingest feedback, session-aware chat, model selector, processing-mode selector, retrieval-profile selector. |
+| DS013 | [DS013-server-api.md](docs/specs/DS013-server-api.md) | API surface for chat, typed plugin selection, plugin catalogs, and settings. |
+| DS014 | [DS014-chat-ui.md](docs/specs/DS014-chat-ui.md) | Static chat UI with plugin selectors and settings page/panel. |
+| DS028 | [DS028-llm-role-settings.md](docs/specs/DS028-llm-role-settings.md) | Shared role-based LLM settings visible to all plugins. |
 
 ## Conversation
 
 | DS | File | Role |
 |----|------|------|
-| DS019 | [DS019-conversation-state.md](docs/specs/DS019-conversation-state.md) | Conversation management: session-centric turns, temporary session KB, systemPrompt propagation, TTL, processing-mode and retrieval-profile preferences. |
+| DS019 | [DS019-conversation-state.md](docs/specs/DS019-conversation-state.md) | Session-centric state, plugin preferences, and workspace visibility. |
 
 ## Testing & Evaluation
 
 | DS | File | Role |
 |----|------|------|
-| DS020 | [DS020-integration-testing.md](docs/specs/DS020-integration-testing.md) | Integration testing: code-level contract verification across server, core, KB, plugins, and session flow, without LLM mocks. |
-| DS021 | [DS021-evaluation.md](docs/specs/DS021-evaluation.md) | Evaluation: NL input/output behavior assessment, expected Markdown properties, strategy-aware quality metrics. |
+| DS020 | [DS020-integration-testing.md](docs/specs/DS020-integration-testing.md) | Integration testing across typed plugins, kernel, KB, and sessions. |
+| DS021 | [DS021-evaluation.md](docs/specs/DS021-evaluation.md) | Evaluation matrix for planner behavior, plugin combinations, and grounded outputs. |
 
 ## LLM Integration
 
 | DS | File | Role |
 |----|------|------|
-| DS015 | [DS015-llmagent-integration.md](docs/specs/DS015-llmagent-integration.md) | AchillesAgentLib integration: single local adapter for LLM-backed strategies, deterministic fast-model selection, model discovery, retry and logging. |
-
-## Processing Strategies
-
-| DS | File | Role |
-|----|------|------|
-| DS022 | [DS022-processing-strategies.md](docs/specs/DS022-processing-strategies.md) | Processing strategy interface: pluggable `llm-assisted` and `symbolic-only` backends for normalization, session context extraction, persistent context extraction, and synthesis. |
+| DS015 | [DS015-llmagent-integration.md](docs/specs/DS015-llmagent-integration.md) | AchillesAgentLib integration, model discovery, retries, and role-based model resolution. |
 
 ---
 
 ## Dependency Diagram
 
-```
-DS013 (Server) ──→ DS002 (Core)
-  │                  │
-  │                  ├→ DS019 (Conversation)
-  │                  │
-  │                  ├→ DS022 (Strategies)
-  │                  │    └→ DS015 (LLM backend, when needed)
-  │                  │
-  │                  ├→ DS006 (Normalizer)
-  │                  │    ├→ DS022 (active backend)
-  │                  │    └→ DS007 (Validator)
-  │                  │         ├→ DS004 (Intent CNL)
-  │                  │         └→ DS005 (Context CNL)
-  │                  │
-  │                  ├→ DS011 (Decomposition)
-  │                  │    └→ DS004 (canonical mapping)
-  │                  │
-  │                  ├→ DS012 (Retrieval)
-  │                  │    ├→ DS009 (Indexing/BM25)
-  │                  │    ├→ DS023 (retrieval strategies)
-  │                  │    ├→ DS025 (ThinkingDB symbolic closure)
-  │                  │    └→ DS004 (canonical mapping)
-  │                  │
-  │                  ├→ DS017 (Answer Synthesis)
-  │                  │    └→ DS022 (active backend)
-  │                  │
-  │                  └→ DS003 (Plugins)
-  │                       └→ DS016 (Wrapper Conv.)
-  │
-  ├→ DS008 (KB)
-  │    ├→ DS018 (Ingest/Chunking)
-  │    │    └→ DS006 (Normalizer)
-  │    ├→ DS009 (Indexing)
-  │    └→ DS010 (Persistence)
-  │         └→ DS007 (Validator, at boot)
-  │
-  ├→ DS014 (Chat UI)
-  ├→ DS020 (Integration Testing)
-  └→ DS021 (Evaluation)
+```text
+DS013 / DS014
+      |
+      v
+DS002 Core Kernel
+      |
+      +--> DS019 Conversation
+      +--> DS003 Typed Plugin System
+      |      +--> DS027 Plugin Type Contracts
+      |      +--> DS029 Planner Plugins
+      |      +--> DS028 LLM Role Settings
+      |
+      +--> DS006 / DS007 / DS011 shared helpers
+      +--> DS008 / DS010 / DS018 / DS026 KB substrate
+      +--> DS015 Achilles bridge
+      |
+      +--> DS022 sd/gs plugin families
+      +--> DS023 kb-plugin family
+             +--> DS024 HDC/VSA backend
+             +--> DS025 ThinkingDB backend
 ```

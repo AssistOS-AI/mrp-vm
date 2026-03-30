@@ -1,6 +1,7 @@
 // DS014 — Chat UI logic
 (function() {
   const $ = s => document.querySelector(s);
+  const $$ = s => [...document.querySelectorAll(s)];
   const messagesEl = $('#messages');
   const input = $('#user-input');
   const form = $('#chat-form');
@@ -9,9 +10,14 @@
   const badge = $('#session-badge');
   const kbBadge = $('#kb-badge');
   const workspaceBadge = $('#workspace-badge');
-  const modeSelect = $('#mode-select');
-  const profileSelect = $('#profile-select');
-  const modelSelect = $('#model-select');
+  const plannerSelect = $('#planner-select');
+  const seedSelect = $('#seed-select');
+  const kbPluginSelect = $('#kb-plugin-select');
+  const goalSelect = $('#goal-select');
+  const settingsPanel = $('#settings-panel');
+  const settingsToggle = $('#settings-toggle');
+  const saveSettingsBtn = $('#save-settings-btn');
+  const roleSelects = $$('#settings-panel select[data-role]');
   const kbSelect = $('#kb-select');
   const fileInput = $('#file-input');
   const loadKbBtn = $('#load-kb-btn');
@@ -21,25 +27,31 @@
   let sessionId = null;
   let workspaceState = null;
 
-  function esc(s) {
-    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function esc(value) {
+    return (value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
   function savePrefs() {
-    localStorage.setItem('mrp_mode', modeSelect.value);
-    localStorage.setItem('mrp_profile', profileSelect.value);
-    localStorage.setItem('mrp_model', modelSelect.value);
+    localStorage.setItem('mrp_planner', plannerSelect.value);
+    localStorage.setItem('mrp_seed', seedSelect.value);
+    localStorage.setItem('mrp_kb_plugin', kbPluginSelect.value);
+    localStorage.setItem('mrp_goal', goalSelect.value);
     localStorage.setItem('mrp_kb', kbSelect.value);
   }
 
   function loadPrefs() {
-    const mode = localStorage.getItem('mrp_mode');
-    const profile = localStorage.getItem('mrp_profile');
-    const model = localStorage.getItem('mrp_model');
+    const planner = localStorage.getItem('mrp_planner');
+    const seed = localStorage.getItem('mrp_seed');
+    const kbPlugin = localStorage.getItem('mrp_kb_plugin');
+    const goal = localStorage.getItem('mrp_goal');
     const kb = localStorage.getItem('mrp_kb');
-    if (mode) modeSelect.value = mode;
-    if (profile) profileSelect.value = profile;
-    if (model) modelSelect.value = model;
+    if (planner) plannerSelect.value = planner;
+    if (seed) seedSelect.value = seed;
+    if (kbPlugin) kbPluginSelect.value = kbPlugin;
+    if (goal) goalSelect.value = goal;
     if (kb && [...kbSelect.options].some(option => option.value === kb)) kbSelect.value = kb;
   }
 
@@ -93,7 +105,7 @@
     let html = '<table><colgroup><col class="col-act"><col class="col-intent"><col class="col-context"><col class="col-answer"></colgroup>';
     html += '<thead><tr><th>Act</th><th>Intent</th><th>Context</th><th>Answer</th></tr></thead><tbody>';
     for (const group of doc.groups) {
-      const answer = group.answerMarkdown ? renderMarkdown(group.answerMarkdown) : '<em>—</em>';
+      const answer = group.answerMarkdown ? renderMarkdown(group.answerMarkdown) : '<em>-</em>';
       html += '<tr>';
       html += `<td class="cell-act">${esc(group.act)}<br><span class="${statusClass(group.status)}">${group.status}</span></td>`;
       html += `<td>${esc(group.intent)}</td>`;
@@ -119,10 +131,6 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  function updateModelState() {
-    modelSelect.disabled = modeSelect.value === 'symbolic-only';
-  }
-
   function updateBadges() {
     badge.textContent = sessionId ? `Session: ${sessionId}` : 'No session';
     const kbName = workspaceState?.kbName || kbSelect.options[kbSelect.selectedIndex]?.textContent || 'none';
@@ -134,6 +142,11 @@
     const draftState = workspaceState?.dirty ? 'unsaved' : 'saved';
     const sourceCount = workspaceState?.sourceCount || 0;
     workspaceBadge.textContent = `Draft: ${draftState} (${sourceCount} sources)`;
+  }
+
+  function optionHtml(items, withAuto = true) {
+    const prefix = withAuto ? '<option value="">auto</option>' : '';
+    return prefix + items.map(item => `<option value="${item.id}">${esc(item.id)}</option>`).join('');
   }
 
   function applySessionMeta(meta) {
@@ -152,11 +165,19 @@
     updateBadges();
   }
 
+  function buildRequestConfig(body) {
+    if (plannerSelect.value) body.planner_plugin = plannerSelect.value;
+    if (seedSelect.value) body.seed_detector_plugin = seedSelect.value;
+    if (kbPluginSelect.value) body.kb_plugin = kbPluginSelect.value;
+    if (goalSelect.value) body.goal_solver_plugin = goalSelect.value;
+    if (kbSelect.value) body.kb_id = kbSelect.value;
+  }
+
   async function loadKbList(selectedKbId = null) {
     const data = await fetchJson('/kbs');
     const current = selectedKbId || kbSelect.value || localStorage.getItem('mrp_kb') || '';
     kbSelect.innerHTML = (data.kbs || []).map(kb => {
-      const label = kb.isDefault ? `${kb.name} (${kb.kbId})` : `${kb.name} (${kb.kbId})`;
+      const label = `${kb.name} (${kb.kbId})`;
       return `<option value="${kb.kbId}">${esc(label)}</option>`;
     }).join('');
     if (current && [...kbSelect.options].some(option => option.value === current)) kbSelect.value = current;
@@ -221,12 +242,8 @@
       await refreshSessionState();
       return sessionId;
     }
-    const body = {
-      processing_mode: modeSelect.value,
-      retrieval_profile: profileSelect.value,
-      kb_id: kbSelect.value || undefined
-    };
-    if (modelSelect.value && modeSelect.value !== 'symbolic-only') body.model = modelSelect.value;
+    const body = {};
+    buildRequestConfig(body);
     const data = await fetchJson('/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -238,19 +255,55 @@
     return sessionId;
   }
 
+  function populateRoleSelects(settings) {
+    const models = settings.availableModels || [];
+    const modelOptions = '<option value="">auto</option>' + models.map(model => (
+      `<option value="${model.id}">${esc(model.id)}</option>`
+    )).join('');
+    for (const select of roleSelects) {
+      const role = select.dataset.role;
+      select.innerHTML = modelOptions;
+      const assigned = settings.roles?.[role]?.model || '';
+      select.value = assigned;
+    }
+  }
+
+  async function saveRoleSettings() {
+    const roles = {};
+    for (const select of roleSelects) {
+      roles[select.dataset.role] = { model: select.value || '' };
+    }
+    showLoading('Saving settings...');
+    try {
+      const data = await fetchJson('/settings/llm-roles', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roles })
+      });
+      hideLoading();
+      if (data.error) throw new Error(data.error.message || 'Failed to save settings');
+      populateRoleSelects(data);
+      addMessage('assistant', 'Saved shared LLM role settings.');
+    } catch (error) {
+      hideLoading();
+      showError(error.message);
+    }
+  }
+
   async function loadConfig() {
     try {
-      const [strategies, profiles, models] = await Promise.all([
-        fetchJson('/processing-strategies'),
-        fetchJson('/retrieval-profiles'),
-        fetchJson('/models')
+      const [plugins, settings] = await Promise.all([
+        fetchJson('/plugins'),
+        fetchJson('/settings/llm-roles')
       ]);
-      modeSelect.innerHTML = (strategies.strategies || []).map(strategy => `<option value="${strategy.id}">${strategy.id}</option>`).join('');
-      profileSelect.innerHTML = (profiles.profiles || []).map(profile => `<option value="${profile.id}">${profile.id}</option>`).join('');
-      modelSelect.innerHTML = '<option value="">auto</option>' + (models.models || []).map(model => `<option value="${model.id}">${model.id}</option>`).join('');
+      const list = plugins.plugins || [];
+      plannerSelect.innerHTML = optionHtml(list.filter(plugin => plugin.type === 'mrp-plan-plugin'));
+      seedSelect.innerHTML = optionHtml(list.filter(plugin => plugin.type === 'sd-plugin'));
+      kbPluginSelect.innerHTML = optionHtml(list.filter(plugin => plugin.type === 'kb-plugin'));
+      goalSelect.innerHTML = optionHtml(list.filter(plugin => plugin.type === 'gs-plugin'));
+      populateRoleSelects(settings);
       await loadKbList();
       loadPrefs();
-      updateModelState();
       updateBadges();
     } catch (error) {
       showError(error.message || 'Failed to load UI configuration');
@@ -260,12 +313,12 @@
   async function sendMessage(text) {
     showLoading('Processing...');
     errorBar.classList.add('hidden');
-    const body = { messages: [{ role: 'user', content: text }], stream: false };
+    const body = {
+      messages: [{ role: 'user', content: text }],
+      stream: false
+    };
     if (sessionId) body.session_id = sessionId;
-    else if (kbSelect.value) body.kb_id = kbSelect.value;
-    if (modeSelect.value) body.processing_mode = modeSelect.value;
-    if (profileSelect.value) body.retrieval_profile = profileSelect.value;
-    if (modelSelect.value && modeSelect.value !== 'symbolic-only') body.model = modelSelect.value;
+    buildRequestConfig(body);
     try {
       const data = await fetchJson('/chat/completions', {
         method: 'POST',
@@ -382,14 +435,15 @@
     }
     showLoading('Staging file in draft...');
     try {
+      const body = {
+        name: file.name,
+        content
+      };
+      if (seedSelect.value) body.seed_detector_plugin = seedSelect.value;
       const data = await fetchJson(`/sessions/${sessionId}/workspace/sources`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: file.name,
-          content,
-          processing_mode: modeSelect.value
-        })
+        body: JSON.stringify(body)
       });
       hideLoading();
       if (data.error) throw new Error(data.error.message || 'Failed to stage file');
@@ -401,12 +455,10 @@
     }
   }
 
-  modeSelect.addEventListener('change', () => {
-    updateModelState();
-    savePrefs();
-  });
-  profileSelect.addEventListener('change', savePrefs);
-  modelSelect.addEventListener('change', savePrefs);
+  plannerSelect.addEventListener('change', savePrefs);
+  seedSelect.addEventListener('change', savePrefs);
+  kbPluginSelect.addEventListener('change', savePrefs);
+  goalSelect.addEventListener('change', savePrefs);
   kbSelect.addEventListener('change', savePrefs);
 
   form.addEventListener('submit', async event => {
@@ -426,13 +478,18 @@
   });
 
   $('#reset-config').addEventListener('click', () => {
-    localStorage.removeItem('mrp_mode');
-    localStorage.removeItem('mrp_profile');
-    localStorage.removeItem('mrp_model');
+    localStorage.removeItem('mrp_planner');
+    localStorage.removeItem('mrp_seed');
+    localStorage.removeItem('mrp_kb_plugin');
+    localStorage.removeItem('mrp_goal');
     localStorage.removeItem('mrp_kb');
     loadConfig();
   });
 
+  settingsToggle.addEventListener('click', () => {
+    settingsPanel.classList.toggle('hidden');
+  });
+  saveSettingsBtn.addEventListener('click', () => saveRoleSettings());
   loadKbBtn.addEventListener('click', () => mountSelectedKb());
   forkKbBtn.addEventListener('click', () => forkCurrentKb());
   saveKbBtn.addEventListener('click', () => saveCurrentKb());

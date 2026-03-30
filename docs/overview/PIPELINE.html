@@ -43,7 +43,7 @@ Output: Comparative recommendation.</code></pre>
   <li><strong>BM25</strong> — exact lexical matching with per-field weighting</li>
   <li><strong>HDC/VSA</strong> — structural pattern matching with 4096-bit hypervectors</li>
 </ul>
-<p>The active <a href="../concepts/retrieval-algorithms.html">retrieval profile</a> determines which strategies run and how results are fused. The active recommended profiles are <code>fast</code> and <code>balanced</code>; <code>wide-recall</code> is obsolete compatibility coverage and <code>thinkingdb</code> is the planned symbolic successor. See <a href="../concepts/retrieval-algorithms.html">Retrieval Algorithms</a> for formulas and details.</p>
+<p>The active <a href="../concepts/retrieval-algorithms.html">KB plugin</a> determines which strategies run and how results are fused. The built-in defaults are <code>kb-fast</code>, <code>kb-balanced</code>, and <code>kb-thinkingdb</code>. See <a href="../concepts/retrieval-algorithms.html">Retrieval Algorithms</a> for formulas and details.</p>
 
 <h3>Phase 4: Regulated Execution (Plugins)</h3>
 <p>If an intent matches a plugin's capabilities, the plugin is spawned as a separate process. It receives the resolved evidence on stdin and returns a result on stdout in CNL format. See <a href="../architecture/plugin-guide.html">Plugin Development Guide</a>.</p>

@@ -1,7 +1,7 @@
 {
   "suiteId": "suite03",
   "title": "ThinkingDB — Bounded Symbolic Closure",
-  "description": "Evaluates the thinkingdb profile on explicit multi-hop symbolic facts using symbolic-only ingest.",
+  "description": "Evaluates the ThinkingDB compatibility path on explicit multi-hop symbolic facts using symbolic-only ingest.",
   "storyFile": "story.nl",
   "ingestProcessingMode": "symbolic-only",
   "modes": ["symbolic-only"],
