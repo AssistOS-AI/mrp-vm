@@ -5,6 +5,9 @@ import { CNLValidator, CNLParser } from '../../src/parser/cnl-validator-parser.m
 import { IntentDecomposer } from '../../src/intent/decomposer.mjs';
 import { tokenize } from '../../src/retrieval/tokenizer.mjs';
 import { KBIndex } from '../../src/retrieval/kb-index.mjs';
+import { TypedPluginRegistry } from '../../src/plugins/typed-registry.mjs';
+import { DefaultPlannerPlugin } from '../../src/plugins/default-planner.mjs';
+import { MRPEngine } from '../../src/core/engine.mjs';
 
 // ── Validator ──
 
@@ -201,5 +204,915 @@ describe('KBIndex', () => {
     idx2.loadFromIndexData(data, [{ id: 'u1', role: 'Definition', topic: 'test', claim: 'test claim', utilityActs: ['define'], hash: 'h1' }]);
     assert.equal(idx2.getStats().totalUnits, 1);
     assert.ok(idx2.search('test').length > 0);
+  });
+});
+
+describe('TypedPluginRegistry', () => {
+  it('rejects unsupported plugin types', () => {
+    const registry = new TypedPluginRegistry();
+    assert.throws(
+      () => registry.register({
+        getDescriptor() {
+          return { id: 'banana-1', type: 'banana' };
+        }
+      }),
+      error => error.code === 'PLUGIN_REGISTRY_UNSUPPORTED_TYPE'
+    );
+  });
+});
+
+describe('DefaultPlannerPlugin', () => {
+  it('uses depth cues to prefer heavier plugins first', async () => {
+    const planner = new DefaultPlannerPlugin(null, { rank: ids => ids }, {});
+    const plan = await planner.buildPlan({
+      currentMessage: 'Provide a deep multi-hop step-by-step analysis of the trade-offs.',
+      explicitSelections: {},
+      sessionPreferences: {},
+      historyForPrompt: []
+    });
+    assert.equal(plan.seedDetectorOrder[0], 'sd-llm-deep');
+    assert.equal(plan.kbPluginOrder[0], 'kb-thinkingdb');
+    assert.equal(plan.goalSolverOrder[0], 'gs-llm-deep');
+    assert.ok(plan.notes.includes('depth-signals'));
+  });
+
+  it('discovers dynamically registered plugins and can route to them via planner hints', async () => {
+    const registry = {
+      listByType(type) {
+        if (type !== 'kb-plugin') return [];
+        return [
+          { id: 'kb-fast' },
+          { id: 'kb-balanced' },
+          { id: 'kb-thinkingdb' },
+          { id: 'kb-legal' }
+        ];
+      },
+      get(type, id) {
+        if (type !== 'kb-plugin') return null;
+        const descriptors = {
+          'kb-fast': {
+            id: 'kb-fast',
+            type: 'kb-plugin',
+            costClass: 'cheap',
+            plannerHints: {
+              supportedActs: ['define', 'identify'],
+              topicTags: ['technical'],
+              preferredDepth: 'shallow',
+              evidenceStyle: ['lexical'],
+              fallbackRole: 'cheap-probe',
+              relativeCost: 0.05,
+              expectedLatencyMs: 40,
+              expectedLLMCalls: 0,
+              confidenceWhenMatched: 0.6
+            }
+          },
+          'kb-balanced': { id: 'kb-balanced', type: 'kb-plugin', costClass: 'moderate', plannerHints: {} },
+          'kb-thinkingdb': { id: 'kb-thinkingdb', type: 'kb-plugin', costClass: 'expensive', plannerHints: {} },
+          'kb-legal': {
+            id: 'kb-legal',
+            type: 'kb-plugin',
+            costClass: 'moderate',
+            plannerHints: {
+              supportedActs: ['verify', 'compare', 'explain'],
+              topicTags: ['legal'],
+              preferredDepth: 'deep',
+              evidenceStyle: ['hybrid', 'symbolic-facts'],
+              fallbackRole: 'default',
+              relativeCost: 0.22,
+              expectedLatencyMs: 110,
+              expectedLLMCalls: 0,
+              confidenceWhenMatched: 0.88
+            }
+          }
+        };
+        return {
+          getDescriptor() {
+            return descriptors[id];
+          }
+        };
+      }
+    };
+    const planner = new DefaultPlannerPlugin(registry, { getUtility: () => 0.6 }, {});
+    const plan = await planner.buildPlan({
+      currentMessage: 'Verify the compliance obligations in this contract with a careful analysis.',
+      explicitSelections: {},
+      sessionPreferences: {},
+      historyForPrompt: []
+    });
+    assert.equal(plan.kbPluginOrder[0], 'kb-legal');
+    assert.ok(plan.kbPluginOrder.includes('kb-legal'));
+  });
+});
+
+describe('MRPEngine', () => {
+  it('skips an LLM plugin when its reserved budget exceeds the remaining budget', async () => {
+    let detectCalls = 0;
+    let recordedOutcome = null;
+    const planner = {
+      getDescriptor() {
+        return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+      },
+      async buildPlan() {
+        return {
+          plannerPluginId: 'planner-default',
+          seedDetectorOrder: ['sd-llm-deep'],
+          kbPluginOrder: [],
+          goalSolverOrder: [],
+          notes: []
+        };
+      },
+      async recordOutcome(outcome) {
+        recordedOutcome = outcome;
+      }
+    };
+    const registry = {
+      listByType(type) {
+        return type === 'mrp-plan-plugin' ? [{ id: 'planner-default' }] : [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin' && id === 'planner-default') return planner;
+        if (type === 'sd-plugin' && id === 'sd-llm-deep') {
+          return {
+            getDescriptor() {
+              return {
+                id: 'sd-llm-deep',
+                type: 'sd-plugin',
+                maxLLMCalls: 2,
+                modelRoles: ['seed-deep']
+              };
+            },
+            async detectSeeds() {
+              detectCalls += 1;
+              return {
+                status: 'success',
+                intentCNL: '## Intent Group 1\nAct: explain\nIntent: X\nOutput: Y',
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 2, model: 'test-deep' },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: { sessionId: 'sess-test', preferredModel: null },
+          currentMessage: 'Explain this.',
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedPlannerPlugin: null,
+          requestedSeedDetectorPlugin: null,
+          requestedKBPlugin: null,
+          requestedGoalSolverPlugin: null
+        };
+      },
+      commitSuccessfulTurn() {}
+    };
+    const engine = new MRPEngine(
+      {
+        maxLLMAttemptsPerRequest: 1,
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        defaultPlannerPlugin: 'planner-default'
+      },
+      registry,
+      conversationHandler,
+      {},
+      {},
+      { selectPlugin() { return null; } },
+      {},
+      null
+    );
+
+    await assert.rejects(
+      () => engine.processChatTurn({ messages: [{ role: 'user', content: 'Explain this.' }] }),
+      error => error.code === 'PLUGIN_STAGE_EXHAUSTED'
+    );
+
+    assert.equal(detectCalls, 0);
+    assert.ok(recordedOutcome);
+    assert.equal(recordedOutcome.stages[0].status, 'skipped-budget');
+    assert.equal(recordedOutcome.stages[0].modelRole, 'seed-deep');
+  });
+
+  it('falls back to a second planner when the first planner exhausts its plan', async () => {
+    const planners = {
+      'planner-default': {
+        getDescriptor() {
+          return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+        },
+        async buildPlan() {
+          return {
+            plannerPluginId: 'planner-default',
+            seedDetectorOrder: ['sd-missing'],
+            kbPluginOrder: ['kb-fast'],
+            goalSolverOrder: ['gs-symbolic'],
+            notes: []
+          };
+        },
+        async recordOutcome() {}
+      },
+      'planner-depth': {
+        getDescriptor() {
+          return { id: 'planner-depth', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+        },
+        async buildPlan() {
+          return {
+            plannerPluginId: 'planner-depth',
+            seedDetectorOrder: ['sd-symbolic'],
+            kbPluginOrder: ['kb-fast'],
+            goalSolverOrder: ['gs-symbolic'],
+            notes: []
+          };
+        },
+        async recordOutcome() {}
+      }
+    };
+    const registry = {
+      listByType(type) {
+        return type === 'mrp-plan-plugin'
+          ? [{ id: 'planner-default' }, { id: 'planner-depth' }]
+          : [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin') return planners[id] || null;
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              return {
+                status: 'success',
+                intentCNL: '## Intent Group 1\nAct: explain\nIntent: Explain X.\nOutput: Y.',
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve() {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: [{
+                  intentRef: 1,
+                  intentGroup: { groupNumber: 1, act: 'explain', intent: 'Explain X.', output: 'Y.' },
+                  decomposed: { groupNumber: 1, act: 'explain', intent: 'Explain X.', outputType: 'Y.' },
+                  currentTurnContextUnits: [],
+                  sessionUnits: [],
+                  kbUnits: [{
+                    unitId: 'u1',
+                    score: 1,
+                    unit: { sourceId: 'src-1', role: 'Explanation', claim: 'X is caused by Y.' }
+                  }],
+                  retrievalTrace: {},
+                  resolvedMarkdown: '## Resolved Intent Group 1'
+                }],
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-symbolic', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              return {
+                status: 'success',
+                responseMarkdown: '# Answer',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    let committedPlannerId = null;
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: 'planner-default',
+            preferredSeedDetectorPlugin: 'sd-symbolic',
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-symbolic'
+          },
+          currentMessage: 'Explain X.',
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedPlannerPlugin: null,
+          requestedSeedDetectorPlugin: null,
+          requestedKBPlugin: null,
+          requestedGoalSolverPlugin: null
+        };
+      },
+      commitSuccessfulTurn(_session, _message, _markdown, _units, _model, plannerId) {
+        committedPlannerId = plannerId;
+      }
+    };
+    const engine = new MRPEngine(
+      {
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        defaultPlannerPlugin: 'planner-default',
+        plannerFallbackOrder: ['planner-default', 'planner-depth']
+      },
+      registry,
+      conversationHandler,
+      {
+        parseIntentCNL() {
+          return [{ groupNumber: 1, act: 'explain', intent: 'Explain X.', output: 'Y.' }];
+        },
+        parseContextCNL() {
+          return [];
+        }
+      },
+      {
+        decompose(groups) {
+          return groups.map(group => ({
+            groupNumber: group.groupNumber,
+            act: group.act,
+            intent: group.intent,
+            outputType: group.output
+          }));
+        },
+        deriveContextProfile() {
+          return { neededRoles: ['Explanation'], queryTerms: ['x'], actBoost: 'explain', maxResults: 10 };
+        }
+      },
+      { collectOutputs() { return []; } },
+      {},
+      null
+    );
+
+    const result = await engine.processChatTurn({ messages: [{ role: 'user', content: 'Explain X.' }] });
+    assert.equal(committedPlannerId, 'planner-depth');
+    assert.deepStrictEqual(result.executionTrace.plannerAttempts, ['planner-default', 'planner-depth']);
+    assert.equal(result.executionTrace.plannerPluginId, 'planner-depth');
+    assert.equal(result.executionTrace.stages.every(stage => !!stage.plannerPluginId), true);
+    assert.equal(result.executionTrace.stages[0].plannerPluginId, 'planner-depth');
+  });
+
+  it('ranks planner candidates through the planner stats store when no planner is explicitly pinned', async () => {
+    const plannerCalls = [];
+    const registry = {
+      listByType(type) {
+        return type === 'mrp-plan-plugin'
+          ? [{ id: 'planner-default' }, { id: 'planner-depth' }]
+          : [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin') {
+          return {
+            getDescriptor() {
+              return { id, type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+            },
+            async buildPlan() {
+              plannerCalls.push(id);
+              return {
+                plannerPluginId: id,
+                seedDetectorOrder: ['sd-symbolic'],
+                kbPluginOrder: ['kb-fast'],
+                goalSolverOrder: ['gs-symbolic'],
+                notes: []
+              };
+            },
+            async recordOutcome() {}
+          };
+        }
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              return {
+                status: 'success',
+                intentCNL: '## Intent Group 1\nAct: explain\nIntent: Explain X.\nOutput: Y.',
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve() {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: [{
+                  intentRef: 1,
+                  intentGroup: { groupNumber: 1, act: 'explain', intent: 'Explain X.', output: 'Y.' },
+                  decomposed: { groupNumber: 1, act: 'explain', intent: 'Explain X.', outputType: 'Y.' },
+                  currentTurnContextUnits: [],
+                  sessionUnits: [],
+                  kbUnits: [{
+                    unitId: 'u1',
+                    score: 1,
+                    unit: { sourceId: 'src-1', role: 'Explanation', claim: 'X is caused by Y.' }
+                  }],
+                  retrievalTrace: {},
+                  resolvedMarkdown: '## Resolved Intent Group 1'
+                }],
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-symbolic', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              return {
+                status: 'success',
+                responseMarkdown: '# Answer',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: null,
+            preferredSeedDetectorPlugin: 'sd-symbolic',
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-symbolic'
+          },
+          currentMessage: 'Explain X.',
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedPlannerPlugin: null,
+          requestedSeedDetectorPlugin: null,
+          requestedKBPlugin: null,
+          requestedGoalSolverPlugin: null
+        };
+      },
+      commitSuccessfulTurn() {}
+    };
+    const plannerStatsStore = {
+      rankPlanners(ids) {
+        return ['planner-depth', ...ids.filter(id => id !== 'planner-depth')];
+      }
+    };
+    const engine = new MRPEngine(
+      {
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        defaultPlannerPlugin: 'planner-default',
+        plannerFallbackOrder: ['planner-default', 'planner-depth']
+      },
+      registry,
+      conversationHandler,
+      {
+        parseIntentCNL() {
+          return [{ groupNumber: 1, act: 'explain', intent: 'Explain X.', output: 'Y.' }];
+        },
+        parseContextCNL() {
+          return [];
+        }
+      },
+      {
+        decompose(groups) {
+          return groups.map(group => ({
+            groupNumber: group.groupNumber,
+            act: group.act,
+            intent: group.intent,
+            outputType: group.output
+          }));
+        },
+        deriveContextProfile() {
+          return { neededRoles: ['Explanation'], queryTerms: ['x'], actBoost: 'explain', maxResults: 10 };
+        }
+      },
+      { collectOutputs() { return []; } },
+      {},
+      null,
+      plannerStatsStore
+    );
+
+    const result = await engine.processChatTurn({ messages: [{ role: 'user', content: 'Explain X.' }] });
+    assert.equal(plannerCalls[0], 'planner-depth');
+    assert.equal(result.executionTrace.plannerPluginId, 'planner-depth');
+    assert.equal(result.executionTrace.stages[0].plannerPluginId, 'planner-depth');
+  });
+
+  it('continues to the next goal solver when the first one returns no-context', async () => {
+    const goalCalls = [];
+    const registry = {
+      listByType(type) {
+        return type === 'mrp-plan-plugin' ? [{ id: 'planner-default' }] : [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin' && id === 'planner-default') {
+          return {
+            getDescriptor() {
+              return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+            },
+            async buildPlan() {
+              return {
+                plannerPluginId: 'planner-default',
+                seedDetectorOrder: ['sd-symbolic'],
+                kbPluginOrder: ['kb-fast'],
+                goalSolverOrder: ['gs-symbolic', 'gs-llm-fast'],
+                notes: []
+              };
+            },
+            async recordOutcome() {}
+          };
+        }
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              return {
+                status: 'success',
+                intentCNL: '## Intent Group 1\nAct: explain\nIntent: Explain X.\nOutput: Y.',
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve() {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: [{
+                  intentRef: 1,
+                  intentGroup: { groupNumber: 1, act: 'explain', intent: 'Explain X.', output: 'Y.' },
+                  decomposed: { groupNumber: 1, act: 'explain', intent: 'Explain X.', outputType: 'Y.' },
+                  currentTurnContextUnits: [],
+                  sessionUnits: [],
+                  kbUnits: [],
+                  retrievalTrace: {},
+                  resolvedMarkdown: '## Resolved Intent Group 1'
+                }],
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-symbolic', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              goalCalls.push('gs-symbolic');
+              return {
+                status: 'no-context',
+                responseMarkdown: '# No Context',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-llm-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-llm-fast', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: ['goal-fast'] };
+            },
+            async solve() {
+              goalCalls.push('gs-llm-fast');
+              return {
+                status: 'success',
+                responseMarkdown: '# Final Answer',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: 'goal-fast-model' },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: 'planner-default',
+            preferredSeedDetectorPlugin: 'sd-symbolic',
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-symbolic'
+          },
+          currentMessage: 'Explain X.',
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedPlannerPlugin: null,
+          requestedSeedDetectorPlugin: null,
+          requestedKBPlugin: null,
+          requestedGoalSolverPlugin: null
+        };
+      },
+      commitSuccessfulTurn() {}
+    };
+    const engine = new MRPEngine(
+      {
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        defaultPlannerPlugin: 'planner-default'
+      },
+      registry,
+      conversationHandler,
+      {
+        parseIntentCNL() {
+          return [{ groupNumber: 1, act: 'explain', intent: 'Explain X.', output: 'Y.' }];
+        },
+        parseContextCNL() {
+          return [];
+        }
+      },
+      {
+        decompose(groups) {
+          return groups.map(group => ({
+            groupNumber: group.groupNumber,
+            act: group.act,
+            intent: group.intent,
+            outputType: group.output
+          }));
+        },
+        deriveContextProfile() {
+          return { neededRoles: [], queryTerms: ['x'], actBoost: 'explain', maxResults: 10 };
+        }
+      },
+      { collectOutputs() { return []; } },
+      {},
+      null
+    );
+
+    const result = await engine.processChatTurn({ messages: [{ role: 'user', content: 'Explain X.' }] });
+    assert.deepStrictEqual(goalCalls, ['gs-symbolic', 'gs-llm-fast']);
+    assert.equal(result.responseMarkdown, '# Final Answer');
+    assert.equal(result.executionTrace.finalAnswerStatus, 'answered');
+  });
+
+  it('falls back to a heavier planner when the first planner yields only no-context after insufficient retrieval', async () => {
+    let committedPlannerId = null;
+    const registry = {
+      listByType(type) {
+        return type === 'mrp-plan-plugin'
+          ? [{ id: 'planner-default' }, { id: 'planner-depth' }]
+          : [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin' && id === 'planner-default') {
+          return {
+            getDescriptor() {
+              return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+            },
+            async buildPlan() {
+              return {
+                plannerPluginId: 'planner-default',
+                seedDetectorOrder: ['sd-symbolic'],
+                kbPluginOrder: ['kb-fast'],
+                goalSolverOrder: ['gs-symbolic'],
+                notes: []
+              };
+            },
+            async recordOutcome() {}
+          };
+        }
+        if (type === 'mrp-plan-plugin' && id === 'planner-depth') {
+          return {
+            getDescriptor() {
+              return { id: 'planner-depth', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+            },
+            async buildPlan() {
+              return {
+                plannerPluginId: 'planner-depth',
+                seedDetectorOrder: ['sd-symbolic'],
+                kbPluginOrder: ['kb-thinkingdb'],
+                goalSolverOrder: ['gs-llm-fast'],
+                notes: []
+              };
+            },
+            async recordOutcome() {}
+          };
+        }
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              return {
+                status: 'success',
+                intentCNL: '## Intent Group 1\nAct: explain\nIntent: Explain X.\nOutput: Y.',
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve() {
+              return {
+                status: 'insufficient',
+                sufficient: false,
+                resolvedIntents: [{
+                  intentRef: 1,
+                  intentGroup: { groupNumber: 1, act: 'explain', intent: 'Explain X.', output: 'Y.' },
+                  decomposed: { groupNumber: 1, act: 'explain', intent: 'Explain X.', outputType: 'Y.' },
+                  currentTurnContextUnits: [],
+                  sessionUnits: [],
+                  kbUnits: [],
+                  retrievalTrace: {},
+                  resolvedMarkdown: '## Resolved Intent Group 1'
+                }],
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-thinkingdb') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-thinkingdb', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve() {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: [{
+                  intentRef: 1,
+                  intentGroup: { groupNumber: 1, act: 'explain', intent: 'Explain X.', output: 'Y.' },
+                  decomposed: { groupNumber: 1, act: 'explain', intent: 'Explain X.', outputType: 'Y.' },
+                  currentTurnContextUnits: [],
+                  sessionUnits: [],
+                  kbUnits: [{
+                    unitId: 'u1',
+                    score: 1,
+                    unit: { sourceId: 'src-1', role: 'Explanation', claim: 'X is caused by Y.' }
+                  }],
+                  retrievalTrace: {},
+                  resolvedMarkdown: '## Resolved Intent Group 1'
+                }],
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-symbolic', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              return {
+                status: 'no-context',
+                responseMarkdown: '# No Context',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-llm-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-llm-fast', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: ['goal-fast'] };
+            },
+            async solve() {
+              return {
+                status: 'success',
+                responseMarkdown: '# Deep Answer',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: 'goal-fast-model' },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: 'planner-default',
+            preferredSeedDetectorPlugin: 'sd-symbolic',
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-symbolic'
+          },
+          currentMessage: 'Explain X carefully.',
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedPlannerPlugin: null,
+          requestedSeedDetectorPlugin: null,
+          requestedKBPlugin: null,
+          requestedGoalSolverPlugin: null
+        };
+      },
+      commitSuccessfulTurn(_session, _message, _markdown, _units, _model, plannerId) {
+        committedPlannerId = plannerId;
+      }
+    };
+
+    const engine = new MRPEngine(
+      {
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        defaultPlannerPlugin: 'planner-default',
+        plannerFallbackOrder: ['planner-default', 'planner-depth']
+      },
+      registry,
+      conversationHandler,
+      {
+        parseIntentCNL() {
+          return [{ groupNumber: 1, act: 'explain', intent: 'Explain X.', output: 'Y.' }];
+        },
+        parseContextCNL() {
+          return [];
+        }
+      },
+      {
+        decompose(groups) {
+          return groups.map(group => ({
+            groupNumber: group.groupNumber,
+            act: group.act,
+            intent: group.intent,
+            outputType: group.output
+          }));
+        },
+        deriveContextProfile() {
+          return { neededRoles: ['Explanation'], queryTerms: ['x'], actBoost: 'explain', maxResults: 10 };
+        }
+      },
+      { collectOutputs() { return []; } },
+      {},
+      null
+    );
+
+    const result = await engine.processChatTurn({ messages: [{ role: 'user', content: 'Explain X carefully.' }] });
+    assert.equal(committedPlannerId, 'planner-depth');
+    assert.deepStrictEqual(result.executionTrace.plannerAttempts, ['planner-default', 'planner-depth']);
+    assert.equal(result.executionTrace.plannerPluginId, 'planner-depth');
+    assert.equal(result.executionTrace.finalAnswerStatus, 'answered');
   });
 });

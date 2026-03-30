@@ -4,8 +4,16 @@
   "description": "Evaluates the ThinkingDB compatibility path on explicit multi-hop symbolic facts using symbolic-only ingest.",
   "storyFile": "story.nl",
   "ingestProcessingMode": "symbolic-only",
-  "modes": ["symbolic-only"],
-  "profiles": ["thinkingdb"],
+  "ingestSeedDetectorPlugin": "sd-symbolic",
+  "pluginCombos": [
+    {
+      "label": "symbolic-thinkingdb",
+      "plannerPlugin": "planner-default",
+      "seedDetectorPlugin": "sd-symbolic",
+      "kbPlugin": "kb-thinkingdb",
+      "goalSolverPlugin": "gs-symbolic"
+    }
+  ],
   "questions": [
     {
       "id": "s03-q01",

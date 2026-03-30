@@ -36,7 +36,11 @@ export const CONTEXT_REQUIRED_FIELDS = ['SourceId', 'ChunkId', 'Role', 'Topic'];
 export const CONTEXT_ALLOWED_FIELDS = [
   'SourceId', 'ChunkId', 'Role', 'Topic', 'Claim',
   'Condition', 'Procedure', 'UtilityActs', 'UtilityNote',
-  'Hash', 'Subject', 'Relation', 'Object', 'Confidence'
+  'Hash', 'Subject', 'Relation', 'Object', 'Confidence',
+  'SourceName', 'ChunkIndex', 'UnitIndex', 'UnitType',
+  'TextBody', 'ParentUnitIds', 'ChildUnitIds',
+  'DerivedFromUnitIds', 'CharStart', 'CharEnd',
+  'CreatedAt', 'ChunkType', 'SectionTitle'
 ];
 
 export { SYMBOLIC_RELATIONS };

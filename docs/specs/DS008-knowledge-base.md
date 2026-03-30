@@ -21,20 +21,44 @@ The KB stores:
 
 ## Unit Registry
 
-Every retrievable unit MUST have:
+The current persisted v1 unit shape is:
 
 ```javascript
 {
   id,
   sourceId,
+  sourceName,
+  chunkId,
+  chunkIndex,
+  unitIndex,
   unitType,
   textBody,
-  provenance,
-  parentUnitIds: [],
-  childUnitIds: [],
-  derivedFromUnitIds: []
+  role,
+  topic,
+  claim,
+  condition,
+  procedure,
+  utilityActs,
+  utilityNote,
+  hash,
+  subject,
+  relation,
+  object,
+  confidence,
+  parentUnitIds,
+  childUnitIds,
+  derivedFromUnitIds,
+  charStart,
+  charEnd,
+  createdAt,
+  chunkType,
+  sectionTitle
 }
 ```
+
+Not every unit source can populate every field, but
+this is the baseline persisted shape for KB-derived
+semantic units.
 
 ## KB vs Plugins
 
@@ -53,11 +77,17 @@ KB plugins own:
 
 ## Required Relations
 
-The KB MUST preserve at least:
+The current baseline preserves:
 
 - where a unit came from
-- what smaller units it contains or depends on
-- what larger units it belongs to
+- which chunk it came from
+- its source-level identity and hash
+- optional structural hints such as chunk type,
+  section title, and empty-or-populated lineage lists
+
+Richer cross-unit hierarchies are still incremental
+work, but the persisted schema now carries lineage
+slots instead of omitting them entirely.
 
 ## Dependencies
 

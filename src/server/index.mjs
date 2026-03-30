@@ -105,7 +105,17 @@ async function boot() {
       normalizer,
       {
         description: 'Deterministic symbolic seed detector.',
-        costClass: 'cheap'
+        costClass: 'cheap',
+        plannerHints: {
+          expectedLatencyMs: 30,
+          expectedLLMCalls: 0,
+          relativeCost: 0.05,
+          supportedActs: ['verify', 'define', 'identify', 'describe', 'explain'],
+          topicTags: ['symbolic', 'technical'],
+          preferredDepth: 'shallow',
+          fallbackRole: 'cheap-probe',
+          confidenceWhenMatched: 0.82
+        }
       }
     ));
   }
@@ -118,7 +128,17 @@ async function boot() {
         description: 'LLM-backed seed detector using the fast seed role.',
         costClass: 'moderate',
         modelRole: 'seed-fast',
-        ingestModelRole: 'kb-ingest'
+        ingestModelRole: 'kb-ingest',
+        plannerHints: {
+          expectedLatencyMs: 800,
+          expectedLLMCalls: 2,
+          relativeCost: 0.35,
+          supportedActs: ['compare', 'define', 'explain', 'identify', 'recommend', 'verify'],
+          topicTags: ['general', 'technical', 'literature'],
+          preferredDepth: 'medium',
+          fallbackRole: 'default',
+          confidenceWhenMatched: 0.72
+        }
       }
     ));
     typedPluginRegistry.register(new StrategySeedDetectorPlugin(
@@ -129,7 +149,17 @@ async function boot() {
         description: 'LLM-backed seed detector using the deep seed role.',
         costClass: 'expensive',
         modelRole: 'seed-deep',
-        ingestModelRole: 'kb-ingest'
+        ingestModelRole: 'kb-ingest',
+        plannerHints: {
+          expectedLatencyMs: 1800,
+          expectedLLMCalls: 4,
+          relativeCost: 0.75,
+          supportedActs: ['compare', 'diagnose', 'explain', 'recommend', 'verify'],
+          topicTags: ['general', 'technical', 'legal', 'literature'],
+          preferredDepth: 'deep',
+          fallbackRole: 'heavy-recovery',
+          confidenceWhenMatched: 0.8
+        }
       }
     ));
   }
@@ -139,7 +169,18 @@ async function boot() {
     'fast',
     {
       description: 'Cheap lexical-first KB plugin.',
-      costClass: 'cheap'
+      costClass: 'cheap',
+      plannerHints: {
+        expectedLatencyMs: 50,
+        expectedLLMCalls: 0,
+        relativeCost: 0.08,
+        supportedActs: ['define', 'identify', 'describe', 'explain'],
+        topicTags: ['technical', 'procedural'],
+        preferredDepth: 'shallow',
+        evidenceStyle: ['lexical'],
+        fallbackRole: 'cheap-probe',
+        confidenceWhenMatched: 0.7
+      }
     }
   ));
   typedPluginRegistry.register(new RetrievalKBPlugin(
@@ -148,7 +189,18 @@ async function boot() {
     'balanced',
     {
       description: 'Balanced lexical + associative KB plugin.',
-      costClass: 'moderate'
+      costClass: 'moderate',
+      plannerHints: {
+        expectedLatencyMs: 120,
+        expectedLLMCalls: 0,
+        relativeCost: 0.22,
+        supportedActs: ['compare', 'define', 'describe', 'explain', 'identify', 'recommend'],
+        topicTags: ['technical', 'legal', 'literature', 'procedural'],
+        preferredDepth: 'medium',
+        evidenceStyle: ['lexical', 'hybrid'],
+        fallbackRole: 'default',
+        confidenceWhenMatched: 0.76
+      }
     }
   ));
   typedPluginRegistry.register(new RetrievalKBPlugin(
@@ -157,7 +209,18 @@ async function boot() {
     'thinkingdb',
     {
       description: 'Symbolic ThinkingDB KB plugin.',
-      costClass: 'expensive'
+      costClass: 'expensive',
+      plannerHints: {
+        expectedLatencyMs: 220,
+        expectedLLMCalls: 0,
+        relativeCost: 0.35,
+        supportedActs: ['compare', 'diagnose', 'explain', 'recommend', 'verify'],
+        topicTags: ['symbolic', 'technical', 'legal'],
+        preferredDepth: 'deep',
+        evidenceStyle: ['hybrid', 'symbolic-facts'],
+        fallbackRole: 'heavy-recovery',
+        confidenceWhenMatched: 0.84
+      }
     }
   ));
   if (symbolicStrategy) {
@@ -167,7 +230,17 @@ async function boot() {
       synthesizer,
       {
         description: 'Deterministic symbolic goal solver.',
-        costClass: 'cheap'
+        costClass: 'cheap',
+        plannerHints: {
+          expectedLatencyMs: 25,
+          expectedLLMCalls: 0,
+          relativeCost: 0.05,
+          supportedActs: ['verify', 'define', 'identify', 'describe', 'explain'],
+          topicTags: ['symbolic', 'technical', 'procedural'],
+          preferredDepth: 'shallow',
+          fallbackRole: 'cheap-probe',
+          confidenceWhenMatched: 0.78
+        }
       }
     ));
   }
@@ -179,7 +252,17 @@ async function boot() {
       {
         description: 'LLM-backed goal solver using the fast goal role.',
         costClass: 'moderate',
-        modelRole: 'goal-fast'
+        modelRole: 'goal-fast',
+        plannerHints: {
+          expectedLatencyMs: 900,
+          expectedLLMCalls: 1,
+          relativeCost: 0.4,
+          supportedActs: ['compare', 'define', 'describe', 'diagnose', 'explain', 'identify', 'recommend'],
+          topicTags: ['general', 'technical', 'literature', 'legal'],
+          preferredDepth: 'medium',
+          fallbackRole: 'default',
+          confidenceWhenMatched: 0.74
+        }
       }
     ));
     typedPluginRegistry.register(new StrategyGoalSolverPlugin(
@@ -189,7 +272,17 @@ async function boot() {
       {
         description: 'LLM-backed goal solver using the deep goal role.',
         costClass: 'expensive',
-        modelRole: 'goal-deep'
+        modelRole: 'goal-deep',
+        plannerHints: {
+          expectedLatencyMs: 2200,
+          expectedLLMCalls: 1,
+          relativeCost: 0.78,
+          supportedActs: ['compare', 'diagnose', 'explain', 'recommend', 'verify'],
+          topicTags: ['general', 'technical', 'literature', 'legal', 'symbolic'],
+          preferredDepth: 'deep',
+          fallbackRole: 'heavy-recovery',
+          confidenceWhenMatched: 0.82
+        }
       }
     ));
   }
@@ -198,12 +291,24 @@ async function boot() {
     plannerStats,
     pluginsConfig
   ));
+  typedPluginRegistry.register(new DefaultPlannerPlugin(
+    typedPluginRegistry,
+    plannerStats,
+    {
+      ...pluginsConfig,
+      id: 'planner-depth',
+      name: 'Depth Planner',
+      description: 'Heavy-first fallback planner for multi-hop or recovery paths.',
+      plannerStyle: 'deep-first'
+    }
+  ));
 
   // Build engine
   const engine = new MRPEngine(
     {
       ...engineConfig,
       defaultPlannerPlugin: pluginsConfig.defaultPlannerPlugin || 'planner-default',
+      plannerFallbackOrder: pluginsConfig.plannerFallbackOrder || ['planner-default', 'planner-depth'],
       maxPluginsPerStage: pluginsConfig.maxPluginsPerStage || engineConfig.maxPluginsPerStage || 4
     },
     typedPluginRegistry,
@@ -212,7 +317,8 @@ async function boot() {
     decomposer,
     pluginManager,
     llmRoleSettings,
-    kbIndex
+    kbIndex,
+    plannerStats
   );
 
   // 9. Mark readiness
@@ -225,8 +331,6 @@ async function boot() {
     kbRepositoryManager,
     conversationHandler,
     llmBridge,
-    strategyRegistry,
-    retrievalStrategyRegistry,
     typedPluginRegistry,
     llmRoleSettings,
     serverConfig

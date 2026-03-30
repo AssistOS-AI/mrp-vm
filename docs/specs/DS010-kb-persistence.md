@@ -20,12 +20,24 @@ Each KB plugin MAY persist artifacts under a
 plugin-scoped subtree, for example:
 
 ```text
-data/kb/plugins/<pluginId>/
 data/workspaces/<sessionId>/plugins/<pluginId>/
+data/kb/plugins/<pluginId>/
 ```
 
 Shared KB persistence MUST keep plugin-private
 artifacts isolated by plugin ID.
+
+Current baseline status:
+
+- workspace-scoped plugin artifact paths are actively
+  used during source staging and draft work
+- if no workspace artifact store is available during a
+  source-text hook, the plugin may return `skipped`
+  rather than fabricating an ad-hoc path
+- on save/fork, workspace plugin artifacts are
+  promoted into the target repository plugin subtree
+- on mount, repository plugin artifacts are hydrated
+  back into the session workspace
 
 ## Atomicity
 

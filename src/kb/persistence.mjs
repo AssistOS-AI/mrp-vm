@@ -14,6 +14,12 @@ function atomicWrite(filePath, content) {
   renameSync(tmp, filePath);
 }
 
+function pluginDir(baseDir, pluginId) {
+  const dir = join(baseDir, 'plugins', pluginId);
+  ensureDir(dir);
+  return dir;
+}
+
 function clearDir(dir) {
   if (!existsSync(dir)) return;
   for (const entry of readdirSync(dir)) {
@@ -150,15 +156,40 @@ export class FileMemoryPersistence {
     clearDir(this.paths.index);
   }
 
+  getPluginArtifactDir(pluginId) {
+    return pluginDir(resolve(this.paths.sources, '..'), pluginId);
+  }
+
+  async savePluginArtifact(pluginId, artifactName, payload) {
+    const dir = this.getPluginArtifactDir(pluginId);
+    const filePath = join(dir, artifactName);
+    const content = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+    atomicWrite(filePath, content);
+    return filePath;
+  }
+
   _unitToMarkdown(u) {
     let md = `## Context Unit ${u.id}\n`;
     md += `SourceId: ${u.sourceId}\n`;
+    if (u.sourceName) md += `SourceName: ${u.sourceName}\n`;
     md += `ChunkId: ${u.chunkId}\n`;
+    if (u.chunkIndex !== null && u.chunkIndex !== undefined) md += `ChunkIndex: ${u.chunkIndex}\n`;
+    if (u.unitIndex !== null && u.unitIndex !== undefined) md += `UnitIndex: ${u.unitIndex}\n`;
+    if (u.unitType) md += `UnitType: ${u.unitType}\n`;
+    if (u.textBody) md += `TextBody: ${u.textBody}\n`;
     md += `Role: ${u.role}\n`;
     md += `Topic: ${u.topic}\n`;
     if (u.claim) md += `Claim: ${u.claim}\n`;
     if (u.condition) md += `Condition: ${u.condition}\n`;
     if (u.procedure) md += `Procedure: ${u.procedure}\n`;
+    if (u.parentUnitIds?.length) md += `ParentUnitIds: ${u.parentUnitIds.join(', ')}\n`;
+    if (u.childUnitIds?.length) md += `ChildUnitIds: ${u.childUnitIds.join(', ')}\n`;
+    if (u.derivedFromUnitIds?.length) md += `DerivedFromUnitIds: ${u.derivedFromUnitIds.join(', ')}\n`;
+    if (u.charStart !== null && u.charStart !== undefined) md += `CharStart: ${u.charStart}\n`;
+    if (u.charEnd !== null && u.charEnd !== undefined) md += `CharEnd: ${u.charEnd}\n`;
+    if (u.createdAt) md += `CreatedAt: ${u.createdAt}\n`;
+    if (u.chunkType) md += `ChunkType: ${u.chunkType}\n`;
+    if (u.sectionTitle) md += `SectionTitle: ${u.sectionTitle}\n`;
     if (u.subject) md += `Subject: ${u.subject}\n`;
     if (u.relation) md += `Relation: ${u.relation}\n`;
     if (u.object) md += `Object: ${u.object}\n`;

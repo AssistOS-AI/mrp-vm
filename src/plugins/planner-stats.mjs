@@ -18,11 +18,15 @@ export class PlannerStatsStore {
 
   _load() {
     ensureParent(this.filePath);
-    if (!existsSync(this.filePath)) return { plugins: {} };
+    if (!existsSync(this.filePath)) return { planners: {}, plugins: {} };
     try {
-      return JSON.parse(readFileSync(this.filePath, 'utf-8'));
+      const raw = JSON.parse(readFileSync(this.filePath, 'utf-8'));
+      return {
+        planners: raw.planners || {},
+        plugins: raw.plugins || {}
+      };
     } catch {
-      return { plugins: {} };
+      return { planners: {}, plugins: {} };
     }
   }
 
@@ -47,8 +51,23 @@ export class PlannerStatsStore {
     return this.state.plugins[pluginId];
   }
 
+  _getPlanner(plannerId) {
+    if (!this.state.planners[plannerId]) {
+      this.state.planners[plannerId] = {
+        attempts: 0,
+        successes: 0,
+        noContext: 0,
+        failures: 0,
+        successEWMA: 0.7,
+        noContextEWMA: 0.1,
+        latencyMsEWMA: 400
+      };
+    }
+    return this.state.planners[plannerId];
+  }
+
   recordStage(stage) {
-    if (!stage?.pluginId) return;
+    if (!stage?.pluginId || stage.status === 'skipped-budget') return;
     const stats = this._get(stage.pluginId);
     const success = stage.status === 'success' ? 1 : 0;
     const sufficient = stage.sufficient === false ? 0 : 1;
@@ -64,7 +83,23 @@ export class PlannerStatsStore {
   }
 
   recordOutcome(outcome) {
+    if (outcome?.plannerPluginId) this.recordPlannerOutcome(outcome.plannerPluginId, outcome);
     for (const stage of outcome?.stages || []) this.recordStage(stage);
+  }
+
+  recordPlannerOutcome(plannerId, outcome) {
+    const stats = this._getPlanner(plannerId);
+    const success = outcome?.finalStatus === 'success' ? 1 : 0;
+    const noContext = outcome?.finalAnswerStatus === 'no-context' ? 1 : 0;
+    const latency = (outcome?.stages || []).reduce((sum, stage) => sum + (stage.durationMs || 0), 0);
+    stats.attempts += 1;
+    if (success) stats.successes += 1;
+    else stats.failures += 1;
+    if (noContext) stats.noContext += 1;
+    stats.successEWMA = this.alpha * success + (1 - this.alpha) * stats.successEWMA;
+    stats.noContextEWMA = this.alpha * noContext + (1 - this.alpha) * stats.noContextEWMA;
+    stats.latencyMsEWMA = this.alpha * latency + (1 - this.alpha) * stats.latencyMsEWMA;
+    this._persist();
   }
 
   getUtility(pluginId) {
@@ -76,5 +111,16 @@ export class PlannerStatsStore {
 
   rank(pluginIds = []) {
     return [...pluginIds].sort((a, b) => this.getUtility(b) - this.getUtility(a) || a.localeCompare(b));
+  }
+
+  getPlannerUtility(plannerId) {
+    const stats = this._getPlanner(plannerId);
+    const latencyPenalty = clamp(stats.latencyMsEWMA / 8000, 0, 0.4);
+    const noContextPenalty = clamp(stats.noContextEWMA * 0.25, 0, 0.25);
+    return stats.successEWMA - latencyPenalty - noContextPenalty;
+  }
+
+  rankPlanners(plannerIds = []) {
+    return [...plannerIds].sort((a, b) => this.getPlannerUtility(b) - this.getPlannerUtility(a) || a.localeCompare(b));
   }
 }

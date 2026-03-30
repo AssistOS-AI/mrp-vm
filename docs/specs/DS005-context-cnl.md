@@ -30,6 +30,19 @@ Confidence: <0..1 confidence for symbolic fact, optional>
 UtilityActs: <list of pragmatic acts served>
 UtilityNote: <optional free-text explanation>
 Hash: <optional deterministic content hash>
+SourceName: <optional source file name>
+ChunkIndex: <optional numeric chunk index>
+UnitIndex: <optional numeric unit index within chunk>
+UnitType: <optional semantic unit kind>
+TextBody: <optional normalized body text>
+ParentUnitIds: <optional CSV of related parent unit IDs>
+ChildUnitIds: <optional CSV of related child unit IDs>
+DerivedFromUnitIds: <optional CSV of source/derived unit IDs>
+CharStart: <optional start offset in source text>
+CharEnd: <optional end offset in source text>
+CreatedAt: <optional unit creation timestamp>
+ChunkType: <optional chunk kind emitted by ingest>
+SectionTitle: <optional enclosing section title>
 ```
 
 ## Fields
@@ -62,6 +75,13 @@ present, all three MUST be present.
 
 ***`Confidence` MAY appear only together with a
 complete symbolic fact block.
+
+Additional optional provenance and lineage fields may
+also appear on persisted KB-derived units:
+`SourceName`, `ChunkIndex`, `UnitIndex`, `UnitType`,
+`TextBody`, `ParentUnitIds`, `ChildUnitIds`,
+`DerivedFromUnitIds`, `CharStart`, `CharEnd`,
+`CreatedAt`, `ChunkType`, and `SectionTitle`.
 
 ## ID Schema
 
@@ -125,9 +145,24 @@ When present, the symbolic fields capture a
 canonical triple derived from the unit claim or
 procedure-free assertion.
 
-## Full Provenance
+## Provenance
 
-Each ContextUnit stores internally:
+The current baseline persists a minimal provenance
+surface directly on each unit:
+
+```javascript
+{
+  id: "src-001::chunk-002::unit-000",
+  sourceId: "src-001",
+  chunkId: "src-001::chunk-002",
+  hash: "<sha256 of claim+role+topic>"
+}
+```
+
+The design also reserves a richer provenance shape
+that the current ingest pipeline now tries to persist
+for KB-derived units when that information is
+available:
 
 ```javascript
 {
@@ -143,6 +178,10 @@ Each ContextUnit stores internally:
   hash: "<sha256 of claim+role+topic>"
 }
 ```
+
+Those extended fields are expected for KB-ingested
+units, but session/current-turn units may still carry
+only the minimal provenance subset.
 
 ## Parsing Rules and Edge Cases
 

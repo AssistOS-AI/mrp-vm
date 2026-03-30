@@ -28,7 +28,9 @@ wrappers/<plugin-name>/
 
 ```json
 {
+  "id": "<plugin-id>",
   "name": "<plugin-name>",
+  "type": "gs-plugin",
   "version": "<semver>",
   "protocolVersion": 1,
   "capabilities": ["<capability-1>"],
@@ -42,6 +44,18 @@ wrappers/<plugin-name>/
   "description": "<short description>"
 }
 ```
+
+Rules:
+
+- `id` is preferred; legacy wrappers may provide only
+  `name`
+- `type` is optional in legacy wrappers
+- when `type` is absent, the current baseline treats
+  the wrapper as a helper-oriented `gs-plugin`
+  manifest for compatibility
+- wrappers are currently discovered by the external
+  `PluginManager` helper path, not inserted into the
+  planner-visible typed plugin registry
 
 ## Protocol I/O
 

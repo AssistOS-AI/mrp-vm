@@ -15,7 +15,8 @@ export class SourceIngestor {
 
   chunk(rawText, filename) {
     const isMarkdown = filename?.endsWith('.md');
-    return isMarkdown ? this._chunkMarkdown(rawText) : this._chunkPlainText(rawText);
+    const chunks = isMarkdown ? this._chunkMarkdown(rawText) : this._chunkPlainText(rawText);
+    return this._annotateOffsets(rawText, chunks);
   }
 
   _chunkMarkdown(text) {
@@ -39,15 +40,23 @@ export class SourceIngestor {
     for (const sec of sections) {
       const prefix = sec.heading ? sec.heading + '\n' : '';
       if (sec.text.length <= this.maxChunkSize) {
-        chunks.push(prefix + sec.text);
+        chunks.push({
+          text: prefix + sec.text,
+          chunkType: sec.heading ? 'markdown-section' : 'markdown-body',
+          sectionTitle: sec.heading.replace(/^#+\s*/, '') || null
+        });
       } else {
         // Split on paragraphs
         for (const para of this._splitParagraphs(sec.text, prefix)) {
-          chunks.push(para);
+          chunks.push({
+            text: para,
+            chunkType: 'markdown-paragraph',
+            sectionTitle: sec.heading.replace(/^#+\s*/, '') || null
+          });
         }
       }
     }
-    return this._mergeSmall(chunks).map((text, i) => ({ chunkIndex: i, text }));
+    return this._mergeSmall(chunks).map((chunk, i) => ({ chunkIndex: i, ...chunk }));
   }
 
   _chunkPlainText(text) {
@@ -56,17 +65,22 @@ export class SourceIngestor {
     const chunks = [];
     for (const p of paras) {
       if (p.length <= this.maxChunkSize) {
-        chunks.push(p.trim());
+        chunks.push({ text: p.trim(), chunkType: 'paragraph-block', sectionTitle: null });
       } else {
         // Split on sentences
-        for (const s of this._splitSentences(p)) chunks.push(s);
+        for (const s of this._splitSentences(p)) chunks.push({ text: s, chunkType: 'sentence-window', sectionTitle: null });
       }
     }
     if (chunks.length === 0 && text.trim()) {
       // Fallback: fixed-size windows
-      return this._fixedWindows(text).map((t, i) => ({ chunkIndex: i, text: t }));
+      return this._fixedWindows(text).map((t, i) => ({
+        chunkIndex: i,
+        text: t,
+        chunkType: 'fixed-window',
+        sectionTitle: null
+      }));
     }
-    return this._mergeSmall(chunks).map((t, i) => ({ chunkIndex: i, text: t }));
+    return this._mergeSmall(chunks).map((chunk, i) => ({ chunkIndex: i, ...chunk }));
   }
 
   _splitParagraphs(text, prefix) {
@@ -75,9 +89,15 @@ export class SourceIngestor {
     for (const p of paras) {
       const full = prefix + p.trim();
       if (full.length <= this.maxChunkSize) {
-        result.push(full);
+        result.push({ text: full, chunkType: 'markdown-paragraph', sectionTitle: prefix.trim().replace(/^#+\s*/, '') || null });
       } else {
-        for (const s of this._splitSentences(p)) result.push(prefix + s);
+        for (const s of this._splitSentences(p)) {
+          result.push({
+            text: prefix + s,
+            chunkType: 'markdown-sentence-window',
+            sectionTitle: prefix.trim().replace(/^#+\s*/, '') || null
+          });
+        }
       }
     }
     return result;
@@ -112,15 +132,42 @@ export class SourceIngestor {
 
   _mergeSmall(chunks) {
     if (chunks.length <= 1) return chunks;
-    const merged = [chunks[0]];
+    const merged = [{ ...chunks[0] }];
     for (let i = 1; i < chunks.length; i++) {
-      if (merged[merged.length - 1].length < this.minChunkSize) {
-        merged[merged.length - 1] += '\n\n' + chunks[i];
+      if ((merged[merged.length - 1].text || '').length < this.minChunkSize) {
+        merged[merged.length - 1].text += '\n\n' + chunks[i].text;
       } else {
-        merged.push(chunks[i]);
+        merged.push({ ...chunks[i] });
       }
     }
     return merged;
+  }
+
+  _annotateOffsets(rawText, chunks) {
+    let cursor = 0;
+    return chunks.map((chunk, index) => {
+      const text = chunk.text || '';
+      const charStart = text ? rawText.indexOf(text, cursor) : -1;
+      const resolvedStart = charStart >= 0 ? charStart : cursor;
+      const charEnd = resolvedStart + text.length;
+      cursor = Math.max(cursor, charEnd);
+      return {
+        chunkIndex: index,
+        text,
+        chunkType: chunk.chunkType || 'semantic-chunk',
+        sectionTitle: chunk.sectionTitle || null,
+        charStart: resolvedStart,
+        charEnd
+      };
+    });
+  }
+
+  _inferUnitType(unit, chunk) {
+    if (unit.role === 'Procedure') return 'procedure-step';
+    if (unit.role === 'Definition') return 'definition';
+    if (unit.role === 'Comparison') return 'comparison';
+    if (chunk?.chunkType?.startsWith('markdown')) return 'section-unit';
+    return 'semantic-unit';
   }
 
   async ingest(sourceId, rawText, filename, strategy) {
@@ -131,6 +178,7 @@ export class SourceIngestor {
         `Source would produce ${rawChunks.length} chunks, exceeding limit of ${this.maxLLMCallsPerSource}`);
     }
     const allUnits = [];
+    const createdAt = new Date().toISOString();
     for (const chunk of rawChunks) {
       if (Date.now() - startTime > this.ingestTimeoutMs) {
         throw new MRPError('KB_INGEST_TIMEOUT', 'ingest', 'Ingest timeout exceeded');
@@ -138,13 +186,34 @@ export class SourceIngestor {
       const provenance = {
         sourceId,
         chunkId: `${sourceId}::chunk-${String(chunk.chunkIndex).padStart(3, '0')}`,
-        chunkIndex: chunk.chunkIndex
+        sourceName: filename || null,
+        chunkIndex: chunk.chunkIndex,
+        charStart: chunk.charStart,
+        charEnd: chunk.charEnd,
+        chunkType: chunk.chunkType,
+        sectionTitle: chunk.sectionTitle,
+        createdAt
       };
       const contextCNL = await this.normalizer.toContextCNL(chunk.text, provenance, strategy);
       // Parse the CNL to get units
       const { CNLParser } = await import('../parser/cnl-validator-parser.mjs');
       const parser = new CNLParser();
-      const units = parser.parseContextCNL(contextCNL);
+      const units = parser.parseContextCNL(contextCNL).map((unit, unitIndex) => ({
+        ...unit,
+        sourceName: unit.sourceName || filename || null,
+        chunkIndex: unit.chunkIndex ?? chunk.chunkIndex,
+        unitIndex: unit.unitIndex ?? unitIndex,
+        unitType: unit.unitType || this._inferUnitType(unit, chunk),
+        textBody: unit.textBody || unit.claim || unit.procedure || unit.topic || '',
+        parentUnitIds: unit.parentUnitIds || [],
+        childUnitIds: unit.childUnitIds || [],
+        derivedFromUnitIds: unit.derivedFromUnitIds || [],
+        charStart: unit.charStart ?? chunk.charStart,
+        charEnd: unit.charEnd ?? chunk.charEnd,
+        createdAt: unit.createdAt || createdAt,
+        chunkType: unit.chunkType || chunk.chunkType,
+        sectionTitle: unit.sectionTitle || chunk.sectionTitle || null
+      }));
       allUnits.push(...units);
     }
     return {

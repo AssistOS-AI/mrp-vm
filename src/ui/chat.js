@@ -470,6 +470,13 @@
     await sendMessage(text);
   });
 
+  input.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    if (event.ctrlKey) return;
+    event.preventDefault();
+    form.requestSubmit();
+  });
+
   $('#new-session-btn').addEventListener('click', () => {
     sessionId = null;
     workspaceState = null;

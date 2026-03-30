@@ -22,6 +22,19 @@ resolve models through shared named roles.
 Projects MAY add more roles, but the core roles above
 must exist.
 
+Some roles may be reserved by the current baseline
+for future richer plugins. They still belong in the
+shared settings surface so plugins can adopt them
+without changing the API/UI contract.
+
+The current built-in baseline already uses:
+
+- `seed-fast` / `seed-deep` for LLM seed detectors
+- `goal-fast` / `goal-deep` for LLM goal solvers
+- `kb-ingest` for LLM-backed ingest normalization
+- `kb-derive` for KB ingest-side derived artifact
+  planning/metadata resolution
+
 ## Data Model
 
 ```javascript

@@ -97,7 +97,12 @@ Validator error codes:
 {
   id: string,
   sourceId: string,
+  sourceName: string | null,
   chunkId: string,
+  chunkIndex: number | null,
+  unitIndex: number | null,
+  unitType: string | null,
+  textBody: string | null,
   role: string,
   topic: string,
   claim: string | null,
@@ -109,7 +114,15 @@ Validator error codes:
   confidence: number | null,
   utilityActs: string[],
   utilityNote: string | null,
-  hash: string | null
+  hash: string | null,
+  parentUnitIds: string[],
+  childUnitIds: string[],
+  derivedFromUnitIds: string[],
+  charStart: number | null,
+  charEnd: number | null,
+  createdAt: string | null,
+  chunkType: string | null,
+  sectionTitle: string | null
 }
 ```
 
@@ -131,7 +144,7 @@ Validator error codes:
 
 - Heading: `## Context Unit <ID>`.
 - Required fields: SourceId, ChunkId, Role,
-  Topic, UtilityActs.
+  Topic.
 - Allowed fields: SourceId, ChunkId, Role, Topic,
   Claim, Condition, Procedure, Subject, Relation,
   Object, Confidence, UtilityActs, UtilityNote,
@@ -141,7 +154,11 @@ Validator error codes:
 - Claim and Procedure cannot coexist →
   `CLAIM_AND_PROCEDURE_CONFLICT`.
 - Role must be from the DS005 enum.
-- UtilityActs: CSV of acts from the DS004 enum.
+- UtilityActs, when present, is a CSV of acts from
+  the DS004 enum.
+- If UtilityActs is absent, the parser MAY infer a
+  default list from Role using the canonical role→act
+  fallback table in the implementation.
 - `Subject`, `Relation`, and `Object` are optional
   as a single block. Partial symbolic facts are
   rejected with `INCOMPLETE_SYMBOLIC_FACT`.

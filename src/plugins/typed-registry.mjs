@@ -1,5 +1,12 @@
 import { MRPError } from '../lib/errors.mjs';
 
+const SUPPORTED_PLUGIN_TYPES = new Set([
+  'sd-plugin',
+  'kb-plugin',
+  'gs-plugin',
+  'mrp-plan-plugin'
+]);
+
 export class TypedPluginRegistry {
   constructor() {
     this._plugins = new Map();
@@ -16,6 +23,13 @@ export class TypedPluginRegistry {
         'PLUGIN_REGISTRY_INVALID_DESCRIPTOR',
         'plugins',
         'Plugin descriptor must include type and id'
+      );
+    }
+    if (!SUPPORTED_PLUGIN_TYPES.has(descriptor.type)) {
+      throw new MRPError(
+        'PLUGIN_REGISTRY_UNSUPPORTED_TYPE',
+        'plugins',
+        `Unsupported plugin type '${descriptor.type}'`
       );
     }
     this._plugins.set(this._key(descriptor.type, descriptor.id), plugin);

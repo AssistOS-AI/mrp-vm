@@ -126,6 +126,18 @@ export class PluginManager {
     });
   }
 
+  async collectOutputs(resolvedIntents = []) {
+    const outputs = [];
+    for (const resolvedIntent of resolvedIntents) {
+      const manifest = this.selectPlugin(resolvedIntent.intentGroup);
+      if (!manifest) continue;
+      const output = await this.invoke(manifest, resolvedIntent.resolvedMarkdown);
+      output.intentRef = resolvedIntent.intentRef;
+      outputs.push(output);
+    }
+    return outputs;
+  }
+
   _parseOutput(stdout, pluginName) {
     // Parse DS016 output format
     const fields = {};

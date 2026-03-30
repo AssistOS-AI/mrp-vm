@@ -245,10 +245,26 @@ export class CNLParser {
         };
         utilityActs = ROLE_TO_ACTS[role] || ['explain'];
       }
+      const parseCsv = (fieldName) =>
+        (block.fields[fieldName]?.value || '')
+          .split(',')
+          .map(value => value.trim())
+          .filter(Boolean);
+      const parseInteger = (fieldName) => {
+        const raw = block.fields[fieldName]?.value?.trim();
+        if (!raw) return null;
+        const parsed = Number(raw);
+        return Number.isInteger(parsed) ? parsed : null;
+      };
       return {
         id,
         sourceId: block.fields['SourceId']?.value.trim() || '',
+        sourceName: block.fields['SourceName']?.value.trim() || null,
         chunkId: block.fields['ChunkId']?.value.trim() || '',
+        chunkIndex: parseInteger('ChunkIndex'),
+        unitIndex: parseInteger('UnitIndex'),
+        unitType: block.fields['UnitType']?.value.trim() || null,
+        textBody: block.fields['TextBody']?.value.trim() || null,
         role, topic: block.fields['Topic']?.value.trim() || '',
         claim: block.fields['Claim']?.value.trim() || null,
         condition: block.fields['Condition']?.value.trim() || null,
@@ -259,7 +275,15 @@ export class CNLParser {
         subject: block.fields['Subject']?.value.trim() || null,
         relation: block.fields['Relation']?.value.trim() || null,
         object: block.fields['Object']?.value.trim() || null,
-        confidence: block.fields['Confidence'] ? Number(block.fields['Confidence'].value.trim()) : null
+        confidence: block.fields['Confidence'] ? Number(block.fields['Confidence'].value.trim()) : null,
+        parentUnitIds: parseCsv('ParentUnitIds'),
+        childUnitIds: parseCsv('ChildUnitIds'),
+        derivedFromUnitIds: parseCsv('DerivedFromUnitIds'),
+        charStart: parseInteger('CharStart'),
+        charEnd: parseInteger('CharEnd'),
+        createdAt: block.fields['CreatedAt']?.value.trim() || null,
+        chunkType: block.fields['ChunkType']?.value.trim() || null,
+        sectionTitle: block.fields['SectionTitle']?.value.trim() || null
       };
     });
   }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { KnowledgeBase } from './knowledge-base.mjs';
@@ -166,6 +166,36 @@ export class KBRepositoryManager {
 
   removeWorkspace(sessionId) {
     rmSync(this._workspaceRoot(sessionId), { recursive: true, force: true });
+  }
+
+  async saveWorkspacePluginArtifact(sessionId, pluginId, artifactName, payload) {
+    const rootDir = this._workspaceRoot(sessionId);
+    ensureDir(rootDir);
+    const persistence = new FileMemoryPersistence(this._buildWorkspaceConfig(rootDir));
+    return persistence.savePluginArtifact(pluginId, artifactName, payload);
+  }
+
+  async saveRepositoryPluginArtifact(kbId, pluginId, artifactName, payload) {
+    const record = this.getRepository(kbId);
+    return record.kb.persistence.savePluginArtifact(pluginId, artifactName, payload);
+  }
+
+  promoteWorkspacePluginArtifacts(sessionId, kbId) {
+    const workspacePluginsDir = join(this._workspaceRoot(sessionId), 'plugins');
+    const repoPluginsDir = join(this.getRepository(kbId).rootDir, 'plugins');
+    rmSync(repoPluginsDir, { recursive: true, force: true });
+    if (!existsSync(workspacePluginsDir)) return;
+    ensureDir(repoPluginsDir);
+    cpSync(workspacePluginsDir, repoPluginsDir, { recursive: true });
+  }
+
+  hydrateWorkspacePluginArtifacts(sessionId, kbId) {
+    const repoPluginsDir = join(this.getRepository(kbId).rootDir, 'plugins');
+    const workspacePluginsDir = join(this._workspaceRoot(sessionId), 'plugins');
+    rmSync(workspacePluginsDir, { recursive: true, force: true });
+    if (!existsSync(repoPluginsDir)) return;
+    ensureDir(dirname(workspacePluginsDir));
+    cpSync(repoPluginsDir, workspacePluginsDir, { recursive: true });
   }
 
   _generateKbId(name) {

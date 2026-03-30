@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 
 function buildDescriptor(overrides) {
   return {
@@ -14,6 +12,7 @@ function buildDescriptor(overrides) {
     maxLLMCalls: 0,
     provides: [],
     accepts: ['chat-turn'],
+    plannerHints: null,
     ...overrides
   };
 }
@@ -27,6 +26,7 @@ export class StrategySeedDetectorPlugin {
     this.ingestModelRole = options.ingestModelRole || this.modelRole;
     this.description = options.description || '';
     this.costClass = options.costClass || 'cheap';
+    this.plannerHints = options.plannerHints || null;
   }
 
   getDescriptor() {
@@ -39,7 +39,8 @@ export class StrategySeedDetectorPlugin {
       usesLLM: this.strategy.usesLLM(),
       modelRoles: [this.modelRole, this.ingestModelRole].filter(Boolean),
       maxLLMCalls: this.strategy.usesLLM() ? 4 : 0,
-      provides: ['detect-seeds', 'normalize-persistent-context']
+      provides: ['detect-seeds', 'normalize-persistent-context'],
+      plannerHints: this.plannerHints
     });
   }
 
@@ -88,20 +89,50 @@ export class StrategySeedDetectorPlugin {
     }
   }
 
+  async normalizePersistentContext(input, ctx) {
+    const model = ctx.modelSettings.resolveModel({
+      pluginId: this.id,
+      role: this.ingestModelRole,
+      requestedModel: input.requestedModel || null,
+      sessionModel: input.sessionModel || null
+    });
+    try {
+      const result = await this.strategy.normalizePersistentContext({
+        ...input,
+        requestedModel: model
+      });
+      return {
+        status: 'success',
+        contextCNL: result.contextCNL || '',
+        metadata: {
+          llmCalls: this.strategy.usesLLM() ? 1 : 0,
+          model
+        },
+        error: null
+      };
+    } catch (error) {
+      return {
+        status: error.code === 'STRATEGY_UNSUPPORTED_INPUT' ? 'unsupported' : 'error',
+        contextCNL: null,
+        metadata: {
+          llmCalls: this.strategy.usesLLM() ? 1 : 0,
+          model
+        },
+        error: { code: error.code || 'INGEST_PLUGIN_FAILED', message: error.message }
+      };
+    }
+  }
+
   createIngestStrategy(ctx, requestedModel = null, sessionModel = null) {
     return {
       usesLLM: () => this.strategy.usesLLM(),
       normalizePersistentContext: async (input) => {
-        const model = ctx.modelSettings.resolveModel({
-          pluginId: this.id,
-          role: this.ingestModelRole,
+        const result = await this.normalizePersistentContext({
+          ...input,
           requestedModel,
           sessionModel
-        });
-        return this.strategy.normalizePersistentContext({
-          ...input,
-          requestedModel: model
-        });
+        }, ctx);
+        return { contextCNL: result.contextCNL || '' };
       }
     };
   }
@@ -114,6 +145,7 @@ export class RetrievalKBPlugin {
     this.profileId = profileId;
     this.description = options.description || '';
     this.costClass = options.costClass || 'cheap';
+    this.plannerHints = options.plannerHints || null;
   }
 
   getDescriptor() {
@@ -124,7 +156,8 @@ export class RetrievalKBPlugin {
       description: this.description,
       costClass: this.costClass,
       maxLLMCalls: 0,
-      provides: ['retrieve-context', 'source-text-hook']
+      provides: ['retrieve-context', 'source-text-hook'],
+      plannerHints: this.plannerHints
     });
   }
 
@@ -138,15 +171,47 @@ export class RetrievalKBPlugin {
         this.profileId,
         input.kbIndex
       );
-      const evidenceCount = resolvedIntents.reduce((sum, ri) =>
-        sum + ri.currentTurnContextUnits.length + ri.sessionUnits.length + ri.kbUnits.length, 0);
+      const intentAssessments = resolvedIntents.map((ri, index) => {
+        const profile = input.contextProfiles?.[index] || {};
+        const allUnits = [
+          ...(ri.currentTurnContextUnits || []),
+          ...(ri.sessionUnits || []).map(item => item.unit).filter(Boolean),
+          ...(ri.kbUnits || []).map(item => item.unit).filter(Boolean)
+        ];
+        const evidenceCount =
+          (ri.currentTurnContextUnits || []).length +
+          (ri.sessionUnits || []).length +
+          (ri.kbUnits || []).length;
+        const roleSet = new Set(allUnits.map(unit => unit.role).filter(Boolean));
+        const sourceSet = new Set([
+          ...(ri.sessionUnits || []).map(item => `session:${item.unitId}`),
+          ...(ri.kbUnits || []).map(item => `kb:${item.unit?.sourceId || item.unitId}`)
+        ]);
+        const neededRoles = new Set(profile.neededRoles || []);
+        const matchedRoles = [...roleSet].filter(role => neededRoles.has(role));
+        const sufficient =
+          evidenceCount > 0 &&
+          (neededRoles.size === 0 || matchedRoles.length > 0 || evidenceCount >= 2);
+        return {
+          intentRef: ri.intentRef,
+          evidenceCount,
+          neededRoles: [...neededRoles],
+          coveredRoles: [...roleSet].sort(),
+          matchedRoles,
+          uniqueSourceCount: sourceSet.size,
+          sufficient
+        };
+      });
+      const evidenceCount = intentAssessments.reduce((sum, item) => sum + item.evidenceCount, 0);
+      const sufficient = intentAssessments.length > 0 && intentAssessments.every(item => item.sufficient);
       return {
-        status: evidenceCount > 0 ? 'success' : 'insufficient',
+        status: sufficient ? 'success' : 'insufficient',
         resolvedIntents,
-        sufficient: evidenceCount > 0,
+        sufficient,
         retrievalTrace: {
           profileId: this.profileId,
-          evidenceCount
+          evidenceCount,
+          intentAssessments
         },
         error: null
       };
@@ -161,7 +226,18 @@ export class RetrievalKBPlugin {
     }
   }
 
-  async onSourceText(input) {
+  async onSourceText(input, ctx = {}) {
+    const deriveModel = ctx.modelSettings?.resolveModel?.({
+      pluginId: this.id,
+      role: 'kb-derive',
+      requestedModel: input.requestedModel || null,
+      sessionModel: ctx.session?.preferredModel || null
+    }) || null;
+    const roleCounts = {};
+    for (const unit of input.units || []) {
+      const role = unit.role || 'Unknown';
+      roleCounts[role] = (roleCounts[role] || 0) + 1;
+    }
     const artifact = {
       pluginId: this.id,
       sourceId: input.sourceId,
@@ -171,22 +247,45 @@ export class RetrievalKBPlugin {
       procedureCount: (input.units || []).filter(unit => !!unit.procedure).length,
       symbolicFactCount: (input.units || []).filter(unit => unit.subject && unit.relation && unit.object).length,
       roles: [...new Set((input.units || []).map(unit => unit.role).filter(Boolean))].sort(),
+      roleCounts,
+      deriveModel,
       generatedAt: new Date().toISOString()
     };
-    const artifactPath = resolve(
-      process.cwd(),
-      'data',
-      'workspaces',
-      input.sessionId || 'global',
-      'plugins',
+    const summaryMarkdown = [
+      `# ${this.id} Derived Note`,
+      `SourceId: ${input.sourceId}`,
+      `SourceName: ${input.name || input.sourceId}`,
+      `ConfiguredModel: ${deriveModel || '(none)'}`,
+      `UnitCount: ${artifact.unitCount}`,
+      `ProcedureCount: ${artifact.procedureCount}`,
+      `SymbolicFactCount: ${artifact.symbolicFactCount}`,
+      `Roles: ${Object.entries(roleCounts).sort((a, b) => a[0].localeCompare(b[0])).map(([role, count]) => `${role}=${count}`).join(', ') || '(none)'}`,
+      '',
+      'This is a lightweight derived note generated by the built-in KB plugin ingest hook.'
+    ].join('\n');
+    const artifactStore = ctx.kbRepositoryManager;
+    if (!artifactStore?.saveWorkspacePluginArtifact || !input.sessionId) {
+      return {
+        status: 'skipped',
+        artifacts: [],
+        error: null
+      };
+    }
+    const artifactPath = await artifactStore.saveWorkspacePluginArtifact(
+      input.sessionId,
       this.id,
-      `${input.sourceId}.json`
+      `${input.sourceId}.json`,
+      artifact
     );
-    mkdirSync(dirname(artifactPath), { recursive: true });
-    writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf-8');
+    const summaryPath = await artifactStore.saveWorkspacePluginArtifact(
+      input.sessionId,
+      this.id,
+      `${input.sourceId}.summary.md`,
+      summaryMarkdown
+    );
     return {
       status: 'accepted',
-      artifacts: [{ ...artifact, artifactPath }],
+      artifacts: [{ ...artifact, artifactPath, summaryPath }],
       error: null
     };
   }
@@ -200,6 +299,7 @@ export class StrategyGoalSolverPlugin {
     this.modelRole = options.modelRole || null;
     this.description = options.description || '';
     this.costClass = options.costClass || 'cheap';
+    this.plannerHints = options.plannerHints || null;
   }
 
   getDescriptor() {
@@ -212,7 +312,8 @@ export class StrategyGoalSolverPlugin {
       usesLLM: this.strategy.usesLLM(),
       modelRoles: [this.modelRole].filter(Boolean),
       maxLLMCalls: this.strategy.usesLLM() ? 1 : 0,
-      provides: ['solve-goal']
+      provides: ['solve-goal'],
+      plannerHints: this.plannerHints
     });
   }
 
@@ -224,21 +325,26 @@ export class StrategyGoalSolverPlugin {
       sessionModel: input.sessionModel || null
     });
     try {
+      const helperOutputs = ctx.externalHelpers?.collectOutputs
+        ? await ctx.externalHelpers.collectOutputs(input.resolvedIntents || [])
+        : [];
+      const pluginOutputs = input.pluginOutputs || helperOutputs || [];
       const result = await this.synthesizer.synthesize(
         input.sessionId,
         input.resolvedIntents,
-        input.pluginOutputs,
+        pluginOutputs,
         input.systemPrompt,
         this.strategy,
         model
       );
       return {
-        status: 'success',
+        status: result.status === 'no-context' ? 'no-context' : 'success',
         responseMarkdown: result.responseMarkdown,
         responseDocument: result.responseDocument,
         metadata: {
           llmCalls: this.strategy.usesLLM() ? 1 : 0,
-          model
+          model,
+          helperPluginCount: pluginOutputs.length
         },
         error: null
       };

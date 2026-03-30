@@ -17,7 +17,8 @@ result bundle.
 ```javascript
 class ContextMatcher {
   async resolve(decomposedIntents, contextProfiles,
-    currentTurnUnits, session, kbPluginId) ->
+    currentTurnUnits, session,
+    retrievalProfileOrConfig, kbIndex) ->
     ResolvedIntent[]
 }
 ```
@@ -32,8 +33,9 @@ that is an implementation detail of built-in
 ```javascript
 {
   intentRef,
-  retrievalPlugin: "kb-fast" | "kb-balanced" |
-    "kb-thinkingdb",
+  retrievalProfile,
+  intentGroup,
+  decomposed,
   currentTurnContextUnits,
   sessionUnits,
   kbUnits,

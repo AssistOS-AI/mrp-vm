@@ -27,12 +27,29 @@ Every plugin MUST expose a descriptor equivalent to:
   costClass: "cheap" | "moderate" | "expensive",
   usesLLM: boolean,
   modelRoles: ["kb-ingest"],
+  maxLLMCalls: 1,
   tags: ["builtin", "balanced"],
   timeoutMs: 30000,
+  plannerHints: {
+    expectedLatencyMs: 120,
+    expectedLLMCalls: 0,
+    relativeCost: 0.22,
+    supportedActs: ["compare", "explain"],
+    topicTags: ["legal", "technical"],
+    preferredDepth: "medium",
+    fallbackRole: "default",
+    confidenceWhenMatched: 0.76
+  },
   provides: ["retrieve-context"],
   accepts: ["chat-turn", "source-text"]
 }
 ```
+
+`plannerHints` are optional but strongly recommended
+for planner-facing plugins. They provide the initial
+cost/performance priors used by built-in
+`mrp-plan-plugin`s before enough historical learning
+has accumulated.
 
 ## Discovery Modes
 
@@ -67,6 +84,7 @@ plugin call:
   conversation,
   parser,
   decomposer,
+  externalHelpers,
   modelSettings,
   logger,
   budgets
@@ -77,16 +95,42 @@ Additional fields MAY be added later, but plugins
 must treat the context as read-only except for
 explicit callback surfaces.
 
+The source-text ingest hook currently receives a
+documented subset plus ingest-specific additions:
+
+- `kbRepositoryManager`
+- `hookType: "source-text"`
+
+`parser` and `decomposer` may be `null` in that hook
+context.
+
 ## Execution Rules
 
 - A planner plugin decides stage order and plugin
   order.
 - The core MAY execute only plugins whose type
   matches the current stage.
-- Explicit user/session selection overrides planner
-  reordering for that stage.
+- The typed registry MUST reject unsupported plugin
+  types at registration time.
+- An explicit request-level plugin selection pins that
+  stage to the requested plugin.
+- A session plugin preference is a strong prior and
+  should be placed first by the planner, but it does
+  not suppress later fallback candidates.
 - Plugin failures are isolated and recorded in the
   execution trace.
+- Plugins MAY return weak non-terminal outcomes
+  (`unsupported`, `insufficient`, `no-context`) to
+  allow the core to continue within the current stage
+  or escalate to another planner.
+- The core MAY skip a plugin before invocation when
+  the remaining request budget is lower than the
+  plugin's declared `maxLLMCalls`.
+- `timeoutMs` on typed plugins is currently
+  descriptor metadata. External wrapper helpers
+  enforce subprocess timeouts directly; in-process
+  typed plugins currently rely on request-level
+  timeout enforcement.
 - A plugin may declare `usesLLM: false` and still be
   selected before an LLM-backed alternative.
 

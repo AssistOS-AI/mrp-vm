@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { LanguageProcessingStrategy } from './registry.mjs';
 import { extractSymbolicFact } from '../lib/symbolic-facts.mjs';
+import { buildResponseDocument } from '../synthesis/response-document.mjs';
 
 // Simple rule-based NL→CNL for common patterns
 const ACT_VERBS = {
@@ -12,7 +13,9 @@ const ACT_VERBS = {
   implement: ['implement', 'build', 'create', 'setup', 'configure', 'install'],
   verify: ['verify', 'check', 'validate', 'prove', 'confirm'],
   define: ['define', 'what is', 'meaning', 'definition'],
-  evaluate: ['evaluate', 'assess', 'measure', 'rate', 'review']
+  evaluate: ['evaluate', 'assess', 'measure', 'rate', 'review'],
+  identify: ['identify', 'who is', 'which one', 'where is', 'name the'],
+  describe: ['describe', 'characterize', 'properties of', 'traits of', 'looks like']
 };
 
 function detectAct(text) {
@@ -97,7 +100,7 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
 
   async synthesizeResponse({ sessionId, resolvedIntents, pluginOutputs }) {
     let md = `# MRP Response\nSession: ${sessionId}\n\n`;
-    const groups = [];
+    const answersByIntentRef = {};
     for (const ri of resolvedIntents) {
       const po = (pluginOutputs || []).find(p => p.intentRef === ri.intentRef);
       const hasEvidence = ri.sessionUnits.length > 0 || ri.kbUnits.length > 0 || ri.currentTurnContextUnits.length > 0;
@@ -133,26 +136,22 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
       } else if (status === 'plugin-error') {
         groupAnswer = `Plugin execution failed: ${po?.error?.message || 'unknown error'}`;
       }
+      answersByIntentRef[ri.intentRef] = groupAnswer;
       md += `### Answer\n${groupAnswer}\n\n`;
       md += `### Sources Used\n`;
       for (const u of ri.currentTurnContextUnits) md += `- ${u.id}\n`;
       for (const s of ri.sessionUnits) md += `- ${s.unitId}\n`;
       for (const s of ri.kbUnits) md += `- ${s.unitId}\n`;
       md += '\n';
-
-      groups.push({
-        intentRef: ri.intentRef,
-        act: ri.decomposed.act,
-        intent: ri.decomposed.intent,
-        status,
-        currentTurnContext: ri.currentTurnContextUnits,
-        sessionSources: ri.sessionUnits.map(s => ({ unitId: s.unitId, score: s.score, unit: s.unit })),
-        kbSources: ri.kbUnits.map(s => ({ sourceId: s.unit?.sourceId, unitId: s.unitId, score: s.score, unit: s.unit })),
-        pluginOutput: po || null,
-        answerMarkdown: groupAnswer,
-        warnings: po?.status === 'error' ? [`Plugin error: ${po.error?.message || 'unknown'}`] : []
-      });
     }
-    return { responseDocument: { sessionId, groups }, responseMarkdown: md };
+    return {
+      responseDocument: buildResponseDocument(
+        sessionId,
+        resolvedIntents,
+        pluginOutputs,
+        answersByIntentRef
+      ),
+      responseMarkdown: md
+    };
   }
 }

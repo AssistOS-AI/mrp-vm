@@ -39,6 +39,25 @@ export class KnowledgeBase {
       .digest('hex');
   }
 
+  _normalizeUnit(unit, sourceMeta = null) {
+    const next = { ...unit };
+    next.hash = next.hash || this._hashUnit(next);
+    next.sourceName = next.sourceName || sourceMeta?.name || null;
+    next.chunkIndex = next.chunkIndex ?? null;
+    next.unitIndex = next.unitIndex ?? null;
+    next.unitType = next.unitType || 'semantic-unit';
+    next.textBody = next.textBody || next.claim || next.procedure || next.topic || '';
+    next.parentUnitIds = next.parentUnitIds || [];
+    next.childUnitIds = next.childUnitIds || [];
+    next.derivedFromUnitIds = next.derivedFromUnitIds || [];
+    next.charStart = next.charStart ?? null;
+    next.charEnd = next.charEnd ?? null;
+    next.createdAt = next.createdAt || sourceMeta?.updatedAt || sourceMeta?.addedAt || null;
+    next.chunkType = next.chunkType || null;
+    next.sectionTitle = next.sectionTitle || null;
+    return next;
+  }
+
   async boot() {
     await this.persistence.cleanTempFiles();
     const allUnits = await this.persistence.loadAllContextUnits();
@@ -51,7 +70,8 @@ export class KnowledgeBase {
       this._sources.set(m.sourceId, m);
     }
     for (const u of allUnits) {
-      u.hash = u.hash || this._hashUnit(u);
+      const meta = this._sources.get(u.sourceId) || null;
+      Object.assign(u, this._normalizeUnit(u, meta));
     }
     this._units = allUnits;
     const indexValid = await this.persistence.isIndexValid(allUnits);
@@ -83,23 +103,23 @@ export class KnowledgeBase {
       if (this._units.length + units.length > this.maxTotalUnits) {
         throw new MRPError('KB_VALIDATION_MAX_TOTAL_UNITS', MOD, 'Total units limit exceeded');
       }
-      for (const u of units) u.hash = this._hashUnit(u);
+      const normalizedUnits = units.map(unit => this._normalizeUnit(unit, { name }));
       const contentHash = createHash('sha256').update(nlContent).digest('hex');
       const meta = {
         sourceId, name,
         addedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        chunkCount: new Set(units.map(u => u.chunkId)).size,
-        unitCount: units.length,
+        chunkCount: new Set(normalizedUnits.map(u => u.chunkId)).size,
+        unitCount: normalizedUnits.length,
         status: 'dirty',
         hash: contentHash
       };
       // Phase 1: write all files to disk (each atomic via .tmp+rename)
       await this.persistence.saveSourceMeta(sourceId, meta);
       await this.persistence.saveRawSource(sourceId, name, nlContent);
-      await this.persistence.saveContextUnits(sourceId, units);
+      await this.persistence.saveContextUnits(sourceId, normalizedUnits);
       // Phase 2: build new in-memory state
-      const newUnits = [...this._units, ...units];
+      const newUnits = [...this._units, ...normalizedUnits];
       this.index.rebuild(newUnits);
       await this.persistence.saveIndex(this.index.toIndexData());
       // Phase 3: mark ready and swap
@@ -126,16 +146,16 @@ export class KnowledgeBase {
     await this._acquireLock();
     try {
       const { units } = await this.ingestor.ingest(sourceId, nlContent, existing.name, strategy);
-      for (const u of units) u.hash = this._hashUnit(u);
+      const normalizedUnits = units.map(unit => this._normalizeUnit(unit, existing));
       // Mark dirty first
-      const meta = { ...existing, updatedAt: new Date().toISOString(), unitCount: units.length,
-        chunkCount: new Set(units.map(u => u.chunkId)).size,
+      const meta = { ...existing, updatedAt: new Date().toISOString(), unitCount: normalizedUnits.length,
+        chunkCount: new Set(normalizedUnits.map(u => u.chunkId)).size,
         hash: createHash('sha256').update(nlContent).digest('hex'), status: 'dirty' };
       await this.persistence.saveSourceMeta(sourceId, meta);
       await this.persistence.saveRawSource(sourceId, existing.name, nlContent);
-      await this.persistence.saveContextUnits(sourceId, units);
+      await this.persistence.saveContextUnits(sourceId, normalizedUnits);
       // Build new state
-      const newUnits = [...this._units.filter(u => u.sourceId !== sourceId), ...units];
+      const newUnits = [...this._units.filter(u => u.sourceId !== sourceId), ...normalizedUnits];
       this.index.rebuild(newUnits);
       await this.persistence.saveIndex(this.index.toIndexData());
       // Mark ready and swap
@@ -206,9 +226,7 @@ export class KnowledgeBase {
           updatedAt: new Date().toISOString()
         };
         const units = (entry.units || []).map(u => {
-          const next = { ...u };
-          next.hash = next.hash || this._hashUnit(next);
-          return next;
+          return this._normalizeUnit(u, entry.meta || {});
         });
         if (units.length > this.maxUnitsPerSource) {
           throw new MRPError('KB_VALIDATION_MAX_UNITS_PER_SOURCE', MOD,

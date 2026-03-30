@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { MRPError } from '../lib/errors.mjs';
 import { KBIndex } from '../retrieval/kb-index.mjs';
 import { SessionWorkspace } from '../kb/session-workspace.mjs';
-import { mapLegacyProcessingMode, mapLegacyRetrievalProfile } from '../plugins/aliases.mjs';
+import {
+  mapLegacyProcessingMode,
+  mapLegacyRetrievalProfile,
+  deriveLegacyProcessingMode,
+  deriveLegacyRetrievalProfile
+} from '../plugins/aliases.mjs';
 
 export class ConversationHandler {
   constructor(config = {}) {
@@ -12,9 +17,22 @@ export class ConversationHandler {
     this.ttlMinutes = config.sessionIdleTtlMinutes || 30;
     this.maxContextUnits = config.maxSessionContextUnits || 200;
     this.maxSessions = config.maxSessions || 1000;
-    this.defaultProcessingMode = config.defaultProcessingMode || 'llm-assisted';
-    this.defaultRetrievalProfile = config.defaultRetrievalProfile || 'balanced';
+    const legacyProcessingDefaults = mapLegacyProcessingMode(config.defaultProcessingMode || 'llm-assisted');
+    this.defaultProcessingMode = config.defaultProcessingMode || null;
+    this.defaultRetrievalProfile = config.defaultRetrievalProfile || null;
     this.defaultPlannerPlugin = config.defaultPlannerPlugin || 'planner-default';
+    this.defaultSeedDetectorPlugin =
+      config.defaultSeedDetectorPlugin ||
+      legacyProcessingDefaults.seedDetectorPlugin ||
+      'sd-llm-fast';
+    this.defaultKBPlugin =
+      config.defaultKBPlugin ||
+      mapLegacyRetrievalProfile(config.defaultRetrievalProfile || 'balanced') ||
+      'kb-balanced';
+    this.defaultGoalSolverPlugin =
+      config.defaultGoalSolverPlugin ||
+      legacyProcessingDefaults.goalSolverPlugin ||
+      'gs-llm-fast';
     this.defaultKbId = config.defaultKbId || 'default';
     this._sessions = new Map();
     this.kbRepositoryManager = null;
@@ -22,6 +40,54 @@ export class ConversationHandler {
 
   attachKBRepositoryManager(manager) {
     this.kbRepositoryManager = manager;
+  }
+
+  _resolvePluginSelections({
+    session = null,
+    processingMode = null,
+    retrievalProfile = null,
+    plannerPlugin = null,
+    seedDetectorPlugin = null,
+    kbPlugin = null,
+    goalSolverPlugin = null
+  } = {}) {
+    const legacyMode = mapLegacyProcessingMode(processingMode);
+    const legacyKBPlugin = mapLegacyRetrievalProfile(retrievalProfile);
+    const resolvedPlannerPlugin =
+      plannerPlugin ||
+      session?.preferredPlannerPlugin ||
+      this.defaultPlannerPlugin;
+    const resolvedSeedDetectorPlugin =
+      seedDetectorPlugin ||
+      session?.preferredSeedDetectorPlugin ||
+      legacyMode.seedDetectorPlugin ||
+      this.defaultSeedDetectorPlugin;
+    const resolvedKBPlugin =
+      kbPlugin ||
+      session?.preferredKBPlugin ||
+      legacyKBPlugin ||
+      this.defaultKBPlugin;
+    const resolvedGoalSolverPlugin =
+      goalSolverPlugin ||
+      session?.preferredGoalSolverPlugin ||
+      legacyMode.goalSolverPlugin ||
+      this.defaultGoalSolverPlugin;
+
+    return {
+      plannerPlugin: resolvedPlannerPlugin,
+      seedDetectorPlugin: resolvedSeedDetectorPlugin,
+      kbPlugin: resolvedKBPlugin,
+      goalSolverPlugin: resolvedGoalSolverPlugin,
+      processingMode:
+        processingMode ||
+        deriveLegacyProcessingMode(
+          resolvedSeedDetectorPlugin,
+          resolvedGoalSolverPlugin
+        ),
+      retrievalProfile:
+        retrievalProfile ||
+        deriveLegacyRetrievalProfile(resolvedKBPlugin)
+    };
   }
 
   async createSession(
@@ -40,8 +106,14 @@ export class ConversationHandler {
         throw new MRPError('SESSION_INTERNAL_LIMIT', 'conversation', 'Max sessions reached');
       }
     }
-    const legacyMode = mapLegacyProcessingMode(processingMode || this.defaultProcessingMode);
-    const effectiveKBPlugin = kbPlugin || mapLegacyRetrievalProfile(retrievalProfile || this.defaultRetrievalProfile);
+    const resolvedSelections = this._resolvePluginSelections({
+      processingMode,
+      retrievalProfile,
+      plannerPlugin,
+      seedDetectorPlugin,
+      kbPlugin,
+      goalSolverPlugin
+    });
     const now = new Date();
     const session = {
       sessionId: `sess-${randomUUID().substring(0, 12)}`,
@@ -49,19 +121,17 @@ export class ConversationHandler {
       lastActivityAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + this.ttlMinutes * 60000).toISOString(),
       preferredModel: model || null,
-      preferredProcessingMode: processingMode || this.defaultProcessingMode,
-      preferredRetrievalProfile: retrievalProfile || this.defaultRetrievalProfile,
-      preferredPlannerPlugin: plannerPlugin || this.defaultPlannerPlugin,
-      preferredSeedDetectorPlugin: seedDetectorPlugin || legacyMode.seedDetectorPlugin || null,
-      preferredKBPlugin: effectiveKBPlugin || null,
-      preferredGoalSolverPlugin: goalSolverPlugin || legacyMode.goalSolverPlugin || null,
+      preferredPlannerPlugin: resolvedSelections.plannerPlugin,
+      preferredSeedDetectorPlugin: resolvedSelections.seedDetectorPlugin,
+      preferredKBPlugin: resolvedSelections.kbPlugin || null,
+      preferredGoalSolverPlugin: resolvedSelections.goalSolverPlugin,
       messageLog: [],
       systemPrompt: null,
       sessionContextUnits: [],
       sessionIndex: new KBIndex(),
       mountedKbId: null,
       mountedKbName: null,
-      workspace: new SessionWorkspace(`sess-${randomUUID().substring(0, 12)}`)
+      workspace: null
     };
     session.workspace = new SessionWorkspace(session.sessionId, this.kbRepositoryManager?.retrievalConfig || {});
     this._sessions.set(session.sessionId, session);
@@ -109,10 +179,28 @@ export class ConversationHandler {
         await this._mountRepositoryIntoSession(session, kbId, { discardDraft: true });
       }
     } else {
-      session = await this.createSession(model, processingMode, retrievalProfile, kbId);
+      session = await this.createSession(
+        model,
+        processingMode,
+        retrievalProfile,
+        kbId,
+        plannerPlugin,
+        seedDetectorPlugin,
+        kbPlugin,
+        goalSolverPlugin
+      );
     }
-    const legacyMode = mapLegacyProcessingMode(processingMode || session.preferredProcessingMode);
-    const legacyKBPlugin = mapLegacyRetrievalProfile(retrievalProfile || session.preferredRetrievalProfile);
+    const explicitLegacyMode = mapLegacyProcessingMode(processingMode);
+    const explicitLegacyKBPlugin = mapLegacyRetrievalProfile(retrievalProfile);
+    const resolvedSelections = this._resolvePluginSelections({
+      session,
+      processingMode,
+      retrievalProfile,
+      plannerPlugin,
+      seedDetectorPlugin,
+      kbPlugin,
+      goalSolverPlugin
+    });
     // Process new messages
     let systemPrompt = session.systemPrompt;
     let currentMessage = null;
@@ -133,15 +221,16 @@ export class ConversationHandler {
       historyForPrompt,
       systemPrompt,
       requestedModel: model || session.preferredModel,
-      requestedProcessingMode: processingMode || session.preferredProcessingMode,
-      requestedRetrievalProfile: retrievalProfile || session.preferredRetrievalProfile,
-      requestedPlannerPlugin: plannerPlugin || session.preferredPlannerPlugin,
-      requestedSeedDetectorPlugin:
-        seedDetectorPlugin || legacyMode.seedDetectorPlugin || session.preferredSeedDetectorPlugin,
-      requestedKBPlugin:
-        kbPlugin || legacyKBPlugin || session.preferredKBPlugin,
-      requestedGoalSolverPlugin:
-        goalSolverPlugin || legacyMode.goalSolverPlugin || session.preferredGoalSolverPlugin
+      explicitPlannerPlugin: plannerPlugin || null,
+      explicitSeedDetectorPlugin: seedDetectorPlugin || explicitLegacyMode.seedDetectorPlugin || null,
+      explicitKBPlugin: kbPlugin || explicitLegacyKBPlugin || null,
+      explicitGoalSolverPlugin: goalSolverPlugin || explicitLegacyMode.goalSolverPlugin || null,
+      requestedProcessingMode: resolvedSelections.processingMode,
+      requestedRetrievalProfile: resolvedSelections.retrievalProfile,
+      requestedPlannerPlugin: resolvedSelections.plannerPlugin,
+      requestedSeedDetectorPlugin: resolvedSelections.seedDetectorPlugin,
+      requestedKBPlugin: resolvedSelections.kbPlugin,
+      requestedGoalSolverPlugin: resolvedSelections.goalSolverPlugin
     };
   }
 
@@ -181,6 +270,7 @@ export class ConversationHandler {
     } else {
       repoMeta = await this.kbRepositoryManager.saveSnapshotToRepository(session.mountedKbId, snapshot, { name: options.name });
     }
+    this.kbRepositoryManager.promoteWorkspacePluginArtifacts(session.sessionId, repoMeta.kbId);
     await this._mountRepositoryIntoSession(session, repoMeta.kbId, { discardDraft: true });
     session.workspace.markSaved(repoMeta.updatedAt, repoMeta);
     await this._persistWorkspace(session);
@@ -200,6 +290,7 @@ export class ConversationHandler {
       snapshot,
       { parentKbId: session.mountedKbId }
     );
+    this.kbRepositoryManager.promoteWorkspacePluginArtifacts(session.sessionId, repoMeta.kbId);
     await this._mountRepositoryIntoSession(session, repoMeta.kbId, { discardDraft: true });
     session.workspace.markSaved(repoMeta.updatedAt, repoMeta);
     await this._persistWorkspace(session);
@@ -212,8 +303,6 @@ export class ConversationHandler {
     assistantMarkdown,
     currentTurnContextUnits,
     selectedModel,
-    selectedProcessingMode,
-    selectedRetrievalProfile,
     selectedPlannerPlugin = null,
     selectedSeedDetectorPlugin = null,
     selectedKBPlugin = null,
@@ -237,8 +326,6 @@ export class ConversationHandler {
     for (const u of toAdd) session.sessionIndex.addUnit(u);
     // Update preferences
     if (selectedModel) session.preferredModel = selectedModel;
-    if (selectedProcessingMode) session.preferredProcessingMode = selectedProcessingMode;
-    if (selectedRetrievalProfile) session.preferredRetrievalProfile = selectedRetrievalProfile;
     if (selectedPlannerPlugin) session.preferredPlannerPlugin = selectedPlannerPlugin;
     if (selectedSeedDetectorPlugin) session.preferredSeedDetectorPlugin = selectedSeedDetectorPlugin;
     if (selectedKBPlugin) session.preferredKBPlugin = selectedKBPlugin;
@@ -286,8 +373,8 @@ export class ConversationHandler {
       expires_at: s.expiresAt,
       message_count: s.messageLog.length,
       session_context_unit_count: s.sessionContextUnits.length,
-      processing_mode: s.preferredProcessingMode,
-      retrieval_profile: s.preferredRetrievalProfile,
+      processing_mode: deriveLegacyProcessingMode(s.preferredSeedDetectorPlugin, s.preferredGoalSolverPlugin),
+      retrieval_profile: deriveLegacyRetrievalProfile(s.preferredKBPlugin),
       planner_plugin: s.preferredPlannerPlugin,
       seed_detector_plugin: s.preferredSeedDetectorPlugin,
       kb_plugin: s.preferredKBPlugin,
@@ -311,6 +398,7 @@ export class ConversationHandler {
     const record = this.kbRepositoryManager.getRepository(kbId);
     const snapshot = await record.kb.exportSnapshot();
     session.workspace.mountFromSnapshot(record.meta, snapshot);
+    this.kbRepositoryManager.hydrateWorkspacePluginArtifacts(session.sessionId, record.meta.kbId);
     session.mountedKbId = record.meta.kbId;
     session.mountedKbName = record.meta.name;
   }

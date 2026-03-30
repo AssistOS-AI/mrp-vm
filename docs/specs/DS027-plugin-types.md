@@ -14,8 +14,13 @@ All plugins MUST:
   explicitly document stochastic behavior
 - return structured status objects
 - report whether they used LLM calls
+- declare a conservative `maxLLMCalls` bound in
+  their descriptor when they may consume LLM budget
 - receive shared model settings through the plugin
   context
+- optionally publish `plannerHints` in the descriptor
+  so planners can make a reasonable cold-start routing
+  decision before learning converges
 
 ## `sd-plugin`
 
@@ -109,15 +114,20 @@ class MRPPlanPlugin {
   requestId,
   sessionId,
   plannerPluginId,
+  plannerAttempts: string[],
   stages: [{
+    plannerPluginId: string,
     stage: "seed-detector" | "kb" | "goal-solver",
     pluginId,
-    status,
+    status: "success" | "insufficient" | "error" | "unsupported" | "skipped-budget",
     durationMs,
     llmCalls,
-    sufficient: boolean | null
+    sufficient: boolean | null,
+    model: string | null,
+    modelRole: string | null
   }],
-  finalStatus: "success" | "failure"
+  finalStatus: "success" | "failure",
+  finalAnswerStatus: "answered" | "no-context" | null
 }
 ```
 

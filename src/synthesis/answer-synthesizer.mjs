@@ -1,5 +1,6 @@
 // DS017 — Answer Synthesis
 import { MRPError } from '../lib/errors.mjs';
+import { buildResponseDocument } from './response-document.mjs';
 
 export class AnswerSynthesizer {
   constructor(strategyRegistry, config = {}) {
@@ -18,7 +19,11 @@ export class AnswerSynthesizer {
       const result = await strategy.synthesizeResponse({
         sessionId, resolvedIntents, pluginOutputs, systemPrompt, requestedModel
       });
-      return result;
+      return {
+        status: result.status || 'answered',
+        responseDocument: result.responseDocument,
+        responseMarkdown: result.responseMarkdown
+      };
     } catch (e) {
       throw new MRPError('SYNTHESIS_FAILED', 'synthesis', e.message);
     }
@@ -26,21 +31,25 @@ export class AnswerSynthesizer {
 
   _renderNoContext(sessionId, resolvedIntents, pluginOutputs) {
     let md = `# MRP Response\nSession: ${sessionId}\n\n`;
-    const groups = [];
+    const answersByIntentRef = {};
     for (const ri of resolvedIntents) {
       const po = (pluginOutputs || []).find(p => p.intentRef === ri.intentRef);
       const status = po?.status === 'error' ? 'plugin-error' : 'no-context';
       const groupMd = status === 'no-context'
         ? 'The session context and persistent KB do not contain enough evidence to answer this intent.'
         : `Plugin execution failed: ${po?.error?.message || 'unknown error'}`;
+      answersByIntentRef[ri.intentRef] = groupMd;
       md += `## Intent Group ${ri.intentRef}\nAct: ${ri.decomposed.act}\nIntent: ${ri.decomposed.intent}\nStatus: ${status}\n\n### Answer\n${groupMd}\n\n### Sources Used\n(none)\n\n`;
-      groups.push({
-        intentRef: ri.intentRef, act: ri.decomposed.act, intent: ri.decomposed.intent,
-        status, currentTurnContext: [], sessionSources: [], kbSources: [],
-        pluginOutput: po || null, answerMarkdown: groupMd,
-        warnings: po?.status === 'error' ? [`Plugin error: ${po.error?.message}`] : []
-      });
     }
-    return { responseDocument: { sessionId, groups }, responseMarkdown: md };
+    return {
+      status: 'no-context',
+      responseDocument: buildResponseDocument(
+        sessionId,
+        resolvedIntents,
+        pluginOutputs,
+        answersByIntentRef
+      ),
+      responseMarkdown: md
+    };
   }
 }

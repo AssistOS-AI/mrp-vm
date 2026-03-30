@@ -3,8 +3,11 @@
   "maxHistoryCharsForPrompt": 16000,
   "sessionIdleTtlMinutes": 30,
   "maxSessionContextUnits": 200,
-  "defaultProcessingMode": "llm-assisted",
-  "defaultRetrievalProfile": "balanced",
+  "defaultProcessingMode": null,
+  "defaultRetrievalProfile": null,
   "defaultPlannerPlugin": "planner-default",
+  "defaultSeedDetectorPlugin": "sd-llm-fast",
+  "defaultKBPlugin": "kb-balanced",
+  "defaultGoalSolverPlugin": "gs-llm-fast",
   "maxSessions": 1000
 }

@@ -1,13 +1,23 @@
-// DS021 — Evaluation Runner (legacy compatibility matrix for
-// processing_mode/retrieval_profile plus plugin-aware reporting)
+// DS021 — Evaluation Runner (plugin-first combos with
+// legacy processing_mode/retrieval_profile compatibility)
 // Usage: node test/evaluation/run.mjs [--suite suite01] [--port 4000]
 //   [--mode llm-assisted] [--profile balanced]
+//   [--planner-plugin planner-default]
+//   [--seed-detector-plugin sd-symbolic]
+//   [--kb-plugin kb-thinkingdb]
+//   [--goal-solver-plugin gs-symbolic]
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, cpSync, statSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import {
+  mapLegacyProcessingMode,
+  mapLegacyRetrievalProfile,
+  deriveLegacyProcessingMode,
+  deriveLegacyRetrievalProfile
+} from '../../src/plugins/aliases.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '../..');
@@ -16,6 +26,10 @@ const BASE_PORT = parseInt(arg('--port') || '4000', 10);
 const SUITE_FILTER = arg('--suite');
 const MODE_FILTER = arg('--mode');
 const PROFILE_FILTER = arg('--profile');
+const PLANNER_PLUGIN_FILTER = arg('--planner-plugin');
+const SEED_PLUGIN_FILTER = arg('--seed-detector-plugin');
+const KB_PLUGIN_FILTER = arg('--kb-plugin');
+const GOAL_PLUGIN_FILTER = arg('--goal-solver-plugin');
 const DELAY_MS = parseInt(arg('--delay') || '2000', 10);
 
 const ALL_MODES = ['llm-assisted', 'symbolic-only'];
@@ -33,6 +47,123 @@ function checkMention(text, terms) { const l = lower(text); return terms.filter(
 function checkNotContain(text, terms) { const l = lower(text); return terms.filter(t => l.includes(lower(t))); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+function normalizeCombo(raw = {}) {
+  const explicitProcessingMode = raw.processingMode || raw.processing_mode || null;
+  const explicitRetrievalProfile = raw.retrievalProfile || raw.retrieval_profile || null;
+  const modeMapping = mapLegacyProcessingMode(explicitProcessingMode);
+  const kbPluginFromProfile = mapLegacyRetrievalProfile(explicitRetrievalProfile);
+  const plannerPlugin = raw.plannerPlugin || raw.planner_plugin || null;
+  const seedDetectorPlugin =
+    raw.seedDetectorPlugin ||
+    raw.seed_detector_plugin ||
+    modeMapping.seedDetectorPlugin ||
+    null;
+  const goalSolverPlugin =
+    raw.goalSolverPlugin ||
+    raw.goal_solver_plugin ||
+    modeMapping.goalSolverPlugin ||
+    null;
+  const kbPlugin =
+    raw.kbPlugin ||
+    raw.kb_plugin ||
+    kbPluginFromProfile ||
+    null;
+  const processingMode =
+    explicitProcessingMode ||
+    deriveLegacyProcessingMode(seedDetectorPlugin, goalSolverPlugin) ||
+    null;
+  const retrievalProfile =
+    explicitRetrievalProfile ||
+    deriveLegacyRetrievalProfile(kbPlugin) ||
+    null;
+
+  return {
+    label: raw.label || null,
+    plannerPlugin,
+    seedDetectorPlugin,
+    kbPlugin,
+    goalSolverPlugin,
+    processingMode,
+    retrievalProfile
+  };
+}
+
+function comboLabel(combo) {
+  if (combo.label) return combo.label;
+  if (combo.processingMode || combo.retrievalProfile) {
+    const mode = combo.processingMode || 'mode:auto';
+    const profile = combo.retrievalProfile || 'profile:auto';
+    return `${mode} + ${profile}`;
+  }
+  return [
+    combo.plannerPlugin || 'planner:auto',
+    combo.seedDetectorPlugin || 'sd:auto',
+    combo.kbPlugin || 'kb:auto',
+    combo.goalSolverPlugin || 'gs:auto'
+  ].join(' | ');
+}
+
+function comboMatchesFilters(combo) {
+  if (MODE_FILTER && combo.processingMode !== MODE_FILTER) return false;
+  if (PROFILE_FILTER && combo.retrievalProfile !== PROFILE_FILTER) return false;
+  if (PLANNER_PLUGIN_FILTER && combo.plannerPlugin !== PLANNER_PLUGIN_FILTER) return false;
+  if (SEED_PLUGIN_FILTER && combo.seedDetectorPlugin !== SEED_PLUGIN_FILTER) return false;
+  if (KB_PLUGIN_FILTER && combo.kbPlugin !== KB_PLUGIN_FILTER) return false;
+  if (GOAL_PLUGIN_FILTER && combo.goalSolverPlugin !== GOAL_PLUGIN_FILTER) return false;
+  return true;
+}
+
+function resolveSuiteCombos(evalData) {
+  const pluginCombos = Array.isArray(evalData.pluginCombos) && evalData.pluginCombos.length
+    ? evalData.pluginCombos.map(normalizeCombo)
+    : null;
+  const combos = pluginCombos || (evalData.modes?.length ? evalData.modes : ALL_MODES)
+    .flatMap(mode => (evalData.profiles?.length ? evalData.profiles : ALL_PROFILES)
+      .map(profile => normalizeCombo({ processingMode: mode, retrievalProfile: profile })));
+  return combos.filter(comboMatchesFilters);
+}
+
+function resolveIngestConfig(evalData, combo) {
+  const normalized = normalizeCombo({
+    processingMode: evalData.ingestProcessingMode || null,
+    seedDetectorPlugin: evalData.ingestSeedDetectorPlugin || null
+  });
+  return {
+    processingMode: normalized.processingMode,
+    seedDetectorPlugin: normalized.seedDetectorPlugin || combo.seedDetectorPlugin || null
+  };
+}
+
+function comboRequestPayload(combo) {
+  const payload = {};
+  if (combo.processingMode) payload.processing_mode = combo.processingMode;
+  if (combo.retrievalProfile) payload.retrieval_profile = combo.retrievalProfile;
+  if (combo.plannerPlugin) payload.planner_plugin = combo.plannerPlugin;
+  if (combo.seedDetectorPlugin) payload.seed_detector_plugin = combo.seedDetectorPlugin;
+  if (combo.kbPlugin) payload.kb_plugin = combo.kbPlugin;
+  if (combo.goalSolverPlugin) payload.goal_solver_plugin = combo.goalSolverPlugin;
+  return payload;
+}
+
+function ingestRequestPayload(ingestConfig) {
+  const payload = {};
+  if (ingestConfig.processingMode) payload.processing_mode = ingestConfig.processingMode;
+  if (ingestConfig.seedDetectorPlugin) payload.seed_detector_plugin = ingestConfig.seedDetectorPlugin;
+  return payload;
+}
+
+function captureRuntimeSurface(payload) {
+  if (!payload) return null;
+  return {
+    processingMode: payload.processing_mode ?? payload.processingMode ?? null,
+    retrievalProfile: payload.retrieval_profile ?? payload.retrievalProfile ?? null,
+    plannerPlugin: payload.planner_plugin ?? payload.plannerPlugin ?? null,
+    seedDetectorPlugin: payload.seed_detector_plugin ?? payload.seedDetectorPlugin ?? null,
+    kbPlugin: payload.kb_plugin ?? payload.kbPlugin ?? null,
+    goalSolverPlugin: payload.goal_solver_plugin ?? payload.goalSolverPlugin ?? null
+  };
+}
+
 async function fetchJson(base, method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
@@ -41,21 +172,19 @@ async function fetchJson(base, method, path, body) {
   return r.json();
 }
 
-async function createPreparedSession(base, mode, profile, storyContent, ingestProcessingMode) {
-  const sessionRes = await fetchJson(base, 'POST', '/sessions', {
-    processing_mode: mode,
-    retrieval_profile: profile
-  });
+async function createPreparedSession(base, combo, storyContent, ingestConfig) {
+  const sessionRes = await fetchJson(base, 'POST', '/sessions', comboRequestPayload(combo));
   if (!sessionRes.session_id) throw new Error(sessionRes.error?.message || 'failed to create session');
   const stageRes = await fetchJson(base, 'POST', `/sessions/${sessionRes.session_id}/workspace/sources`, {
     name: 'eval-story.nl',
     content: storyContent,
-    processing_mode: ingestProcessingMode
+    ...ingestRequestPayload(ingestConfig)
   });
   if (!stageRes.sourceId) throw new Error(stageRes.error?.message || 'failed to stage story');
   return {
     sessionId: sessionRes.session_id,
-    unitCount: stageRes.unitCount || 0
+    unitCount: stageRes.unitCount || 0,
+    sessionSurface: captureRuntimeSurface(sessionRes)
   };
 }
 
@@ -155,16 +284,27 @@ function matchIntents(expectedIntents, responseDoc, fullText) {
 
 // ── Question evaluation ──
 
-async function runQuestion(q, base, mode, profile, storyContent, ingestProcessingMode) {
-  const result = { id: q.id, pass: true, answerPass: true, contextPass: true, failures: [], durationMs: 0, contextQuality: null };
-  const prepared = await createPreparedSession(base, mode, profile, storyContent, ingestProcessingMode);
+async function runQuestion(q, base, combo, storyContent, ingestConfig) {
+  const result = {
+    id: q.id,
+    pass: true,
+    answerPass: true,
+    contextPass: true,
+    failures: [],
+    durationMs: 0,
+    contextQuality: null,
+    requestedSurface: captureRuntimeSurface(comboRequestPayload(combo)),
+    sessionSurface: null,
+    runtimeSurface: null
+  };
+  const prepared = await createPreparedSession(base, combo, storyContent, ingestConfig);
+  result.sessionSurface = prepared.sessionSurface;
   let r;
   try {
     const start = Date.now();
     r = await fetchJson(base, 'POST', '/chat/completions', {
       session_id: prepared.sessionId,
-      processing_mode: mode,
-      retrieval_profile: profile,
+      ...comboRequestPayload(combo),
       messages: [{ role: 'user', content: q.input }]
     });
     result.durationMs = Date.now() - start;
@@ -176,6 +316,7 @@ async function runQuestion(q, base, mode, profile, storyContent, ingestProcessin
     result.failures.push({ check: 'api', expected: 'successful response', got: `${r.error.code}: ${r.error.message}` });
     return result;
   }
+  result.runtimeSurface = captureRuntimeSurface(r);
 
   const content = r.choices?.[0]?.message?.content || '';
   const doc = r.response_document || null;
@@ -235,7 +376,7 @@ async function runQuestion(q, base, mode, profile, storyContent, ingestProcessin
   return result;
 }
 
-// ── Suite runner: ONE server per suite, iterate profiles and modes on it ──
+// ── Suite runner: ONE server per suite, iterate requested combos on it ──
 
 async function runSuite(suiteDir, port) {
   const evalData = JSON.parse(readFileSync(join(suiteDir, 'eval.json'), 'utf-8'));
@@ -245,71 +386,91 @@ async function runSuite(suiteDir, port) {
   mkdirSync(tmpDir, { recursive: true });
   const configDir = createIsolatedConfig(tmpDir, port);
 
-  const suiteModes = evalData.modes?.length ? evalData.modes : ALL_MODES;
-  const suiteProfiles = evalData.profiles?.length ? evalData.profiles : ALL_PROFILES;
-  const modes = MODE_FILTER ? suiteModes.filter(m => m === MODE_FILTER) : suiteModes;
-  const profiles = PROFILE_FILTER ? suiteProfiles.filter(p => p === PROFILE_FILTER) : suiteProfiles;
-  const ingestProcessingMode = evalData.ingestProcessingMode || 'llm-assisted';
+  const combos = resolveSuiteCombos(evalData);
   const comboResults = [];
+  if (!combos.length) throw new Error(`Suite ${evalData.suiteId} has no matching plugin/evaluation combos`);
 
   let serverProc;
   try {
     serverProc = await startServer(configDir);
     await waitReady(base);
+    const llmRoleSettings = await fetchJson(base, 'GET', '/settings/llm-roles');
 
     console.log(`  ${C.dim}Story prepared for per-session draft staging${C.reset}`);
 
-    // Run all mode×profile combos on the same server
-    for (const mode of modes) {
-      for (const profile of profiles) {
-        const label = `${C.dim}${mode}${C.reset}+${C.dim}${profile}${C.reset}`;
-        process.stdout.write(`    ⏳ ${label}...`);
+    for (const comboConfig of combos) {
+      const label = comboLabel(comboConfig);
+      const displayLabel = `${C.dim}${label}${C.reset}`;
+      const ingestConfig = resolveIngestConfig(evalData, comboConfig);
+      process.stdout.write(`    ⏳ ${displayLabel}...`);
 
-        let passed = 0, failed = 0, totalF1 = 0;
-        let ansPassed = 0, ctxPassed = 0;
-        const results = [];
-        let comboError = null;
+      let passed = 0, failed = 0, totalF1 = 0;
+      let ansPassed = 0, ctxPassed = 0;
+      const results = [];
+      let comboError = null;
 
-        for (const q of evalData.questions) {
-          try {
-            const result = await runQuestion(q, base, mode, profile, storyContent, ingestProcessingMode);
-            results.push(result);
-            if (result.pass) passed++; else failed++;
-            if (result.answerPass) ansPassed++;
-            if (result.contextPass) ctxPassed++;
-            totalF1 += result.contextQuality?.f1 || 0;
-          } catch (e) {
-            results.push({ id: q.id, pass: false, failures: [e.message], durationMs: 0, contextQuality: { recall: 0, precision: 0, f1: 0, details: [] } });
-            failed++;
-            comboError = e.message;
-          }
+      for (const q of evalData.questions) {
+        try {
+          const result = await runQuestion(q, base, comboConfig, storyContent, ingestConfig);
+          results.push(result);
+          if (result.pass) passed++; else failed++;
+          if (result.answerPass) ansPassed++;
+          if (result.contextPass) ctxPassed++;
+          totalF1 += result.contextQuality?.f1 || 0;
+        } catch (e) {
+          results.push({
+            id: q.id,
+            pass: false,
+            failures: [e.message],
+            durationMs: 0,
+            contextQuality: { recall: 0, precision: 0, f1: 0, details: [] },
+            requestedSurface: captureRuntimeSurface(comboRequestPayload(comboConfig)),
+            sessionSurface: null,
+            runtimeSurface: null
+          });
+          failed++;
+          comboError = e.message;
         }
+      }
 
-        const avgF1 = totalF1 / evalData.questions.length;
-        const combo = { mode, profile, suiteId: evalData.suiteId, passed, failed, ansPassed, ctxPassed, total: evalData.questions.length, results, avgContextF1: avgF1, error: comboError };
-        comboResults.push(combo);
+      const avgF1 = totalF1 / evalData.questions.length;
+      const combo = {
+        suiteId: evalData.suiteId,
+        comboLabel: label,
+        requestedSurface: captureRuntimeSurface(comboRequestPayload(comboConfig)),
+        ingestSurface: captureRuntimeSurface(ingestRequestPayload(ingestConfig)),
+        llmRoleSettings,
+        passed,
+        failed,
+        ansPassed,
+        ctxPassed,
+        total: evalData.questions.length,
+        results,
+        avgContextF1: avgF1,
+        error: comboError
+      };
+      comboResults.push(combo);
 
-        const icon = failed === 0 ? `${C.green}✅` : passed > 0 ? `${C.yellow}${passed}/${passed + failed}` : `${C.red}✗ `;
-        process.stdout.write(`\r    ${icon}${C.reset} ${label} F1:${colorScore(avgF1)}\n`);
-        for (const qr of results) {
-          if (!qr.pass) {
-            const tags = [];
-            if (!qr.answerPass) tags.push(`${C.red}ANS${C.reset}`);
-            if (!qr.contextPass) tags.push(`${C.yellow}CTX${C.reset}`);
-            console.log(`      ${C.red}✗ ${qr.id}${C.reset} [${tags.join('+')}] ${C.dim}(${qr.durationMs}ms)${C.reset}`);
-            for (const f of qr.failures) {
-              if (typeof f === 'object') {
-                console.log(`        ${C.yellow}[${f.check}]${C.reset} expected: ${C.green}${f.expected}${C.reset}`);
-                console.log(`        ${' '.repeat(f.check.length + 2)} got:      ${C.red}${f.got}${C.reset}`);
-              } else {
-                console.log(`        ${C.red}${f}${C.reset}`);
-              }
+      const icon = failed === 0 ? `${C.green}✅` : passed > 0 ? `${C.yellow}${passed}/${passed + failed}` : `${C.red}✗ `;
+      process.stdout.write(`\r    ${icon}${C.reset} ${displayLabel} F1:${colorScore(avgF1)}\n`);
+      for (const qr of results) {
+        if (!qr.pass) {
+          const tags = [];
+          if (!qr.answerPass) tags.push(`${C.red}ANS${C.reset}`);
+          if (!qr.contextPass) tags.push(`${C.yellow}CTX${C.reset}`);
+          console.log(`      ${C.red}✗ ${qr.id}${C.reset} [${tags.join('+')}] ${C.dim}(${qr.durationMs}ms)${C.reset}`);
+          for (const f of qr.failures) {
+            if (typeof f === 'object') {
+              console.log(`        ${C.yellow}[${f.check}]${C.reset} expected: ${C.green}${f.expected}${C.reset}`);
+              console.log(`        ${' '.repeat(f.check.length + 2)} got:      ${C.red}${f.got}${C.reset}`);
+            } else {
+              console.log(`        ${C.red}${f}${C.reset}`);
             }
           }
         }
-
-        await sleep(DELAY_MS);
       }
+
+      await sleep(DELAY_MS);
     }
   } finally {
     if (serverProc) serverProc.kill();
@@ -341,12 +502,12 @@ function printMatrix(allResults) {
   for (const suite of suites) {
     const sr = allResults.filter(r => r.suiteId === suite);
     console.log(`\n${C.bold}${C.cyan}═══ ${suite} ═══${C.reset}`);
-    console.log(`  ${C.bold}${'Mode'.padEnd(16)}${'Profile'.padEnd(14)}${'All'.padEnd(12)}${'Ans'.padEnd(12)}${'Ctx'.padEnd(12)}${'Recall'.padEnd(10)}${'Prec'.padEnd(10)}${'F1'.padEnd(10)}${'ms'}${C.reset}`);
-    console.log(`  ${'─'.repeat(96)}`);
+    console.log(`  ${C.bold}${'Combo'.padEnd(42)}${'All'.padEnd(12)}${'Ans'.padEnd(12)}${'Ctx'.padEnd(12)}${'Recall'.padEnd(10)}${'Prec'.padEnd(10)}${'F1'.padEnd(10)}${'ms'}${C.reset}`);
+    console.log(`  ${'─'.repeat(114)}`);
 
     for (const r of sr) {
       if (r.error && !r.results.length) {
-        console.log(`  ${r.mode.padEnd(16)}${r.profile.padEnd(14)}${C.red}ERROR: ${r.error.slice(0, 50)}${C.reset}`);
+        console.log(`  ${r.comboLabel.padEnd(42)}${C.red}ERROR: ${r.error.slice(0, 50)}${C.reset}`);
         continue;
       }
       const n = r.total || r.results.length;
@@ -356,7 +517,7 @@ function printMatrix(allResults) {
       const allP = colorPass(r.passed, r.failed);
       const ansP = colorPass(r.ansPassed ?? r.passed, n - (r.ansPassed ?? r.passed));
       const ctxP = colorPass(r.ctxPassed ?? n, n - (r.ctxPassed ?? n));
-      console.log(`  ${r.mode.padEnd(16)}${r.profile.padEnd(14)}${allP.padEnd(24)}${ansP.padEnd(24)}${ctxP.padEnd(24)}${colorScore(avgRecall).padEnd(21)}${colorScore(avgPrec).padEnd(21)}${colorScore(r.avgContextF1).padEnd(21)}${C.dim}${avgMs}${C.reset}`);
+      console.log(`  ${r.comboLabel.padEnd(42)}${allP.padEnd(24)}${ansP.padEnd(24)}${ctxP.padEnd(24)}${colorScore(avgRecall).padEnd(21)}${colorScore(avgPrec).padEnd(21)}${colorScore(r.avgContextF1).padEnd(21)}${C.dim}${avgMs}${C.reset}`);
     }
   }
 
@@ -373,8 +534,8 @@ function printMatrix(allResults) {
   const sorted = [...valid].sort((a, b) => b.avgContextF1 - a.avgContextF1);
   if (sorted.length >= 2) {
     const best = sorted[0], worst = sorted[sorted.length - 1];
-    console.log(`  ${C.green}Best:${C.reset}  ${best.mode}+${best.profile} (F1: ${best.avgContextF1.toFixed(2)}, pass: ${best.passed}/${best.passed + best.failed})`);
-    console.log(`  ${C.red}Worst:${C.reset} ${worst.mode}+${worst.profile} (F1: ${worst.avgContextF1.toFixed(2)}, pass: ${worst.passed}/${worst.passed + worst.failed})`);
+    console.log(`  ${C.green}Best:${C.reset}  ${best.comboLabel} (F1: ${best.avgContextF1.toFixed(2)}, pass: ${best.passed}/${best.passed + best.failed})`);
+    console.log(`  ${C.red}Worst:${C.reset} ${worst.comboLabel} (F1: ${worst.avgContextF1.toFixed(2)}, pass: ${worst.passed}/${worst.passed + worst.failed})`);
   }
 }
 
@@ -387,10 +548,16 @@ async function main() {
   const suites = SUITE_FILTER ? entries.filter(e => e === SUITE_FILTER) : entries;
   if (!suites.length) { console.error('No suites found.'); process.exit(1); }
 
-  const modes = MODE_FILTER ? [MODE_FILTER] : ALL_MODES;
-  const profiles = PROFILE_FILTER ? [PROFILE_FILTER] : ALL_PROFILES;
+  const filters = [
+    MODE_FILTER ? `mode=${MODE_FILTER}` : null,
+    PROFILE_FILTER ? `profile=${PROFILE_FILTER}` : null,
+    PLANNER_PLUGIN_FILTER ? `planner=${PLANNER_PLUGIN_FILTER}` : null,
+    SEED_PLUGIN_FILTER ? `seed=${SEED_PLUGIN_FILTER}` : null,
+    KB_PLUGIN_FILTER ? `kb=${KB_PLUGIN_FILTER}` : null,
+    GOAL_PLUGIN_FILTER ? `goal=${GOAL_PLUGIN_FILTER}` : null
+  ].filter(Boolean);
 
-  console.log(`${C.bold}${suites.length} suite(s) × variable combos (${modes.join(',')} × ${profiles.join(',')})${C.reset}\n`);
+  console.log(`${C.bold}${suites.length} suite(s)${filters.length ? `, filters: ${filters.join(', ')}` : ''}${C.reset}\n`);
 
   let portCounter = BASE_PORT;
   const allResults = [];

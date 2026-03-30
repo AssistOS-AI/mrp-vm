@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { KBRepositoryManager } from '../../src/kb/repository-manager.mjs';
@@ -163,9 +163,7 @@ describe('KB repositories and session workspaces', () => {
           confidence: 0.9
         }
       ],
-      null,
-      'symbolic-only',
-      'thinkingdb'
+      null
     );
 
     assert.equal(session.workspace.dirty, true);
@@ -179,5 +177,122 @@ describe('KB repositories and session workspaces', () => {
     const journalSource = snapshot.sources.find(source => source.kind === 'conversation-journal');
     assert.ok(journalSource.content.includes('AchillesIDE uses Ploinky.'));
     assert.equal(journalSource.units[0].subject, 'AchillesIDE');
+  });
+
+  it('preserves explicit and session plugin selections ahead of legacy aliases', async () => {
+    const kbConfig = makeKbConfig();
+    const manager = new KBRepositoryManager(null, {}, kbConfig);
+    await manager.boot();
+
+    const conversation = new ConversationHandler({
+      defaultProcessingMode: 'llm-assisted',
+      defaultRetrievalProfile: 'balanced'
+    });
+    conversation.attachKBRepositoryManager(manager);
+
+    const preparedNew = await conversation.prepareTurn(
+      null,
+      [{ role: 'user', content: 'Verify the current plugin selection.' }],
+      null,
+      null,
+      null,
+      'default',
+      'planner-default',
+      'sd-symbolic',
+      'kb-thinkingdb',
+      'gs-symbolic'
+    );
+
+    assert.equal(preparedNew.session.preferredSeedDetectorPlugin, 'sd-symbolic');
+    assert.equal(preparedNew.session.preferredKBPlugin, 'kb-thinkingdb');
+    assert.equal(preparedNew.session.preferredGoalSolverPlugin, 'gs-symbolic');
+    assert.equal(preparedNew.explicitPlannerPlugin, 'planner-default');
+    assert.equal(preparedNew.explicitSeedDetectorPlugin, 'sd-symbolic');
+    assert.equal(preparedNew.explicitKBPlugin, 'kb-thinkingdb');
+    assert.equal(preparedNew.explicitGoalSolverPlugin, 'gs-symbolic');
+
+    const preparedExisting = await conversation.prepareTurn(
+      preparedNew.session.sessionId,
+      [{ role: 'user', content: 'Keep using the same plugins.' }],
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    );
+
+    assert.equal(preparedExisting.requestedSeedDetectorPlugin, 'sd-symbolic');
+    assert.equal(preparedExisting.requestedKBPlugin, 'kb-thinkingdb');
+    assert.equal(preparedExisting.requestedGoalSolverPlugin, 'gs-symbolic');
+    assert.equal(preparedExisting.explicitPlannerPlugin, null);
+    assert.equal(preparedExisting.explicitSeedDetectorPlugin, null);
+    assert.equal(preparedExisting.explicitKBPlugin, null);
+    assert.equal(preparedExisting.explicitGoalSolverPlugin, null);
+  });
+
+  it('derives legacy compatibility fields from current plugin selections instead of stale aliases', async () => {
+    const kbConfig = makeKbConfig();
+    const manager = new KBRepositoryManager(null, {}, kbConfig);
+    await manager.boot();
+
+    const conversation = new ConversationHandler({
+      defaultProcessingMode: 'llm-assisted',
+      defaultRetrievalProfile: 'balanced'
+    });
+    conversation.attachKBRepositoryManager(manager);
+
+    const session = await conversation.createSession(null, 'llm-assisted', 'balanced', 'default');
+    conversation.commitSuccessfulTurn(
+      session,
+      'Verify this relation.',
+      '# Answer',
+      [],
+      null,
+      'planner-default',
+      'sd-symbolic',
+      'kb-thinkingdb',
+      'gs-symbolic'
+    );
+
+    const meta = conversation.getSessionMeta(session.sessionId);
+    assert.equal(meta.processing_mode, 'symbolic-only');
+    assert.equal(meta.retrieval_profile, 'thinkingdb');
+  });
+
+  it('promotes workspace plugin artifacts into the repository and rehydrates them on mount', async () => {
+    const kbConfig = makeKbConfig();
+    const manager = new KBRepositoryManager(null, {}, kbConfig);
+    await manager.boot();
+
+    const conversation = new ConversationHandler({
+      defaultSeedDetectorPlugin: 'sd-symbolic',
+      defaultKBPlugin: 'kb-thinkingdb',
+      defaultGoalSolverPlugin: 'gs-symbolic'
+    });
+    conversation.attachKBRepositoryManager(manager);
+
+    const session = await conversation.createSession(null, null, null, 'default');
+    const workspaceArtifactPath = await manager.saveWorkspacePluginArtifact(
+      session.sessionId,
+      'kb-thinkingdb',
+      'src-test.json',
+      { note: 'workspace-artifact' }
+    );
+    assert.equal(existsSync(workspaceArtifactPath), true);
+
+    const savedMeta = await conversation.saveWorkspace(session.sessionId, {
+      fork: true,
+      name: 'artifact fork'
+    });
+    const repositoryRecord = manager.getRepository(savedMeta.kb_id);
+    const repositoryArtifactPath = join(repositoryRecord.rootDir, 'plugins', 'kb-thinkingdb', 'src-test.json');
+    const rehydratedWorkspacePath = join(kbConfig.workspaceRootDir, session.sessionId, 'plugins', 'kb-thinkingdb', 'src-test.json');
+
+    assert.equal(existsSync(repositoryArtifactPath), true);
+    assert.equal(existsSync(rehydratedWorkspacePath), true);
+    assert.equal(JSON.parse(readFileSync(repositoryArtifactPath, 'utf-8')).note, 'workspace-artifact');
   });
 });

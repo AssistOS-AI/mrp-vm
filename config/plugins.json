@@ -1,5 +1,6 @@
 {
   "defaultPlannerPlugin": "planner-default",
+  "plannerFallbackOrder": ["planner-default", "planner-depth"],
   "defaultSeedDetectorPlan": ["sd-symbolic", "sd-llm-fast", "sd-llm-deep"],
   "defaultKBPlan": ["kb-fast", "kb-balanced", "kb-thinkingdb"],
   "defaultGoalSolverPlan": ["gs-symbolic", "gs-llm-fast", "gs-llm-deep"],

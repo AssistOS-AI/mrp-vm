@@ -27,6 +27,7 @@ Minimum roles shown:
 - `goal-fast`
 - `goal-deep`
 - `kb-ingest`
+- `kb-derive`
 - `planner`
 
 ## Persistence
@@ -35,6 +36,14 @@ Minimum roles shown:
 - UI preferences MAY use `localStorage`
 - server-backed LLM role settings MUST persist via
   DS013 settings endpoints
+
+## Input Behavior
+
+The main chat textarea MUST use:
+
+- `Enter` to submit the current message
+- `Ctrl+Enter` to insert a newline for multi-line
+  input
 
 ## Dependencies
 

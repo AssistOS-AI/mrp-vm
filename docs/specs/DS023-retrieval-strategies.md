@@ -20,6 +20,18 @@ Therefore KB plugins MUST be:
 - diversity-aware
 - able to perform sufficiency checks
 
+The current built-in plugins implement a lightweight
+baseline of that rule:
+
+- hybrid candidate generation through one or more
+  backends
+- deduplication and role-aware scoring
+- heuristic sufficiency based on evidence count plus
+  preferred-role coverage
+
+Richer marginal-utility scoring and derived-memory
+authoring remain forward work.
+
 ## Built-In KB Plugins
 
 - `kb-fast`
@@ -40,6 +52,12 @@ Every KB plugin SHOULD implement this generic shape:
    required
 6. check sufficiency before handing evidence to the
    goal solver
+
+The planner chooses among `kb-plugin`s at stage
+granularity. A built-in KB plugin MAY still compose
+multiple retrieval backends internally and MAY
+perform local cheap-to-heavy escalation between its
+primary and secondary retrieval strategies.
 
 ## Candidate Sources
 
@@ -108,6 +126,12 @@ all enabled KB plugins. Each plugin may:
 - build or refresh plugin-private indices
 - create derived memory units
 - store plugin-private artifacts
+
+The current built-in baseline writes lightweight
+plugin-private ingest artifacts that summarize source
+hashes, unit counts, symbolic-fact counts, and role
+coverage. Richer derived memories remain optional
+future work.
 
 ## Dependencies
 

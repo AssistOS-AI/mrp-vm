@@ -6,9 +6,12 @@ the plugin-kernel refactor.
 
 ## Architectural Thesis
 
-MRP-VM is no longer organized around hardcoded
-processing modes, retrieval profiles, or special-case
-strategies inside the core engine.
+MRP-VM is no longer primarily organized around
+hardcoded processing modes or retrieval profiles in
+the core engine. External wrappers remain subordinate
+helpers, but they are now consumed through plugin
+execution context rather than through a hardcoded
+core-stage loop.
 
 The system is organized around four typed plugin
 families:
@@ -21,8 +24,22 @@ families:
 The core is intentionally thin. It owns session
 state, operational budgets, shared utilities, and the
 generic orchestration loop that executes plugin plans.
-All domain behavior, reasoning behavior, retrieval
-behavior, and most LLM use live in plugins.
+The current baseline deliberately keeps a fixed
+execution skeleton:
+
+- `mrp-plan-plugin`
+- `sd-plugin`
+- shared parse/decompose helpers
+- `kb-plugin`
+- `gs-plugin`
+
+This fixed skeleton is considered conformant for the
+current VM generation because the kernel remains
+neutral with respect to *which* plugins are chosen and
+what internal algorithms they use. The core does not
+encode concrete retrieval logic, seed extraction
+algorithms, answer synthesis policies, or helper
+interpreter loops.
 
 ## Core Principles
 
@@ -95,11 +112,13 @@ sd-plugin -> parser/decomposer -> kb-plugin -> gs-plugin
 6. The core runs `kb-plugin` candidates in planner
    order until evidence is sufficient or the stage is
    exhausted.
-7. Optional external interpreter plugins MAY run as
-   subordinate helpers for one or more intents.
+7. The selected `gs-plugin` MAY invoke subordinate
+   external helper wrappers through the plugin
+   context for one or more intents.
 8. The core runs `gs-plugin` candidates in planner
-   order until a final grounded answer is produced or
-   the stage is exhausted.
+   order until a grounded answer is produced, the
+   stage is exhausted, or only a weak deterministic
+   `no-context` result remains.
 9. The planner receives the execution trace and
    records outcome statistics for later adaptation.
 10. The session commits only after a successful final
@@ -127,7 +146,12 @@ The old terms map to the new model as follows:
 - old processing mode -> `sd-plugin` and `gs-plugin`
 - old retrieval profile -> `kb-plugin`
 - old strategy registry -> typed plugin registry
-- old retrieval profile escalation -> planner logic
+- old retrieval profile selection -> planner-selected
+  `kb-plugin`
+- old top-level retrieval escalation -> planner logic
+  at the `kb-plugin` stage; built-in KB plugins may
+  still perform internal backend escalation as an
+  implementation detail
 
 Example migration:
 
@@ -137,6 +161,12 @@ Example migration:
 - `fast` retrieval profile -> `kb-fast`
 - `balanced` retrieval profile -> `kb-balanced`
 - `thinkingdb` retrieval profile -> `kb-thinkingdb`
+
+Legacy aliases remain migration-only compatibility
+labels. The authoritative session state is the typed
+plugin selection, and compatibility values are
+derived from those plugin IDs when needed by legacy
+API surfaces.
 
 ## KB Architecture
 
@@ -189,9 +219,17 @@ design:
 - Failure of one candidate plugin does not fail the
   whole request if the planner has more candidates
   for the same stage.
+- A plugin may return a weak non-terminal outcome such
+  as `unsupported`, `insufficient`, or `no-context`
+  so that the core can continue cheap-first
+  backtracking.
 - Exhaustion of a stage without a usable result is a
   request failure unless DS017 defines a valid
   deterministic no-context rendering path.
+- If a planner yields only weak `no-context` output
+  after insufficient retrieval evidence, the core MAY
+  escalate to a heavier planner before accepting that
+  weak answer.
 - Planner learning MUST NOT silently override an
   explicit user/plugin selection.
 
@@ -201,8 +239,10 @@ Every request MUST emit a plugin execution trace with:
 
 - planner plugin used
 - plugin candidates tried per stage
+- planner plugin responsible for each stage attempt
 - latency per plugin
 - success/failure outcome
+- final answer status (`answered` vs `no-context`)
 - LLM role and resolved model when applicable
 - fallback/escalation path
 
