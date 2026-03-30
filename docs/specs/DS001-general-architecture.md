@@ -13,12 +13,13 @@ helpers, but they are now consumed through plugin
 execution context rather than through a hardcoded
 core-stage loop.
 
-The system is organized around four typed plugin
+The system is organized around five typed plugin
 families:
 
 - `sd-plugin` — seed detectors
 - `kb-plugin` — knowledge/context retrievers
 - `gs-plugin` — goal solvers
+- `val-plugin` — response validators
 - `mrp-plan-plugin` — meta-rational planners
 
 The core is intentionally thin. It owns session
@@ -119,10 +120,16 @@ sd-plugin -> parser/decomposer -> kb-plugin -> gs-plugin
    order until a grounded answer is produced, the
    stage is exhausted, or only a weak deterministic
    `no-context` result remains.
-9. The planner receives the execution trace and
-   records outcome statistics for later adaptation.
-10. The session commits only after a successful final
-    response.
+9. If a `val-plugin` is registered and the goal
+   solver produced a successful answer, the core
+   runs validation. If the validator rejects the
+   answer, the core treats this as a retryable
+   failure and the planner backtracking loop may
+   attempt an alternative plan.
+10. The planner receives the execution trace and
+    records outcome statistics for later adaptation.
+11. The session commits only after a successful and
+    validated final response.
 
 ## Shared Services
 

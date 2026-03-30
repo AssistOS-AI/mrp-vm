@@ -102,7 +102,7 @@
 
   function renderResponseTable(doc) {
     const statusClass = status => `status-badge status-${status}`;
-    let html = '<table><colgroup><col class="col-act"><col class="col-intent"><col class="col-context"><col class="col-answer"></colgroup>';
+    let html = '<table class="modal-table"><colgroup><col class="col-act"><col class="col-intent"><col class="col-context"><col class="col-answer"></colgroup>';
     html += '<thead><tr><th>Act</th><th>Intent</th><th>Context</th><th>Answer</th></tr></thead><tbody>';
     for (const group of doc.groups) {
       const answer = group.answerMarkdown ? renderMarkdown(group.answerMarkdown) : '<em>-</em>';
@@ -117,13 +117,252 @@
     return html;
   }
 
-  function addMessage(role, content, responseDoc) {
+  function renderTraceStages(trace) {
+    const trees = trace.trees || [];
+    if (!trees.length && !trace.stages?.length) return '<em>No execution data</em>';
+    if (!trees.length) return renderFlatStages(trace);
+    let html = '';
+    if (trace.inputMessage) {
+      html += `<div class="tree-root"><span class="tree-icon">💬</span> <strong>Input</strong> <span class="tree-ellipsis" data-full="${esc(trace.inputMessage)}">${esc(trace.inputMessage)}</span></div>`;
+    }
+    for (let ti = 0; ti < trees.length; ti++) {
+      const isRetry = ti > 0;
+      const statusIcon = (ti === trees.length - 1 && trace.finalStatus === 'success') ? '✅' : isRetry ? '🔄' : (trace.finalStatus === 'success' ? '✅' : '❌');
+      html += `<div class="tree-node tree-execution ${isRetry ? 'tree-retry' : ''}">`;
+      html += `<span class="tree-icon">${statusIcon}</span> <strong>Execution ${ti + 1}</strong>`;
+      if (isRetry) html += ' <span class="tree-notes">(backtrack)</span>';
+      html += '<div class="tree-children">';
+      html += renderPlanTree(trees[ti]);
+      html += '</div></div>';
+    }
+    if (trace.finalAnswerStatus) {
+      html += `<div class="tree-final"><span class="tree-icon">${trace.finalAnswerStatus === 'answered' ? '✅' : '🔸'}</span> <strong>Result: ${esc(trace.finalAnswerStatus)}</strong></div>`;
+    }
+    return html;
+  }
+
+  function snipUI(text, max) {
+    // No longer used for tree rendering — kept for non-tree contexts
+    if (!text) return '';
+    if (!text.includes('\n') && text.length <= max) return text;
+    if (text.includes('\n')) {
+      const first = text.split('\n')[0];
+      return first.length <= max ? first + ' …' : first.slice(0, max) + '…';
+    }
+    return text.slice(0, max) + '…';
+  }
+
+  function ellipsis(text, tag) {
+    // Renders a CSS-truncated span; click expands to full text
+    if (!text) return '';
+    var label = tag ? '<em>' + tag + '</em> ' : '';
+    return '<span class="tree-ellipsis" data-full="' + esc(text) + '">' + label + esc(text) + '</span>';
+  }
+
+  function renderPlanTree(plan) {
+    let html = '<div class="tree-node tree-plan">';
+    html += '<span class="tree-icon">📋</span> ';
+    html += '<strong>Plan</strong> <code>' + esc(plan.plannerPluginId || '') + '</code>';
+    if (plan.notes?.length) html += ' <span class="tree-notes">' + esc(plan.notes.join(', ')) + '</span>';
+    html += '<div class="tree-order">';
+    html += 'SD: ' + (plan.seedDetectorOrder || []).map(function(id){return '<code>'+esc(id)+'</code>';}).join(' → ');
+    html += ' · KB: ' + (plan.kbPluginOrder || []).map(function(id){return '<code>'+esc(id)+'</code>';}).join(' → ');
+    html += ' · GS: ' + (plan.goalSolverOrder || []).map(function(id){return '<code>'+esc(id)+'</code>';}).join(' → ');
+    html += '</div><div class="tree-children">';
+    for (const child of plan.children || []) html += renderTreeNode(child);
+    html += '</div></div>';
+    return html;
+  }
+
+  function renderTreeNode(node) {
+    if (node.type === 'stage') return renderStageNode(node);
+    if (node.type === 'decompose') return renderDecomposeNode(node);
+    if (node.type === 'plugin') return renderPluginNode(node);
+    return '';
+  }
+
+  function renderStageNode(node) {
+    const icons = { 'seed-detector': '🌱', 'kb': '📚', 'goal-solver': '🎯', 'validation': '✔️' };
+    const labels = { 'seed-detector': 'Seed Detection (sd-plugin)', 'kb': 'Context Retrieval (kb-plugin)', 'goal-solver': 'Goal Solving (gs-plugin)', 'validation': 'Validation (val-plugin)' };
+    let html = `<div class="tree-node tree-stage">`;
+    html += `<span class="tree-icon">${icons[node.stage] || '⚙️'}</span> <strong>${labels[node.stage] || node.stage}</strong>`;
+    html += '<div class="tree-children">';
+    for (const child of node.children || []) {
+      html += renderPluginNode(child);
+    }
+    html += '</div></div>';
+    return html;
+  }
+
+  function renderDecomposeNode(node) {
+    let html = '<div class="tree-node tree-decompose">';
+    html += '<span class="tree-icon">🔬</span> <strong>Parse &amp; Decompose</strong>';
+    html += ' <span class="tree-meta">' + (node.intentGroups?.length || 0) + ' intent seeds, ' + (node.currentTurnUnitCount || 0) + ' context units from turn</span>';
+    html += '<div class="tree-children">';
+    for (const ig of node.intentGroups || []) {
+      html += '<div class="tree-leaf tree-intent">';
+      html += '<span class="tree-icon">🎯</span> <strong>Intent Seed ' + ig.groupNumber + '</strong> ';
+      html += '<span class="tree-badge">' + esc(ig.act) + '</span> ';
+      html += ellipsis(ig.intent + (ig.output ? '\nExpected output: ' + ig.output : ''));
+      html += '</div>';
+    }
+    for (const cp of node.contextProfiles || []) {
+      html += '<div class="tree-leaf tree-profile">';
+      html += '<span class="tree-icon">🔎</span> <strong>Context Profile ' + cp.intentGroupNumber + '</strong> ';
+      html += 'needed roles: <em>' + ((cp.neededRoles || []).join(', ') || 'any') + '</em> · query: ';
+      html += ellipsis((cp.queryTerms || []).join(', '));
+      html += '</div>';
+    }
+    html += '</div></div>';
+    return html;
+  }
+
+  function renderPluginNode(node) {
+    var si = function(s){return s==='success'?'✅':s==='insufficient'?'⚠️':s==='no-context'?'🔸':s==='skipped-budget'?'⏭️':s==='unsupported'?'🚫':s==='accepted'?'✅':s==='rejected'?'🚫':'❌';};
+    var cls = node.status==='success'||node.status==='accepted'?'tree-ok':node.status==='insufficient'?'tree-warn':node.status==='no-context'?'tree-weak':'tree-fail';
+    var html = '<div class="tree-node tree-plugin '+cls+'">';
+    html += '<span class="tree-icon">'+si(node.status)+'</span> ';
+    html += '<code>'+esc(node.pluginId)+'</code> ';
+    html += '<span class="tree-status">'+esc(node.status)+'</span>';
+    if(node.durationMs!=null) html+=' <span class="tree-dur">'+node.durationMs+'ms</span>';
+    if(node.llmCalls) html+=' <span class="tree-llm">'+node.llmCalls+' LLM</span>';
+    if(node.model) html+=' <span class="tree-model">'+esc(node.model)+'</span>';
+    if(node.evidenceCount!=null) html+=' <span class="tree-evidence">'+node.evidenceCount+' evidence</span>';
+    if(node.input) html+='<div class="tree-io">'+ellipsis(node.input,'Input:')+'</div>';
+    if(node.output) html+='<div class="tree-io">'+ellipsis(node.output,'Output:')+'</div>';
+    if(node.contextCNL) html+='<div class="tree-io">'+ellipsis(node.contextCNL,'Context CNL:')+'</div>';
+    if(node.resolvedIntents?.length){
+      html+='<div class="tree-children">';
+      for(var ri of node.resolvedIntents){
+        html+='<div class="tree-node tree-ri">';
+        html+='<span class="tree-icon">📎</span> <strong>Resolved Intent '+ri.intentRef+'</strong> ';
+        html+='<span class="tree-badge">'+esc(ri.act||'')+'</span> ';
+        html+=ellipsis(ri.intent||'');
+        html+='<div class="tree-meta">'+ri.kbCount+' KB + '+ri.sessionCount+' session + '+ri.currentTurnCount+' turn</div>';
+        if(ri.kbClaims?.length){html+='<div class="tree-children">';for(var c of ri.kbClaims)html+='<div class="tree-leaf"><span class="tree-icon">📄</span> '+ellipsis(c)+'</div>';html+='</div>';}
+        if(ri.sessionClaims?.length){html+='<div class="tree-children">';for(var c2 of ri.sessionClaims)html+='<div class="tree-leaf"><span class="tree-icon">💬</span> '+ellipsis(c2)+'</div>';html+='</div>';}
+        if(ri.currentTurnClaims?.length){html+='<div class="tree-children">';for(var c3 of ri.currentTurnClaims)html+='<div class="tree-leaf"><span class="tree-icon">🔄</span> '+ellipsis(c3)+'</div>';html+='</div>';}
+        if(ri.resolvedMarkdown) html+='<div class="tree-io">'+ellipsis(ri.resolvedMarkdown,'Resolved frame:')+'</div>';
+        html+='</div>';
+      }
+      html+='</div>';
+    }
+    if(node.gsInputIntents?.length){
+      html+='<div class="tree-children">';
+      for(var gi of node.gsInputIntents){
+        html+='<div class="tree-node tree-ri">';
+        html+='<span class="tree-icon">📎</span> <strong>Resolved Intent '+gi.intentRef+'</strong> ';
+        html+='<span class="tree-badge">'+esc(gi.act||'')+'</span> '+esc(gi.intent||'')+' — '+gi.evidenceCount+' evidence';
+        if(gi.resolvedMarkdown) html+='<div class="tree-io">'+ellipsis(gi.resolvedMarkdown,'Full frame:')+'</div>';
+        html+='</div>';
+      }
+      html+='</div>';
+    }
+    if(node.error) html+='<div class="tree-err">'+esc(node.error.code||'')+': '+esc(node.error.message||'')+'</div>';
+    html+='</div>';
+    return html;
+  }
+
+  function renderFlatStages(trace) {
+    let html = '<div class="tree-children">';
+    for (const s of trace.stages || []) {
+      html += renderPluginNode({ ...s, pluginId: s.pluginId, input: s.inputSnippet, output: s.outputSnippet });
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function showTraceModal(responseDoc, trace) {
+    const existing = document.querySelector('.trace-overlay');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'trace-overlay';
+    const hasTable = responseDoc?.groups?.length;
+    const hasTrace = trace?.trees?.length || trace?.stages?.length;
+    let activeTab = hasTrace ? 'tree' : 'detail';
+    let isFullscreen = false;
+    let modalW = Math.min(900, window.innerWidth * 0.9);
+    let modalH = Math.min(700, window.innerHeight * 0.85);
+
+    function render() {
+      const style = isFullscreen
+        ? 'width:100vw;max-width:100vw;height:100vh;max-height:100vh;border-radius:0'
+        : `width:${modalW}px;height:${modalH}px`;
+      let html = `<div class="trace-modal" style="${style}">`;
+      html += '<div class="trace-modal-header"><h2>🌳 Execution Tree</h2><div>';
+      html += `<button class="trace-modal-fs-btn">${isFullscreen ? '⊡' : '⊞'}</button>`;
+      html += '<button class="trace-modal-close">&times;</button></div></div>';
+      if (hasTable && hasTrace) {
+        html += '<div class="trace-modal-tabs">';
+        html += `<button class="trace-tab ${activeTab === 'tree' ? 'active' : ''}" data-tab="tree">🌳 Execution Tree</button>`;
+        html += `<button class="trace-tab ${activeTab === 'detail' ? 'active' : ''}" data-tab="detail">📋 Response Detail</button>`;
+        html += '</div>';
+      }
+      html += '<div class="trace-modal-body">';
+      if (activeTab === 'detail' && hasTable) html += renderResponseTable(responseDoc);
+      else if (hasTrace) html += renderTraceStages(trace);
+      html += '</div>';
+      if (!isFullscreen) html += '<div class="trace-resize-handle"></div>';
+      html += '</div>';
+      overlay.innerHTML = html;
+    }
+    render();
+    // Drag resize from corner handle
+    overlay.addEventListener('mousedown', e => {
+      if (!e.target.classList.contains('trace-resize-handle')) return;
+      e.preventDefault();
+      const startX = e.clientX, startY = e.clientY, startW = modalW, startH = modalH;
+      const onMove = ev => {
+        modalW = Math.max(400, startW + (ev.clientX - startX));
+        modalH = Math.max(300, startH + (ev.clientY - startY));
+        const m = overlay.querySelector('.trace-modal');
+        if (m) { m.style.width = modalW + 'px'; m.style.height = modalH + 'px'; }
+      };
+      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay || e.target.closest('.trace-modal-close')) { overlay.remove(); return; }
+      if (e.target.closest('.trace-modal-fs-btn')) { isFullscreen = !isFullscreen; render(); return; }
+      const tab = e.target.closest('.trace-tab');
+      if (tab) { activeTab = tab.dataset.tab; render(); return; }
+      const el = e.target.closest('.tree-ellipsis[data-full]');
+      if (el) el.classList.toggle('tree-expanded');
+    });
+    document.addEventListener('keydown', function esc(e) {
+      if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); }
+    });
+    document.body.appendChild(overlay);
+  }
+
+  function extractAnswerText(responseDoc) {
+    if (!responseDoc?.groups?.length) return null;
+    const parts = [];
+    for (const group of responseDoc.groups) {
+      if (group.answerMarkdown) parts.push(group.answerMarkdown.trim());
+    }
+    return parts.length ? parts.join('\n\n') : null;
+  }
+
+  function addMessage(role, content, responseDoc, executionTrace) {
     const div = document.createElement('div');
     div.className = `msg ${role}`;
-    if (role === 'assistant' && responseDoc?.groups?.length) {
-      div.innerHTML = renderResponseTable(responseDoc);
-    } else if (role === 'assistant') {
-      div.innerHTML = `<div class="fallback-md">${renderMarkdown(content)}</div>`;
+    if (role === 'assistant') {
+      const answerText = extractAnswerText(responseDoc);
+      const displayHtml = answerText
+        ? `<div class="answer-text">${renderMarkdown(answerText)}</div>`
+        : `<div class="answer-text">${renderMarkdown(content)}</div>`;
+      const hasDetails = responseDoc?.groups?.length || executionTrace?.stages?.length;
+      const traceBtn = hasDetails
+        ? '<span class="msg-trace-btn">🌳 Execution Tree</span>'
+        : '';
+      div.innerHTML = displayHtml + traceBtn;
+      if (hasDetails) {
+        div.querySelector('.msg-trace-btn').addEventListener('click', () => {
+          showTraceModal(responseDoc, executionTrace);
+        });
+      }
     } else {
       div.textContent = content;
     }
@@ -338,7 +577,7 @@
       }
       sessionId = data.session_id || sessionId;
       await refreshSessionState();
-      addMessage('assistant', data.choices?.[0]?.message?.content || '(empty response)', data.response_document);
+      addMessage('assistant', data.choices?.[0]?.message?.content || '(empty response)', data.response_document, data.execution_trace);
     } catch (error) {
       hideLoading();
       showError(error.message);
@@ -455,6 +694,27 @@
     }
   }
 
+  async function stageContentInWorkspace(name, content) {
+    await ensureSession();
+    showLoading(`Staging ${name}...`);
+    try {
+      const body = { name, content };
+      if (seedSelect.value) body.seed_detector_plugin = seedSelect.value;
+      const data = await fetchJson(`/sessions/${sessionId}/workspace/sources`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      hideLoading();
+      if (data.error) throw new Error(data.error.message || 'Failed to stage source');
+      await refreshWorkspace();
+      addMessage('assistant', `Staged "${name}" (${data.unitCount || 0} units) in draft for KB "${workspaceState?.kbName || ''}".`);
+    } catch (error) {
+      hideLoading();
+      showError(error.message);
+    }
+  }
+
   plannerSelect.addEventListener('change', savePrefs);
   seedSelect.addEventListener('change', savePrefs);
   kbPluginSelect.addEventListener('change', savePrefs);
@@ -501,13 +761,41 @@
   forkKbBtn.addEventListener('click', () => forkCurrentKb());
   saveKbBtn.addEventListener('click', () => saveCurrentKb());
 
+  const attachBtn = $('#attach-btn');
+  const evalBtn = $('#eval-btn');
+  const evalDropdown = $('#eval-dropdown');
+
+  attachBtn.addEventListener('click', () => fileInput.click());
+
+  evalBtn.addEventListener('click', async () => {
+    if (!evalDropdown.classList.contains('hidden')) {
+      evalDropdown.classList.add('hidden');
+      return;
+    }
+    try {
+      const data = await fetchJson('/eval-sources');
+      evalDropdown.innerHTML = (data.sources || []).map(s =>
+        `<button type="button" data-content="${btoa(unescape(encodeURIComponent(s.content)))}">${esc(s.name)}</button>`
+      ).join('') || '<span style="padding:.4rem;color:#888">No eval suites found</span>';
+    } catch { evalDropdown.innerHTML = '<span style="padding:.4rem;color:#888">Error loading</span>'; }
+    evalDropdown.classList.remove('hidden');
+  });
+
+  evalDropdown.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-content]');
+    if (!btn) return;
+    evalDropdown.classList.add('hidden');
+    input.value = decodeURIComponent(escape(atob(btn.dataset.content)));
+    input.focus();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#attach-menu-wrap')) evalDropdown.classList.add('hidden');
+  });
+
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file) return;
-    if (!file.name.endsWith('.md') && !file.name.endsWith('.txt')) {
-      showError('Only .md and .txt files accepted');
-      return;
-    }
     const reader = new FileReader();
     reader.onload = async () => {
       try {

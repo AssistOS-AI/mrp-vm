@@ -35,8 +35,8 @@ export class DefaultPlannerPlugin {
     const explicit = input?.explicitSelections || {};
     const sessionPrefs = input?.sessionPreferences || {};
     const notes = ['adaptive-ranking'];
-    const defaults = this._defaultsForInput(input, notes);
     const signals = this._deriveSignals(input);
+    const defaults = this._defaultsForInput(signals, notes);
     return {
       plannerPluginId: this.getDescriptor().id,
       seedDetectorOrder: this._order(
@@ -186,13 +186,13 @@ export class DefaultPlannerPlugin {
     return 0.1;
   }
 
-  _defaultsForInput(input, notes) {
+  _defaultsForInput(signals, notes) {
     const cheapFirst = {
       seedDetectorPlan: this.config.defaultSeedDetectorPlan || ['sd-symbolic', 'sd-llm-fast', 'sd-llm-deep'],
       kbPlan: this.config.defaultKBPlan || ['kb-fast', 'kb-balanced', 'kb-thinkingdb'],
       goalSolverPlan: this.config.defaultGoalSolverPlan || ['gs-symbolic', 'gs-llm-fast', 'gs-llm-deep']
     };
-    const { wantsDepth, wantsSpeed, symbolicCue, retrievalHeavy } = this._deriveSignals(input);
+    const { wantsDepth, wantsSpeed, symbolicCue, retrievalHeavy } = signals;
 
     if (wantsDepth) {
       notes.push('depth-signals');

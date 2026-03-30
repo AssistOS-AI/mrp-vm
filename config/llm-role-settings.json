@@ -6,6 +6,7 @@
     "goal-deep": { "model": "test-fast" },
     "kb-ingest": { "model": "test-fast" },
     "kb-derive": { "model": "test-fast" },
+    "validation": { "model": "test-fast" },
     "planner": { "model": "test-fast" }
   },
   "pluginOverrides": {

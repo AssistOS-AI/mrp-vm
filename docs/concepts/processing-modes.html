@@ -1,54 +1,64 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Processing Modes - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
-<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html">Retrieval</a> <a href="processing-modes.html" class="current">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="../future/thinkingdb.html">ThinkingDB</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html">Cache</a></nav>
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Plugin Types &amp; Strategies - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html">Retrieval</a> <a href="processing-modes.html" class="current">Plugin Types</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="planner.html">Planner</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html">Cache</a></nav>
 
-<h1>Processing Modes <span class="badge done">IMPLEMENTED</span></h1>
-<p>Every language-processing step (normalization, context extraction, synthesis) goes through a <strong>strategy interface</strong> (<a href="../specs/DS022-processing-strategies.md">DS022</a>). Two modes are available:</p>
+<h1>Plugin Types &amp; Strategies <span class="badge done">DS003 / DS022 / DS027</span></h1>
+<p>MRP-VM expresses all domain behavior through four typed plugin families. The core kernel is neutral — it orchestrates plugin execution but never contains retrieval, normalization, or synthesis logic.</p>
 
-<h2>Comparison</h2>
+<h2>The Four Plugin Types</h2>
 <table>
-<tr><th>Aspect</th><th>llm-assisted</th><th>symbolic-only</th></tr>
-<tr><td>Latency per turn</td><td>~2–8 seconds</td><td>~2 ms</td></tr>
-<tr><td>LLM cost</td><td>3 calls/turn</td><td>Zero</td></tr>
-<tr><td>Quality on complex input</td><td>High</td><td>Lower</td></tr>
-<tr><td>Determinism</td><td>No (LLM variance)</td><td>Yes</td></tr>
-<tr><td>Model override</td><td>Yes</td><td>No</td></tr>
-<tr><td>Corrective retry</td><td>Yes (1 retry)</td><td>No</td></tr>
+<tr><th>Type</th><th>Role</th><th>Built-in Implementations</th></tr>
+<tr><td><code>sd-plugin</code></td><td>Seed detection: normalize user input into Intent CNL + context seeds</td><td><code>sd-symbolic</code>, <code>sd-llm-fast</code>, <code>sd-llm-deep</code></td></tr>
+<tr><td><code>kb-plugin</code></td><td>Knowledge retrieval: goal-conditioned evidence gathering</td><td><code>kb-fast</code>, <code>kb-balanced</code>, <code>kb-thinkingdb</code></td></tr>
+<tr><td><code>gs-plugin</code></td><td>Goal solving: produce grounded answer from evidence</td><td><code>gs-symbolic</code>, <code>gs-llm-fast</code>, <code>gs-llm-deep</code></td></tr>
+<tr><td><code>val-plugin</code></td><td>Validation: verify answer is grounded and correct, reject to force replanning</td><td><code>val-llm</code></td></tr>
+<tr><td><code>mrp-plan-plugin</code></td><td>Meta-rational planning: order plugin execution per request</td><td><code>planner-default</code>, <code>planner-depth</code></td></tr>
 </table>
 
-<h2>llm-assisted <span class="badge done">IMPLEMENTED</span></h2>
-<p>Uses AchillesAgentLib (<a href="../specs/DS015-llmagent-integration.md">DS015</a>) for 4 capabilities:</p>
+<h2>Execution Flow</h2>
+<pre><code>Request → Planner builds plan
+  → sd-plugin candidates (first success)
+  → parser/decomposer (shared services)
+  → kb-plugin candidates (first sufficient)
+  → gs-plugin candidates (first success or no-context fallback)
+  → val-plugin validates answer (reject → replan)
+→ Response</code></pre>
+
+<h2>Fallback &amp; Backtracking</h2>
+<p>Each stage tries candidates in planner-determined order. If a plugin returns <code>unsupported</code> or <code>error</code>, the next candidate is tried. Three levels of backtracking:</p>
+<ol>
+<li><strong>Intra-stage:</strong> next plugin candidate within the same stage</li>
+<li><strong>Cross-planner:</strong> if all stages fail, try the next planner (e.g. <code>planner-depth</code>)</li>
+<li><strong>Weak recovery:</strong> if only <code>no-context</code> results are produced, accept the best weak answer rather than failing</li>
+</ol>
+
+<h2>Plugin Descriptor</h2>
+<p>Every plugin exposes a descriptor (DS003):</p>
+<pre><code>{
+  id: "kb-balanced",
+  type: "kb-plugin",
+  costClass: "moderate",
+  usesLLM: false,
+  maxLLMCalls: 0,
+  modelRoles: [],
+  plannerHints: {
+    supportedActs: ["compare", "explain"],
+    topicTags: ["technical"],
+    preferredDepth: "medium",
+    evidenceStyle: ["hybrid"]
+  }
+}</code></pre>
+
+<h2>Legacy Compatibility</h2>
+<p>The old <code>processing_mode</code> and <code>retrieval_profile</code> concepts map to typed plugins:</p>
 <table>
-<tr><th>Capability</th><th>Prompt file</th><th>When</th></tr>
-<tr><td>Intent normalization</td><td><code>config/prompts/normalize-intent.md</code></td><td>Every turn</td></tr>
-<tr><td>Session context extraction</td><td><code>config/prompts/normalize-session-context.md</code></td><td>Every turn</td></tr>
-<tr><td>Persistent context normalization</td><td><code>config/prompts/normalize-context.md</code></td><td>At KB ingest</td></tr>
-<tr><td>Answer synthesis</td><td><code>config/prompts/synthesize.md</code></td><td>Every turn</td></tr>
+<tr><th>Legacy</th><th>Plugin Equivalent</th></tr>
+<tr><td><code>symbolic-only</code></td><td><code>sd-symbolic</code> + <code>gs-symbolic</code></td></tr>
+<tr><td><code>llm-assisted</code></td><td><code>sd-llm-fast</code> + <code>gs-llm-fast</code></td></tr>
+<tr><td><code>fast</code> profile</td><td><code>kb-fast</code></td></tr>
+<tr><td><code>balanced</code> profile</td><td><code>kb-balanced</code></td></tr>
+<tr><td><code>thinkingdb</code> profile</td><td><code>kb-thinkingdb</code></td></tr>
 </table>
-<p><strong>Corrective retry:</strong> if LLM output fails CNL validation, the error details are fed back to the LLM for one retry attempt. If that also fails, the request returns an explicit error.</p>
+<p>Legacy fields are derived from plugin IDs for API compatibility but are not stored on sessions.</p>
 
-<h2>symbolic-only <span class="badge done">IMPLEMENTED</span></h2>
-<p>Rule-based heuristics, no LLM calls.</p>
-
-<h3>Intent Normalization</h3>
-<p>Detects the pragmatic act by matching verbs in the input:</p>
-<pre><code>compare → ['compare','contrast','difference','versus','vs']
-explain → ['explain','why','how','cause','reason']
-recommend → ['recommend','suggest','advise','best']
-diagnose → ['diagnose','problem','issue','debug']
-implement → ['implement','build','create','setup','configure']
-verify → ['verify','check','validate','prove','confirm']
-define → ['define','what is','meaning','definition']
-evaluate → ['evaluate','assess','measure','rate','review']</code></pre>
-<p>Short inputs (&lt;200 chars) become a single Intent Group. Longer inputs are split by sentence.</p>
-
-<h3>Session Context Extraction</h3>
-<p>Filters sentences by verb patterns (<code>is, are, use, have, deploy, prefer, need...</code>). Excludes questions and commands. Assigns roles by keyword: <code>prefer/want</code> → Evaluation, <code>deploy/must/should</code> → Constraint, default → Explanation.</p>
-
-<h3>Answer Synthesis</h3>
-<p>Deterministic Markdown templates. Lists evidence claims as bullet points. No free-form prose generation. Status is <code>answered</code> if evidence exists, <code>no-context</code> otherwise.</p>
-
-<h2>Strategy Resolution</h2>
-<p>Priority order: request <code>processing_mode</code> → session preference → deployment default (<code>config/strategies.json</code>). No silent fallback — if the selected strategy can't handle the input, it returns an explicit error.</p>
-
-<div class="nav-bottom"><a href="retrieval-algorithms.html" class="prev">← Retrieval</a> <a href="evaluation.html">Evaluation →</a></div>
+<div class="nav-bottom"><a href="retrieval-algorithms.html" class="prev">← Retrieval</a> <a href="planner.html">Planner →</a></div>
 </div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

@@ -12,6 +12,7 @@ through typed plugins:
 - `kb-plugin` — context retrievers / KB backends
 - `gs-plugin` — goal solvers
 - `mrp-plan-plugin` — meta-rational planners
+- `val-plugin` — response validators
 
 It communicates with LLMs exclusively through
 AchillesAgentLib.
@@ -33,7 +34,7 @@ languages.
 | DS001 | [DS001-general-architecture.md](docs/specs/DS001-general-architecture.md) | General architecture: plugin-kernel model, data flow, cross-cutting conventions, and configuration surface. |
 | DS002 | [DS002-mrp-vm-core.md](docs/specs/DS002-mrp-vm-core.md) | Lightweight VM kernel: session-scoped orchestration, plugin-stage execution, budgets, and tracing. |
 | DS003 | [DS003-plugin-system.md](docs/specs/DS003-plugin-system.md) | Typed plugin runtime: discovery, registration, execution context, security, and source-text propagation. |
-| DS027 | [DS027-plugin-types.md](docs/specs/DS027-plugin-types.md) | Rigorous interfaces for `sd-plugin`, `kb-plugin`, `gs-plugin`, and `mrp-plan-plugin`. |
+| DS027 | [DS027-plugin-types.md](docs/specs/DS027-plugin-types.md) | Rigorous interfaces for `sd-plugin`, `kb-plugin`, `gs-plugin`, `val-plugin`, and `mrp-plan-plugin`. |
 | DS029 | [DS029-mrp-plan-plugins.md](docs/specs/DS029-mrp-plan-plugins.md) | Planner plugins: execution-order planning, logging, learning, and adaptive escalation. |
 
 ## Plugin System & External Interpreters

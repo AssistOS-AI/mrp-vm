@@ -1,6 +1,6 @@
 // DS013 — Native HTTP Server & API
 import { createServer } from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MRPError, httpStatusForCode } from '../lib/errors.mjs';
@@ -81,6 +81,7 @@ export class MRPServer {
       if (path.match(/^\/sessions\/[^/]+\/kb\/save$/) && req.method === 'POST') return await this._saveKb(req, res, path);
       if (path.match(/^\/sessions\/[^/]+\/workspace$/) && req.method === 'GET') return this._getWorkspace(path, res);
       if (path.match(/^\/sessions\/[^/]+\/workspace\/sources$/) && req.method === 'POST') return await this._stageWorkspaceSource(req, res, path);
+      if (path === '/eval-sources' && req.method === 'GET') return this._listEvalSources(res);
       if (path === '/health' && req.method === 'GET') return this._json(res, 200, { status: 'ok' });
       if (path === '/ready' && req.method === 'GET') return this._readiness(res);
       this._json(res, 404, { error: { code: 'NOT_FOUND', message: 'Unknown endpoint', type: 'invalid_request' } });
@@ -392,8 +393,8 @@ export class MRPServer {
       requestId: `ingest-${randomUUID().substring(0, 8)}`,
       session,
       conversation: this.conversation,
-      parser: null,
-      decomposer: null,
+      parser: this.engine?.parser || null,
+      decomposer: this.engine?.decomposer || null,
       externalHelpers: this.engine?.externalPluginManager || null,
       modelSettings: this.llmRoleSettings,
       logger,
@@ -426,6 +427,23 @@ export class MRPServer {
       workspace_dirty: workspace.dirty,
       seed_detector_plugin: seedDetectorPluginId
     });
+  }
+
+  _listEvalSources(res) {
+    const evalDir = resolve(process.cwd(), 'test/evaluation');
+    const sources = [];
+    try {
+      for (const entry of readdirSync(evalDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const suiteDir = join(evalDir, entry.name);
+        for (const f of readdirSync(suiteDir)) {
+          if (!f.endsWith('.nl')) continue;
+          const content = readFileSync(join(suiteDir, f), 'utf-8');
+          sources.push({ suite: entry.name, file: f, name: `${entry.name}/${f}`, content });
+        }
+      }
+    } catch { /* no eval dir */ }
+    this._json(res, 200, { sources });
   }
 
   _readiness(res) {

@@ -362,3 +362,73 @@ export class StrategyGoalSolverPlugin {
     }
   }
 }
+
+export class LLMValidationPlugin {
+  constructor(id, llmBridge, options = {}) {
+    this.id = id;
+    this.llmBridge = llmBridge;
+    this.modelRole = options.modelRole || 'validation';
+    this.description = options.description || '';
+    this.costClass = options.costClass || 'moderate';
+  }
+
+  getDescriptor() {
+    return buildDescriptor({
+      id: this.id,
+      type: 'val-plugin',
+      name: this.id,
+      description: this.description,
+      costClass: this.costClass,
+      usesLLM: true,
+      modelRoles: [this.modelRole],
+      maxLLMCalls: 1,
+      provides: ['validate-response'],
+      plannerHints: {
+        expectedLatencyMs: 800,
+        expectedLLMCalls: 1,
+        relativeCost: 0.35,
+        fallbackRole: 'default',
+        confidenceWhenMatched: 0.8
+      }
+    });
+  }
+
+  async validate(input, ctx) {
+    const model = ctx.modelSettings.resolveModel({
+      pluginId: this.id,
+      role: this.modelRole,
+      requestedModel: input.requestedModel || null,
+      sessionModel: input.sessionModel || null
+    });
+    if (!this.llmBridge?.call) {
+      return { status: 'accepted', verdict: 'accepted', reason: 'No LLM bridge available, accepting by default', metadata: { llmCalls: 0, model: null }, error: null };
+    }
+    const prompt = [
+      'You are a response validator for a meta-rational VM.',
+      'The user asked a question. The system produced an answer using retrieved evidence.',
+      'Your job: decide if the answer is CORRECT and GROUNDED in the evidence.',
+      'Reply with exactly one JSON object: {"verdict":"accepted","reason":"..."} or {"verdict":"rejected","reason":"..."}',
+      'Reject if: the answer contradicts the evidence, fabricates facts not in evidence, or fails to address the question.',
+      'Accept if: the answer is grounded, addresses the question, and does not contradict evidence.'
+    ].join('\n');
+    const userMsg = [
+      '## Original Question', input.originalMessage || '',
+      '## System Answer', input.responseMarkdown || '',
+      '## Evidence Used', (input.resolvedIntents || []).map(ri => ri.resolvedMarkdown || '').join('\n---\n')
+    ].join('\n\n');
+    try {
+      const raw = await this.llmBridge.call(prompt, userMsg, { model });
+      const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}');
+      const verdict = parsed.verdict === 'rejected' ? 'rejected' : 'accepted';
+      return {
+        status: verdict,
+        verdict,
+        reason: parsed.reason || '',
+        metadata: { llmCalls: 1, model },
+        error: null
+      };
+    } catch (error) {
+      return { status: 'accepted', verdict: 'accepted', reason: `Validation error, accepting: ${error.message}`, metadata: { llmCalls: 1, model }, error: { code: 'VAL_PLUGIN_FAILED', message: error.message } };
+    }
+  }
+}

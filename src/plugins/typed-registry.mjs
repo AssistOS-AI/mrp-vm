@@ -4,6 +4,7 @@ const SUPPORTED_PLUGIN_TYPES = new Set([
   'sd-plugin',
   'kb-plugin',
   'gs-plugin',
+  'val-plugin',
   'mrp-plan-plugin'
 ]);
 

@@ -47,55 +47,132 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
   }
 
   async extractSessionContext({ rawNL }) {
-    // Extract factual statements
     const sentences = rawNL.split(/[.!]+/).map(s => s.trim()).filter(Boolean);
     const facts = sentences.filter(s => !s.endsWith('?') && !s.startsWith('Please') && !s.startsWith('Can you')
       && /\b(is|are|use|have|has|deploy|run|prefer|need|require|want|live|exist|situated|located)\b/i.test(s));
     if (facts.length === 0) return { contextCNL: '' };
-    const units = facts.map((f, i) => {
-      const role = /\b(prefer|want|like)\b/i.test(f) ? 'Evaluation' :
-                   /\b(deploy|run|environment|server|only|must|should)\b/i.test(f) ? 'Constraint' : 'Explanation';
-      const act = detectAct(f);
-      const acts = [act];
-      // Improved topic: take more significant words
-      const topic = f.split(/\s+/).slice(0, 8).join(' ').replace(/[^\w\s-]/g, '');
-      const hash = createHash('sha256').update(`${f}|${role}|${topic}`).digest('hex');
-      const fact = extractSymbolicFact(f);
-      let md = `## Context Unit session::turn::unit-${String(i).padStart(3, '0')}\nSourceId: session\nChunkId: session::turn\nRole: ${role}\nTopic: ${topic}\nClaim: ${f}\n`;
+
+    const groups = this._groupRelatedSentences(facts);
+    const units = [];
+    let unitIdx = 0;
+
+    for (const group of groups) {
+      const combinedText = group.sentences.join('. ').replace(/\.\./g, '.');
+      const role = /\b(prefer|want|like)\b/i.test(combinedText) ? 'Evaluation' :
+                   /\b(deploy|run|environment|server|only|must|should)\b/i.test(combinedText) ? 'Constraint' : 'Explanation';
+      const act = detectAct(combinedText);
+      const topic = group.topic || combinedText.split(/\s+/).slice(0, 8).join(' ').replace(/[^\w\s-]/g, '');
+      const hash = createHash('sha256').update(`${combinedText}|${role}|${topic}`).digest('hex');
+      const fact = extractSymbolicFact(group.sentences[0]);
+      let md = `## Context Unit session::turn::unit-${String(unitIdx).padStart(3, '0')}\nSourceId: session\nChunkId: session::turn\nRole: ${role}\nTopic: ${topic}\nClaim: ${combinedText}\n`;
       if (fact) {
         md += `Subject: ${fact.subject}\nRelation: ${fact.relation}\nObject: ${fact.object}\nConfidence: ${fact.confidence}\n`;
       }
-      md += `UtilityActs: ${acts.join(', ')}\nHash: ${hash}`;
-      return md;
-    }).join('\n\n');
-    return { contextCNL: units };
+      md += `UtilityActs: ${act}\nHash: ${hash}`;
+      units.push(md);
+      unitIdx++;
+    }
+    return { contextCNL: units.join('\n\n') };
   }
 
   async normalizePersistentContext({ chunkText, provenance }) {
     const sentences = chunkText.split(/[.!]+/).map(s => s.trim()).filter(Boolean);
     if (sentences.length === 0) return { contextCNL: '' };
-    const units = sentences.map((s, i) => {
-      const role = /\bstep|procedure|install|configure\b/i.test(s) ? 'Procedure' :
-                   /\bdefin|mean|is a\b/i.test(s) ? 'Definition' :
-                   /\bcompar|versus|vs\b/i.test(s) ? 'Comparison' : 'Explanation';
-      const acts = [detectAct(s)];
-      const unitId = `${provenance.sourceId}::${provenance.chunkId.split('::').pop()}::unit-${String(i).padStart(3, '0')}`;
-      const topic = s.substring(0, 50);
-      const hash = createHash('sha256').update(`${s}|${role}|${topic}`).digest('hex');
+
+    // Group related sentences by shared subjects/topics
+    const groups = this._groupRelatedSentences(sentences);
+    const units = [];
+    let unitIdx = 0;
+
+    for (const group of groups) {
+      const unitId = `${provenance.sourceId}::${provenance.chunkId.split('::').pop()}::unit-${String(unitIdx).padStart(3, '0')}`;
+      const combinedText = group.sentences.join('. ').replace(/\.\./g, '.');
+      const role = this._inferRole(combinedText);
+      const acts = [detectAct(combinedText)];
+      const topic = group.topic || combinedText.substring(0, 60);
+      const hash = createHash('sha256').update(`${combinedText}|${role}|${topic}`).digest('hex');
       let md = `## Context Unit ${unitId}\nSourceId: ${provenance.sourceId}\nChunkId: ${provenance.chunkId}\nRole: ${role}\nTopic: ${topic}\n`;
       if (role === 'Procedure') {
-        md += `Procedure: ${s}\n`;
+        md += `Procedure: ${combinedText}\n`;
       } else {
-        md += `Claim: ${s}\n`;
-        const fact = extractSymbolicFact(s);
+        md += `Claim: ${combinedText}\n`;
+        const fact = extractSymbolicFact(group.sentences[0]);
         if (fact) {
           md += `Subject: ${fact.subject}\nRelation: ${fact.relation}\nObject: ${fact.object}\nConfidence: ${fact.confidence}\n`;
         }
       }
       md += `UtilityActs: ${acts.join(', ')}\nHash: ${hash}`;
-      return md;
-    }).join('\n\n');
-    return { contextCNL: units };
+      units.push(md);
+      unitIdx++;
+    }
+    return { contextCNL: units.join('\n\n') };
+  }
+
+  _inferRole(text) {
+    if (/\bstep|procedure|install|configure|build|deploy\b/i.test(text)) return 'Procedure';
+    if (/\bdefin|mean|is a\b/i.test(text)) return 'Definition';
+    if (/\bcompar|versus|vs\b/i.test(text)) return 'Comparison';
+    if (/\bcharacter|trait|appearance|personality|described as\b/i.test(text)) return 'Description';
+    if (/\bstory|scene|event|happened|discovered|fled|began|triggered\b/i.test(text)) return 'Narrative';
+    return 'Explanation';
+  }
+
+  _groupRelatedSentences(sentences) {
+    if (sentences.length <= 2) {
+      return [{ sentences, topic: sentences[0]?.substring(0, 60) || '' }];
+    }
+    // Extract key subjects from each sentence
+    const tagged = sentences.map(s => ({
+      text: s,
+      subjects: this._extractSubjects(s),
+      topic: s.split(/\s+/).slice(0, 6).join(' ')
+    }));
+
+    const groups = [];
+    let current = { sentences: [tagged[0].text], subjects: new Set(tagged[0].subjects), topic: tagged[0].topic };
+
+    for (let i = 1; i < tagged.length; i++) {
+      const t = tagged[i];
+      // Check if this sentence shares subjects with current group
+      const shared = t.subjects.some(s => current.subjects.has(s));
+      // Also check if consecutive sentences are about the same scene/event
+      const sameContext = this._sameNarrativeContext(current.sentences[current.sentences.length - 1], t.text);
+
+      if (shared || sameContext) {
+        current.sentences.push(t.text);
+        t.subjects.forEach(s => current.subjects.add(s));
+      } else {
+        groups.push({ sentences: current.sentences, topic: current.topic });
+        current = { sentences: [t.text], subjects: new Set(t.subjects), topic: t.topic };
+      }
+    }
+    groups.push({ sentences: current.sentences, topic: current.topic });
+    return groups;
+  }
+
+  _extractSubjects(sentence) {
+    // Extract capitalized proper nouns and key noun phrases
+    const subjects = [];
+    const properNouns = sentence.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g) || [];
+    for (const pn of properNouns) {
+      if (!/^(The|This|That|These|Those|Here|There|When|Where|What|How|Why|Who|But|And|Or|If|So|Yet|For|Not|No|Yes|Please|Can|Could|Would|Should|May|Might|Must|Will|Shall|Do|Does|Did|Has|Have|Had|Is|Are|Was|Were|Be|Been|Being|A|An|In|On|At|To|Of|By|With|From|Into|About|After|Before|During|Without|Between|Through|Against|Upon|Along|Across|Behind|Beyond|Under|Over|Above|Below|Near|Far|Away|Back|Out|Up|Down)$/.test(pn)) {
+        subjects.push(pn.toLowerCase());
+      }
+    }
+    // Also extract subjects from "X uses Y", "X depends on Y" patterns
+    const fact = extractSymbolicFact(sentence);
+    if (fact) {
+      subjects.push(fact.subject.toLowerCase());
+      subjects.push(fact.object.toLowerCase());
+    }
+    return [...new Set(subjects)];
+  }
+
+  _sameNarrativeContext(prev, current) {
+    // Pronouns or continuation markers suggest same context
+    if (/^(He|She|It|They|This|The|His|Her|Its|Their)\b/.test(current)) return true;
+    if (/^(Meanwhile|However|Furthermore|Moreover|Also|Then|Next|After|Before|During)\b/.test(current)) return true;
+    return false;
   }
 
   async synthesizeResponse({ sessionId, resolvedIntents, pluginOutputs }) {

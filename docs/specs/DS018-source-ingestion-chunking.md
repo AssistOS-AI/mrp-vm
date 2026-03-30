@@ -22,14 +22,31 @@ Examples:
   document
 
 These hierarchies are the target design vocabulary.
-The current baseline implementation is lighter:
+The current baseline implements two levels:
 
-- Markdown files are chunked by headings, then
-  paragraphs, then sentences when needed
-- plain text is chunked by paragraph, then sentence,
-  then fixed windows as a fallback
-- the persisted lineage today is
-  `sourceId -> chunkId -> unitId`
+- **Leaf units** are produced by grouping related
+  sentences that share subjects, entities, or
+  narrative continuity. A single unit may contain
+  multiple sentences when they describe the same
+  scene, entity, or concept.
+- **Section aggregates** are created when a section
+  (heading or paragraph group) contains multiple
+  leaf units. They summarize the section and carry
+  `childUnitIds` pointing to their leaf units.
+- **Source aggregates** are created when a source
+  has multiple sections. They summarize the whole
+  source and carry `childUnitIds` pointing to
+  section aggregates.
+
+Leaf units carry `parentUnitIds` back-references to
+their containing aggregate.
+
+KB plugins can use these hierarchical links to:
+
+- expand retrieval to parent units when broader
+  context is needed
+- drill down to child units for detail
+- decide retrieval granularity based on the question
 
 ## Ingest Flow
 

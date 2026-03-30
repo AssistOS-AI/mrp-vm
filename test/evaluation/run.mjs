@@ -1,44 +1,23 @@
-// DS021 — Evaluation Runner (plugin-first combos with
-// legacy processing_mode/retrieval_profile compatibility)
-// Usage: node test/evaluation/run.mjs [--suite suite01] [--port 4000]
-//   [--mode llm-assisted] [--profile balanced]
-//   [--planner-plugin planner-default]
-//   [--seed-detector-plugin sd-symbolic]
-//   [--kb-plugin kb-thinkingdb]
-//   [--goal-solver-plugin gs-symbolic]
+// DS021 — Evaluation Runner
+// Single isolated server (tmpdir), shared LLM cache, bare sessions like chat.
+// Usage: node test/evaluation/run.mjs [--suite suite01] [--port 4100] [--timeout 45000]
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, cpSync, statSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import {
-  mapLegacyProcessingMode,
-  mapLegacyRetrievalProfile,
-  deriveLegacyProcessingMode,
-  deriveLegacyRetrievalProfile
-} from '../../src/plugins/aliases.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '../..');
 const EVAL_DIR = __dirname;
-const BASE_PORT = parseInt(arg('--port') || '4000', 10);
+const PORT = parseInt(arg('--port') || '4100', 10);
 const SUITE_FILTER = arg('--suite');
-const MODE_FILTER = arg('--mode');
-const PROFILE_FILTER = arg('--profile');
-const PLANNER_PLUGIN_FILTER = arg('--planner-plugin');
-const SEED_PLUGIN_FILTER = arg('--seed-detector-plugin');
-const KB_PLUGIN_FILTER = arg('--kb-plugin');
-const GOAL_PLUGIN_FILTER = arg('--goal-solver-plugin');
-const DELAY_MS = parseInt(arg('--delay') || '2000', 10);
-
-const ALL_MODES = ['llm-assisted', 'symbolic-only'];
-const ALL_PROFILES = ['fast', 'balanced', 'thinkingdb'];
+const Q_TIMEOUT = parseInt(arg('--timeout') || '45000', 10);
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
-  red: '\x1b[31m', green: '\x1b[32m', yellow: '\x1b[33m',
-  cyan: '\x1b[36m', magenta: '\x1b[35m', gray: '\x1b[90m'
+  red: '\x1b[31m', green: '\x1b[32m', yellow: '\x1b[33m', cyan: '\x1b[36m'
 };
 
 function arg(name) { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : null; }
@@ -46,123 +25,6 @@ function lower(s) { return (s || '').toLowerCase(); }
 function checkMention(text, terms) { const l = lower(text); return terms.filter(t => !l.includes(lower(t))); }
 function checkNotContain(text, terms) { const l = lower(text); return terms.filter(t => l.includes(lower(t))); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-function normalizeCombo(raw = {}) {
-  const explicitProcessingMode = raw.processingMode || raw.processing_mode || null;
-  const explicitRetrievalProfile = raw.retrievalProfile || raw.retrieval_profile || null;
-  const modeMapping = mapLegacyProcessingMode(explicitProcessingMode);
-  const kbPluginFromProfile = mapLegacyRetrievalProfile(explicitRetrievalProfile);
-  const plannerPlugin = raw.plannerPlugin || raw.planner_plugin || null;
-  const seedDetectorPlugin =
-    raw.seedDetectorPlugin ||
-    raw.seed_detector_plugin ||
-    modeMapping.seedDetectorPlugin ||
-    null;
-  const goalSolverPlugin =
-    raw.goalSolverPlugin ||
-    raw.goal_solver_plugin ||
-    modeMapping.goalSolverPlugin ||
-    null;
-  const kbPlugin =
-    raw.kbPlugin ||
-    raw.kb_plugin ||
-    kbPluginFromProfile ||
-    null;
-  const processingMode =
-    explicitProcessingMode ||
-    deriveLegacyProcessingMode(seedDetectorPlugin, goalSolverPlugin) ||
-    null;
-  const retrievalProfile =
-    explicitRetrievalProfile ||
-    deriveLegacyRetrievalProfile(kbPlugin) ||
-    null;
-
-  return {
-    label: raw.label || null,
-    plannerPlugin,
-    seedDetectorPlugin,
-    kbPlugin,
-    goalSolverPlugin,
-    processingMode,
-    retrievalProfile
-  };
-}
-
-function comboLabel(combo) {
-  if (combo.label) return combo.label;
-  if (combo.processingMode || combo.retrievalProfile) {
-    const mode = combo.processingMode || 'mode:auto';
-    const profile = combo.retrievalProfile || 'profile:auto';
-    return `${mode} + ${profile}`;
-  }
-  return [
-    combo.plannerPlugin || 'planner:auto',
-    combo.seedDetectorPlugin || 'sd:auto',
-    combo.kbPlugin || 'kb:auto',
-    combo.goalSolverPlugin || 'gs:auto'
-  ].join(' | ');
-}
-
-function comboMatchesFilters(combo) {
-  if (MODE_FILTER && combo.processingMode !== MODE_FILTER) return false;
-  if (PROFILE_FILTER && combo.retrievalProfile !== PROFILE_FILTER) return false;
-  if (PLANNER_PLUGIN_FILTER && combo.plannerPlugin !== PLANNER_PLUGIN_FILTER) return false;
-  if (SEED_PLUGIN_FILTER && combo.seedDetectorPlugin !== SEED_PLUGIN_FILTER) return false;
-  if (KB_PLUGIN_FILTER && combo.kbPlugin !== KB_PLUGIN_FILTER) return false;
-  if (GOAL_PLUGIN_FILTER && combo.goalSolverPlugin !== GOAL_PLUGIN_FILTER) return false;
-  return true;
-}
-
-function resolveSuiteCombos(evalData) {
-  const pluginCombos = Array.isArray(evalData.pluginCombos) && evalData.pluginCombos.length
-    ? evalData.pluginCombos.map(normalizeCombo)
-    : null;
-  const combos = pluginCombos || (evalData.modes?.length ? evalData.modes : ALL_MODES)
-    .flatMap(mode => (evalData.profiles?.length ? evalData.profiles : ALL_PROFILES)
-      .map(profile => normalizeCombo({ processingMode: mode, retrievalProfile: profile })));
-  return combos.filter(comboMatchesFilters);
-}
-
-function resolveIngestConfig(evalData, combo) {
-  const normalized = normalizeCombo({
-    processingMode: evalData.ingestProcessingMode || null,
-    seedDetectorPlugin: evalData.ingestSeedDetectorPlugin || null
-  });
-  return {
-    processingMode: normalized.processingMode,
-    seedDetectorPlugin: normalized.seedDetectorPlugin || combo.seedDetectorPlugin || null
-  };
-}
-
-function comboRequestPayload(combo) {
-  const payload = {};
-  if (combo.processingMode) payload.processing_mode = combo.processingMode;
-  if (combo.retrievalProfile) payload.retrieval_profile = combo.retrievalProfile;
-  if (combo.plannerPlugin) payload.planner_plugin = combo.plannerPlugin;
-  if (combo.seedDetectorPlugin) payload.seed_detector_plugin = combo.seedDetectorPlugin;
-  if (combo.kbPlugin) payload.kb_plugin = combo.kbPlugin;
-  if (combo.goalSolverPlugin) payload.goal_solver_plugin = combo.goalSolverPlugin;
-  return payload;
-}
-
-function ingestRequestPayload(ingestConfig) {
-  const payload = {};
-  if (ingestConfig.processingMode) payload.processing_mode = ingestConfig.processingMode;
-  if (ingestConfig.seedDetectorPlugin) payload.seed_detector_plugin = ingestConfig.seedDetectorPlugin;
-  return payload;
-}
-
-function captureRuntimeSurface(payload) {
-  if (!payload) return null;
-  return {
-    processingMode: payload.processing_mode ?? payload.processingMode ?? null,
-    retrievalProfile: payload.retrieval_profile ?? payload.retrievalProfile ?? null,
-    plannerPlugin: payload.planner_plugin ?? payload.plannerPlugin ?? null,
-    seedDetectorPlugin: payload.seed_detector_plugin ?? payload.seedDetectorPlugin ?? null,
-    kbPlugin: payload.kb_plugin ?? payload.kbPlugin ?? null,
-    goalSolverPlugin: payload.goal_solver_plugin ?? payload.goalSolverPlugin ?? null
-  };
-}
 
 async function fetchJson(base, method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
@@ -172,37 +34,28 @@ async function fetchJson(base, method, path, body) {
   return r.json();
 }
 
-async function createPreparedSession(base, combo, storyContent, ingestConfig) {
-  const sessionRes = await fetchJson(base, 'POST', '/sessions', comboRequestPayload(combo));
-  if (!sessionRes.session_id) throw new Error(sessionRes.error?.message || 'failed to create session');
-  const stageRes = await fetchJson(base, 'POST', `/sessions/${sessionRes.session_id}/workspace/sources`, {
-    name: 'eval-story.nl',
-    content: storyContent,
-    ...ingestRequestPayload(ingestConfig)
-  });
-  if (!stageRes.sourceId) throw new Error(stageRes.error?.message || 'failed to stage story');
-  return {
-    sessionId: sessionRes.session_id,
-    unitCount: stageRes.unitCount || 0,
-    sessionSurface: captureRuntimeSurface(sessionRes)
-  };
+async function withTimeout(promise, ms) {
+  let timer;
+  const t = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('Question timeout')), ms); });
+  try { return await Promise.race([promise, t]); } finally { clearTimeout(timer); }
 }
 
 function createIsolatedConfig(tmpDir, port) {
   const configDir = join(tmpDir, 'config');
   const dataDir = join(tmpDir, 'data', 'kb');
-  const cacheDir = join(tmpDir, 'data', 'cache');
   cpSync(join(PROJECT_ROOT, 'config'), configDir, { recursive: true });
+  // Isolated KB paths
   const kb = JSON.parse(readFileSync(join(configDir, 'kb.json'), 'utf-8'));
   for (const key of Object.keys(kb.paths)) {
     kb.paths[key] = join(dataDir, key);
     mkdirSync(kb.paths[key], { recursive: true });
   }
   writeFileSync(join(configDir, 'kb.json'), JSON.stringify(kb, null, 2));
+  // Isolated port
   const srv = JSON.parse(readFileSync(join(configDir, 'server.json'), 'utf-8'));
   srv.port = port;
   writeFileSync(join(configDir, 'server.json'), JSON.stringify(srv, null, 2));
-  // Point LLM cache to shared project cache (survives across runs)
+  // Shared LLM cache
   const llm = JSON.parse(readFileSync(join(configDir, 'llm.json'), 'utf-8'));
   llm.cacheDir = join(PROJECT_ROOT, 'data', 'cache');
   mkdirSync(llm.cacheDir, { recursive: true });
@@ -234,9 +87,7 @@ async function waitReady(base, retries = 20) {
   throw new Error(`Server not ready at ${base}`);
 }
 
-// ── Context quality ──
-
-function gatherContextText(doc) {
+function gatherText(doc) {
   let text = '';
   if (!doc?.groups) return text;
   for (const g of doc.groups) {
@@ -247,341 +98,161 @@ function gatherContextText(doc) {
   return text;
 }
 
-function scoreContextQuality(exp, doc, fullText) {
-  const ctx = gatherContextText(doc) + ' ' + (fullText || '');
-  const metrics = { recall: 1, precision: 1, details: [] };
+function scoreContext(exp, doc, fullText) {
+  const ctx = gatherText(doc) + ' ' + (fullText || '');
+  const m = { recall: 1, precision: 1 };
   if (exp.contextMustMention?.length) {
-    const missing = checkMention(ctx, exp.contextMustMention);
-    metrics.recall = 1 - missing.length / exp.contextMustMention.length;
-    if (missing.length) metrics.details.push(`recall miss: ${missing.join(', ')}`);
+    const miss = checkMention(ctx, exp.contextMustMention);
+    m.recall = 1 - miss.length / exp.contextMustMention.length;
   }
   if (exp.contextMustNotMention?.length) {
     const found = checkNotContain(ctx, exp.contextMustNotMention);
-    metrics.precision = 1 - found.length / exp.contextMustNotMention.length;
-    if (found.length) metrics.details.push(`precision leak: ${found.join(', ')}`);
+    m.precision = 1 - found.length / exp.contextMustNotMention.length;
   }
-  metrics.f1 = metrics.recall + metrics.precision > 0
-    ? 2 * metrics.recall * metrics.precision / (metrics.recall + metrics.precision) : 0;
-  return metrics;
+  m.f1 = m.recall + m.precision > 0 ? 2 * m.recall * m.precision / (m.recall + m.precision) : 0;
+  return m;
 }
 
-// ── Intent matching ──
+async function runQuestion(q, base, sessionId) {
+  const result = { id: q.id, pass: true, answerPass: true, contextPass: true, failures: [], durationMs: 0, contextQuality: null };
 
-function matchIntents(expectedIntents, responseDoc, fullText) {
-  const failures = [];
-  if (!expectedIntents?.length) return failures;
-  const actual = responseDoc?.groups || [];
-  for (const ei of expectedIntents) {
-    let matched = false;
-    for (const ag of actual) {
-      if (!ei.intentMustMention?.length || ei.intentMustMention.every(t => lower(ag.intent).includes(lower(t)))) { matched = true; break; }
-    }
-    if (!matched && fullText) matched = !ei.intentMustMention?.length || ei.intentMustMention.every(t => lower(fullText).includes(lower(t)));
-    if (!matched) failures.push(`No intent matched [${(ei.intentMustMention || []).join(', ')}]`);
-  }
-  return failures;
-}
-
-// ── Question evaluation ──
-
-async function runQuestion(q, base, combo, storyContent, ingestConfig) {
-  const result = {
-    id: q.id,
-    pass: true,
-    answerPass: true,
-    contextPass: true,
-    failures: [],
-    durationMs: 0,
-    contextQuality: null,
-    requestedSurface: captureRuntimeSurface(comboRequestPayload(combo)),
-    sessionSurface: null,
-    runtimeSurface: null
-  };
-  const prepared = await createPreparedSession(base, combo, storyContent, ingestConfig);
-  result.sessionSurface = prepared.sessionSurface;
   let r;
-  try {
-    const start = Date.now();
-    r = await fetchJson(base, 'POST', '/chat/completions', {
-      session_id: prepared.sessionId,
-      ...comboRequestPayload(combo),
+  const start = Date.now();
+  r = await withTimeout(
+    fetchJson(base, 'POST', '/chat/completions', {
+      session_id: sessionId,
       messages: [{ role: 'user', content: q.input }]
-    });
-    result.durationMs = Date.now() - start;
-  } finally {
-    try { await fetchJson(base, 'DELETE', `/sessions/${prepared.sessionId}`); } catch {}
-  }
+    }),
+    Q_TIMEOUT
+  );
+  result.durationMs = Date.now() - start;
+
   if (r.error) {
     result.pass = result.answerPass = result.contextPass = false;
-    result.failures.push({ check: 'api', expected: 'successful response', got: `${r.error.code}: ${r.error.message}` });
+    result.failures.push({ check: 'api', expected: 'ok', got: `${r.error.code}: ${r.error.message}` });
     return result;
   }
-  result.runtimeSurface = captureRuntimeSurface(r);
 
   const content = r.choices?.[0]?.message?.content || '';
   const doc = r.response_document || null;
   const exp = q.expected;
   const answerText = doc?.groups?.map(g => g.answerMarkdown || '').join(' ') || content;
-  const contextText = gatherContextText(doc) + ' ' + content;
-  const answerSnippet = answerText.slice(0, 200).replace(/\n/g, ' ');
+  const contextText = gatherText(doc) + ' ' + content;
 
-  // Intent matching — counts as answer fail
-  const intentFails = matchIntents(exp.intents, doc, content);
-  if (intentFails.length) {
-    result.answerPass = false;
-    const actualIntents = doc?.groups?.map(g => `"${g.intent}"`).join(', ') || '(none)';
-    result.failures.push({ check: 'intent', expected: `intent mentioning [${exp.intents.map(e => (e.intentMustMention||[]).join(', ')).join('; ')}]`, got: actualIntents });
+  for (const ei of exp.intents || []) {
+    const matched = doc?.groups?.some(g => !ei.intentMustMention?.length || ei.intentMustMention.every(t => lower(g.intent).includes(lower(t))))
+      || (ei.intentMustMention || []).every(t => lower(content).includes(lower(t)));
+    if (!matched) { result.answerPass = false; result.failures.push({ check: 'intent', expected: (ei.intentMustMention || []).join(', '), got: 'no match' }); }
   }
 
-  // Context quality
-  result.contextQuality = scoreContextQuality(exp, doc, content);
+  result.contextQuality = scoreContext(exp, doc, content);
 
-  // Context recall — retrieval fail
   if (exp.contextMustMention?.length) {
-    const missing = checkMention(contextText, exp.contextMustMention);
-    if (missing.length) {
-      result.contextPass = false;
-      result.failures.push({ check: 'context recall', expected: `context to mention [${exp.contextMustMention.join(', ')}]`, got: `missing: [${missing.join(', ')}]` });
-    }
+    const miss = checkMention(contextText, exp.contextMustMention);
+    if (miss.length) { result.contextPass = false; result.failures.push({ check: 'ctx-recall', expected: exp.contextMustMention.join(', '), got: `missing: ${miss.join(', ')}` }); }
   }
-
-  // Context precision — retrieval fail
   if (exp.contextMustNotMention?.length) {
     const found = checkNotContain(contextText, exp.contextMustNotMention);
-    if (found.length) {
-      result.contextPass = false;
-      result.failures.push({ check: 'context precision', expected: `context to NOT mention [${exp.contextMustNotMention.join(', ')}]`, got: `found unwanted: [${found.join(', ')}]` });
-    }
+    if (found.length) { result.contextPass = false; result.failures.push({ check: 'ctx-precision', expected: `NOT ${exp.contextMustNotMention.join(', ')}`, got: `found: ${found.join(', ')}` }); }
   }
-
-  // Answer must mention — answer fail
   if (exp.answerMustMention) {
-    const missing = checkMention(answerText, exp.answerMustMention);
-    if (missing.length) {
-      result.answerPass = false;
-      result.failures.push({ check: 'answer content', expected: `answer to contain [${exp.answerMustMention.join(', ')}]`, got: `missing [${missing.join(', ')}] — answer: "${answerSnippet}"` });
-    }
+    const miss = checkMention(answerText, exp.answerMustMention);
+    if (miss.length) { result.answerPass = false; result.failures.push({ check: 'answer', expected: exp.answerMustMention.join(', '), got: `missing: ${miss.join(', ')}` }); }
   }
-
-  // Answer must not contain — answer fail
   if (exp.answerMustNotContain) {
     const found = checkNotContain(answerText, exp.answerMustNotContain);
-    if (found.length) {
-      result.answerPass = false;
-      result.failures.push({ check: 'answer noise', expected: `answer to NOT contain [${exp.answerMustNotContain.join(', ')}]`, got: `found unwanted [${found.join(', ')}] — answer: "${answerSnippet}"` });
-    }
+    if (found.length) { result.answerPass = false; result.failures.push({ check: 'answer-noise', expected: `NOT ${exp.answerMustNotContain.join(', ')}`, got: `found: ${found.join(', ')}` }); }
   }
 
   result.pass = result.answerPass && result.contextPass;
   return result;
 }
 
-// ── Suite runner: ONE server per suite, iterate requested combos on it ──
-
-async function runSuite(suiteDir, port) {
+async function runSuite(suiteDir, base) {
   const evalData = JSON.parse(readFileSync(join(suiteDir, 'eval.json'), 'utf-8'));
   const storyContent = readFileSync(join(suiteDir, evalData.storyFile || 'story.nl'), 'utf-8');
-  const base = `http://127.0.0.1:${port}`;
-  const tmpDir = join(tmpdir(), `mrp-eval-${evalData.suiteId}-${randomUUID().slice(0, 6)}`);
-  mkdirSync(tmpDir, { recursive: true });
-  const configDir = createIsolatedConfig(tmpDir, port);
-
-  const combos = resolveSuiteCombos(evalData);
-  const comboResults = [];
-  if (!combos.length) throw new Error(`Suite ${evalData.suiteId} has no matching plugin/evaluation combos`);
-
-  let serverProc;
-  try {
-    serverProc = await startServer(configDir);
-    await waitReady(base);
-    const llmRoleSettings = await fetchJson(base, 'GET', '/settings/llm-roles');
-
-    console.log(`  ${C.dim}Story prepared for per-session draft staging${C.reset}`);
-
-    for (const comboConfig of combos) {
-      const label = comboLabel(comboConfig);
-      const displayLabel = `${C.dim}${label}${C.reset}`;
-      const ingestConfig = resolveIngestConfig(evalData, comboConfig);
-      process.stdout.write(`    ⏳ ${displayLabel}...`);
-
-      let passed = 0, failed = 0, totalF1 = 0;
-      let ansPassed = 0, ctxPassed = 0;
-      const results = [];
-      let comboError = null;
-
-      for (const q of evalData.questions) {
-        try {
-          const result = await runQuestion(q, base, comboConfig, storyContent, ingestConfig);
-          results.push(result);
-          if (result.pass) passed++; else failed++;
-          if (result.answerPass) ansPassed++;
-          if (result.contextPass) ctxPassed++;
-          totalF1 += result.contextQuality?.f1 || 0;
-        } catch (e) {
-          results.push({
-            id: q.id,
-            pass: false,
-            failures: [e.message],
-            durationMs: 0,
-            contextQuality: { recall: 0, precision: 0, f1: 0, details: [] },
-            requestedSurface: captureRuntimeSurface(comboRequestPayload(comboConfig)),
-            sessionSurface: null,
-            runtimeSurface: null
-          });
-          failed++;
-          comboError = e.message;
-        }
-      }
-
-      const avgF1 = totalF1 / evalData.questions.length;
-      const combo = {
-        suiteId: evalData.suiteId,
-        comboLabel: label,
-        requestedSurface: captureRuntimeSurface(comboRequestPayload(comboConfig)),
-        ingestSurface: captureRuntimeSurface(ingestRequestPayload(ingestConfig)),
-        llmRoleSettings,
-        passed,
-        failed,
-        ansPassed,
-        ctxPassed,
-        total: evalData.questions.length,
-        results,
-        avgContextF1: avgF1,
-        error: comboError
-      };
-      comboResults.push(combo);
-
-      const icon = failed === 0 ? `${C.green}✅` : passed > 0 ? `${C.yellow}${passed}/${passed + failed}` : `${C.red}✗ `;
-      process.stdout.write(`\r    ${icon}${C.reset} ${displayLabel} F1:${colorScore(avgF1)}\n`);
-      for (const qr of results) {
-        if (!qr.pass) {
-          const tags = [];
-          if (!qr.answerPass) tags.push(`${C.red}ANS${C.reset}`);
-          if (!qr.contextPass) tags.push(`${C.yellow}CTX${C.reset}`);
-          console.log(`      ${C.red}✗ ${qr.id}${C.reset} [${tags.join('+')}] ${C.dim}(${qr.durationMs}ms)${C.reset}`);
-          for (const f of qr.failures) {
-            if (typeof f === 'object') {
-              console.log(`        ${C.yellow}[${f.check}]${C.reset} expected: ${C.green}${f.expected}${C.reset}`);
-              console.log(`        ${' '.repeat(f.check.length + 2)} got:      ${C.red}${f.got}${C.reset}`);
-            } else {
-              console.log(`        ${C.red}${f}${C.reset}`);
-            }
-          }
-        }
-      }
-
-      await sleep(DELAY_MS);
-    }
-  } finally {
-    if (serverProc) serverProc.kill();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  const ingestPayload = { name: 'eval-story.nl', content: storyContent };
+  if (evalData.ingestSeedDetectorPlugin) {
+    ingestPayload.seed_detector_plugin = evalData.ingestSeedDetectorPlugin;
   }
-  return comboResults;
-}
 
-// ── Pretty printing ──
-
-function colorScore(score) {
-  if (score >= 0.9) return `${C.green}${score.toFixed(2)}${C.reset}`;
-  if (score >= 0.6) return `${C.yellow}${score.toFixed(2)}${C.reset}`;
-  return `${C.red}${score.toFixed(2)}${C.reset}`;
-}
-
-function colorPass(p, f) {
-  const total = p + f;
-  const rate = total > 0 ? p / total : 0;
-  const pct = `${(rate * 100).toFixed(0)}%`;
-  if (rate >= 0.9) return `${C.green}${C.bold}${p}/${total} ${pct}${C.reset}`;
-  if (rate >= 0.5) return `${C.yellow}${C.bold}${p}/${total} ${pct}${C.reset}`;
-  return `${C.red}${C.bold}${p}/${total} ${pct}${C.reset}`;
-}
-
-function printMatrix(allResults) {
-  const suites = [...new Set(allResults.map(r => r.suiteId))];
-
-  for (const suite of suites) {
-    const sr = allResults.filter(r => r.suiteId === suite);
-    console.log(`\n${C.bold}${C.cyan}═══ ${suite} ═══${C.reset}`);
-    console.log(`  ${C.bold}${'Combo'.padEnd(42)}${'All'.padEnd(12)}${'Ans'.padEnd(12)}${'Ctx'.padEnd(12)}${'Recall'.padEnd(10)}${'Prec'.padEnd(10)}${'F1'.padEnd(10)}${'ms'}${C.reset}`);
-    console.log(`  ${'─'.repeat(114)}`);
-
-    for (const r of sr) {
-      if (r.error && !r.results.length) {
-        console.log(`  ${r.comboLabel.padEnd(42)}${C.red}ERROR: ${r.error.slice(0, 50)}${C.reset}`);
-        continue;
+  const results = [];
+  for (const q of evalData.questions) {
+    process.stdout.write(`    ⏳ ${q.id}...`);
+    try {
+      // Fresh session per question — no history contamination
+      const sessionRes = await fetchJson(base, 'POST', '/sessions', {});
+      if (!sessionRes.session_id) throw new Error(sessionRes.error?.message || 'session create failed');
+      if (results.length === 0) {
+        console.log(`\n  ${C.dim}sd:${sessionRes.seed_detector_plugin} kb:${sessionRes.kb_plugin} gs:${sessionRes.goal_solver_plugin}${C.reset}`);
+        process.stdout.write(`    ⏳ ${q.id}...`);
       }
-      const n = r.total || r.results.length;
-      const avgRecall = r.results.reduce((s, x) => s + (x.contextQuality?.recall || 0), 0) / r.results.length;
-      const avgPrec = r.results.reduce((s, x) => s + (x.contextQuality?.precision || 0), 0) / r.results.length;
-      const avgMs = Math.round(r.results.reduce((s, x) => s + x.durationMs, 0) / r.results.length);
-      const allP = colorPass(r.passed, r.failed);
-      const ansP = colorPass(r.ansPassed ?? r.passed, n - (r.ansPassed ?? r.passed));
-      const ctxP = colorPass(r.ctxPassed ?? n, n - (r.ctxPassed ?? n));
-      console.log(`  ${r.comboLabel.padEnd(42)}${allP.padEnd(24)}${ansP.padEnd(24)}${ctxP.padEnd(24)}${colorScore(avgRecall).padEnd(21)}${colorScore(avgPrec).padEnd(21)}${colorScore(r.avgContextF1).padEnd(21)}${C.dim}${avgMs}${C.reset}`);
+      await fetchJson(base, 'POST', `/sessions/${sessionRes.session_id}/workspace/sources`, ingestPayload);
+      const r = await runQuestion(q, base, sessionRes.session_id);
+      await fetchJson(base, 'DELETE', `/sessions/${sessionRes.session_id}`);
+      results.push(r);
+      const icon = r.pass ? `${C.green}✅` : `${C.red}✗ `;
+      process.stdout.write(`\r    ${icon}${C.reset} ${q.id} ${C.dim}(${r.durationMs}ms)${C.reset}\n`);
+      for (const f of r.failures) {
+        console.log(`      ${C.yellow}[${f.check}]${C.reset} expected: ${C.green}${f.expected}${C.reset} got: ${C.red}${f.got}${C.reset}`);
+      }
+    } catch (e) {
+      results.push({ id: q.id, pass: false, failures: [{ check: 'error', expected: 'ok', got: e.message }], durationMs: 0, contextQuality: { recall: 0, precision: 0, f1: 0 } });
+      process.stdout.write(`\r    ${C.red}✗ ${C.reset} ${q.id} ${C.red}${e.message}${C.reset}\n`);
     }
   }
 
-  // Aggregate
-  console.log(`\n${C.bold}${C.magenta}═══ AGGREGATE ═══${C.reset}`);
-  const valid = allResults.filter(r => r.results.length > 0);
-  const totalQ = valid.reduce((s, r) => s + r.passed + r.failed, 0);
-  const totalP = valid.reduce((s, r) => s + r.passed, 0);
-  const avgF1 = valid.length ? valid.reduce((s, r) => s + r.avgContextF1, 0) / valid.length : 0;
-  console.log(`  Questions: ${totalQ} across ${valid.length} combos`);
-  console.log(`  Pass: ${colorPass(totalP, totalQ - totalP)}`);
-  console.log(`  Avg context F1: ${colorScore(avgF1)}`);
-
-  const sorted = [...valid].sort((a, b) => b.avgContextF1 - a.avgContextF1);
-  if (sorted.length >= 2) {
-    const best = sorted[0], worst = sorted[sorted.length - 1];
-    console.log(`  ${C.green}Best:${C.reset}  ${best.comboLabel} (F1: ${best.avgContextF1.toFixed(2)}, pass: ${best.passed}/${best.passed + best.failed})`);
-    console.log(`  ${C.red}Worst:${C.reset} ${worst.comboLabel} (F1: ${worst.avgContextF1.toFixed(2)}, pass: ${worst.passed}/${worst.passed + worst.failed})`);
-  }
+  const passed = results.filter(r => r.pass).length;
+  const avgF1 = results.reduce((s, r) => s + (r.contextQuality?.f1 || 0), 0) / (results.length || 1);
+  return { suiteId: evalData.suiteId, passed, failed: results.length - passed, total: results.length, avgF1, results };
 }
-
-// ── Main ──
 
 async function main() {
+  const tmpDir = join(tmpdir(), `mrp-eval-${randomUUID().slice(0, 8)}`);
+  mkdirSync(tmpDir, { recursive: true });
+  const configDir = createIsolatedConfig(tmpDir, PORT);
+  const base = `http://127.0.0.1:${PORT}`;
+
   const entries = readdirSync(EVAL_DIR).filter(e => {
     try { return statSync(join(EVAL_DIR, e)).isDirectory() && e.startsWith('suite'); } catch { return false; }
   }).sort();
   const suites = SUITE_FILTER ? entries.filter(e => e === SUITE_FILTER) : entries;
   if (!suites.length) { console.error('No suites found.'); process.exit(1); }
 
-  const filters = [
-    MODE_FILTER ? `mode=${MODE_FILTER}` : null,
-    PROFILE_FILTER ? `profile=${PROFILE_FILTER}` : null,
-    PLANNER_PLUGIN_FILTER ? `planner=${PLANNER_PLUGIN_FILTER}` : null,
-    SEED_PLUGIN_FILTER ? `seed=${SEED_PLUGIN_FILTER}` : null,
-    KB_PLUGIN_FILTER ? `kb=${KB_PLUGIN_FILTER}` : null,
-    GOAL_PLUGIN_FILTER ? `goal=${GOAL_PLUGIN_FILTER}` : null
-  ].filter(Boolean);
+  let serverProc;
+  try {
+    console.log(`${C.dim}Starting isolated server on port ${PORT}...${C.reset}`);
+    serverProc = await startServer(configDir);
+    await waitReady(base);
+    console.log(`${C.bold}${suites.length} suite(s) — bare sessions (engine decides)${C.reset}\n`);
 
-  console.log(`${C.bold}${suites.length} suite(s)${filters.length ? `, filters: ${filters.join(', ')}` : ''}${C.reset}\n`);
+    const allResults = [];
+    for (const suite of suites) {
+      console.log(`${C.cyan}${C.bold}── ${suite}${C.reset}`);
+      const r = await runSuite(join(EVAL_DIR, suite), base);
+      allResults.push(r);
+      const icon = r.failed === 0 ? C.green : C.red;
+      console.log(`  ${icon}${C.bold}${r.passed}/${r.total} passed${C.reset} F1:${r.avgF1.toFixed(2)}\n`);
+    }
 
-  let portCounter = BASE_PORT;
-  const allResults = [];
+    const totalP = allResults.reduce((s, r) => s + r.passed, 0);
+    const totalF = allResults.reduce((s, r) => s + r.failed, 0);
+    const avgF1 = allResults.reduce((s, r) => s + r.avgF1, 0) / (allResults.length || 1);
+    console.log(`${C.bold}TOTAL: ${totalP}/${totalP + totalF} passed, avg F1: ${avgF1.toFixed(2)}${C.reset}`);
 
-  for (const suite of suites) {
-    const port = portCounter++;
-    console.log(`${C.cyan}${C.bold}── ${suite}${C.reset} ${C.dim}(port ${port})${C.reset}`);
-    const results = await runSuite(join(EVAL_DIR, suite), port);
-    allResults.push(...results);
+    mkdirSync(join(EVAL_DIR, 'results'), { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    writeFileSync(join(EVAL_DIR, 'results', `eval-${ts}.json`), JSON.stringify({
+      timestamp: new Date().toISOString(),
+      suites: allResults, totalPassed: totalP, totalFailed: totalF
+    }, null, 2));
+    console.log(`${C.dim}Results → test/evaluation/results/eval-${ts}.json${C.reset}`);
+
+    process.exit(totalF > 0 ? 1 : 0);
+  } finally {
+    if (serverProc) serverProc.kill();
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
-
-  printMatrix(allResults);
-
-  mkdirSync(join(EVAL_DIR, 'results'), { recursive: true });
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  writeFileSync(join(EVAL_DIR, 'results', `eval-${ts}.json`), JSON.stringify({
-    timestamp: new Date().toISOString(), suites: suites.length,
-    totalPassed: allResults.reduce((s, r) => s + r.passed, 0),
-    totalFailed: allResults.reduce((s, r) => s + r.failed, 0),
-    results: allResults
-  }, null, 2));
-  console.log(`\n${C.dim}Results → test/evaluation/results/eval-${ts}.json${C.reset}`);
-
-  process.exit(allResults.some(r => r.failed > 0 || r.error) ? 1 : 0);
 }
 
 main();

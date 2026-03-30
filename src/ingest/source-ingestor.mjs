@@ -1,5 +1,6 @@
 // DS018 — Source Ingestion & Chunking
 import { MRPError } from '../lib/errors.mjs';
+import { createHash } from 'node:crypto';
 
 export class SourceIngestor {
   constructor(normalizer, config) {
@@ -216,6 +217,17 @@ export class SourceIngestor {
       }));
       allUnits.push(...units);
     }
+    // Build hierarchical aggregate units
+    const aggregates = this._buildAggregateUnits(sourceId, filename, rawChunks, allUnits, createdAt);
+    // Link parent→child references
+    for (const agg of aggregates) {
+      for (const childId of agg.childUnitIds) {
+        const child = allUnits.find(u => u.id === childId);
+        if (child) child.parentUnitIds = [...(child.parentUnitIds || []), agg.id];
+      }
+      allUnits.push(agg);
+    }
+
     return {
       chunks: rawChunks.map((c, i) => ({
         chunkId: `${sourceId}::chunk-${String(i).padStart(3, '0')}`,
@@ -225,5 +237,87 @@ export class SourceIngestor {
       })),
       units: allUnits
     };
+  }
+
+  _buildAggregateUnits(sourceId, filename, chunks, leafUnits, createdAt) {
+    const aggregates = [];
+
+    // Group leaf units by section title (scene/chapter level)
+    const sections = new Map();
+    for (const unit of leafUnits) {
+      const key = unit.sectionTitle || unit.chunkId || 'default';
+      if (!sections.has(key)) sections.set(key, []);
+      sections.get(key).push(unit);
+    }
+
+    // Create section-level aggregates when a section has multiple units
+    const sectionAggIds = [];
+    for (const [sectionKey, sectionUnits] of sections) {
+      if (sectionUnits.length < 2) continue;
+      const aggId = `${sourceId}::section-${String(sectionAggIds.length).padStart(3, '0')}`;
+      const claims = sectionUnits.map(u => u.claim || u.procedure || '').filter(Boolean);
+      const summary = claims.length <= 3
+        ? claims.join('. ')
+        : claims.slice(0, 2).join('. ') + `. (and ${claims.length - 2} more)`;
+      const topic = sectionUnits[0]?.sectionTitle || sectionUnits[0]?.topic || sectionKey;
+      const roles = [...new Set(sectionUnits.map(u => u.role))];
+      const acts = [...new Set(sectionUnits.flatMap(u => u.utilityActs || []))];
+      aggregates.push({
+        id: aggId,
+        sourceId,
+        chunkId: sectionUnits[0]?.chunkId || `${sourceId}::chunk-000`,
+        role: roles.includes('Narrative') ? 'Narrative' : roles[0] || 'Explanation',
+        topic: `[Section] ${topic}`,
+        claim: summary,
+        procedure: null,
+        condition: null,
+        subject: null, relation: null, object: null, confidence: null,
+        utilityActs: acts.slice(0, 5),
+        utilityNote: `Aggregate of ${sectionUnits.length} units from section "${sectionKey}"`,
+        hash: createHash('sha256').update(`agg|${aggId}|${summary}`).digest('hex'),
+        unitType: 'section-aggregate',
+        textBody: summary,
+        parentUnitIds: [],
+        childUnitIds: sectionUnits.map(u => u.id),
+        derivedFromUnitIds: [],
+        sourceName: filename,
+        sectionTitle: topic,
+        createdAt
+      });
+      sectionAggIds.push(aggId);
+    }
+
+    // Create source-level aggregate if we have multiple sections
+    if (sectionAggIds.length >= 2 || (sectionAggIds.length === 0 && leafUnits.length >= 3)) {
+      const allChildIds = sectionAggIds.length > 0
+        ? sectionAggIds
+        : leafUnits.map(u => u.id);
+      const sourceAggId = `${sourceId}::source-summary`;
+      const topTopics = [...new Set(leafUnits.slice(0, 5).map(u => u.topic))].join(', ');
+      aggregates.push({
+        id: sourceAggId,
+        sourceId,
+        chunkId: `${sourceId}::chunk-000`,
+        role: 'Narrative',
+        topic: `[Source] ${filename || sourceId}`,
+        claim: `Source "${filename || sourceId}" covers: ${topTopics}`,
+        procedure: null,
+        condition: null,
+        subject: null, relation: null, object: null, confidence: null,
+        utilityActs: ['explain', 'describe'],
+        utilityNote: `Source-level aggregate: ${leafUnits.length} units, ${sectionAggIds.length} sections`,
+        hash: createHash('sha256').update(`src-agg|${sourceAggId}|${topTopics}`).digest('hex'),
+        unitType: 'source-aggregate',
+        textBody: `Source "${filename || sourceId}" covers: ${topTopics}`,
+        parentUnitIds: [],
+        childUnitIds: allChildIds,
+        derivedFromUnitIds: [],
+        sourceName: filename,
+        sectionTitle: null,
+        createdAt
+      });
+    }
+
+    return aggregates;
   }
 }

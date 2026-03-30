@@ -89,6 +89,33 @@ class GoalSolverPlugin {
 }
 ```
 
+## `val-plugin`
+
+```javascript
+class ValidationPlugin {
+  getDescriptor() -> PluginDescriptor
+
+  async validate(input, ctx) -> {
+    status: "accepted" | "rejected",
+    verdict: "accepted" | "rejected",
+    reason: string,
+    metadata: {
+      llmCalls: number,
+      model: string | null
+    },
+    error: null | { code, message }
+  }
+}
+```
+
+The validation plugin runs after a successful goal
+solver. It receives the original user message, the
+produced response, and the resolved intents with
+evidence. If it returns `rejected`, the core treats
+this as a retryable error (`VALIDATION_REJECTED`)
+and the planner backtracking loop may attempt an
+alternative plan.
+
 ## `mrp-plan-plugin`
 
 ```javascript
@@ -117,9 +144,9 @@ class MRPPlanPlugin {
   plannerAttempts: string[],
   stages: [{
     plannerPluginId: string,
-    stage: "seed-detector" | "kb" | "goal-solver",
+    stage: "seed-detector" | "kb" | "goal-solver" | "validation",
     pluginId,
-    status: "success" | "insufficient" | "error" | "unsupported" | "skipped-budget",
+    status: "success" | "insufficient" | "error" | "unsupported" | "skipped-budget" | "accepted" | "rejected",
     durationMs,
     llmCalls,
     sufficient: boolean | null,

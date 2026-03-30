@@ -1,0 +1,64 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Meta-Rational Planning - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
+<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html">Retrieval</a> <a href="processing-modes.html">Plugin Types</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="planner.html" class="current">Planner</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html">Cache</a></nav>
+
+<h1>Meta-Rational Planning <span class="badge done">DS029</span></h1>
+<p>The <code>mrp-plan-plugin</code> is the decision layer that orders plugin execution per request. It decides which seed detector, KB plugin, and goal solver to try first — and in what fallback order.</p>
+
+<h2>Why "Meta-Rational"?</h2>
+<p>The planner reasons <em>about</em> reasoning strategies rather than reasoning about the task directly. It selects which combination of plugins is most likely to succeed for a given request, based on task signals, historical outcomes, and plugin self-descriptions.</p>
+
+<h2>Built-in Planners</h2>
+<table>
+<tr><th>ID</th><th>Style</th><th>When Used</th></tr>
+<tr><td><code>planner-default</code></td><td>Adaptive cheap-first</td><td>Primary planner. Tries cheap plugins first, escalates on failure.</td></tr>
+<tr><td><code>planner-depth</code></td><td>Heavy-first fallback</td><td>Used when <code>planner-default</code> fails. Starts with expensive deep plugins.</td></tr>
+</table>
+
+<h2>How the Planner Decides</h2>
+<p>The planner combines four information sources to rank candidates per stage:</p>
+<ol>
+<li><strong>Task signals</strong> — regex-based cues from the user message: depth requests, speed requests, symbolic cues, retrieval-heavy patterns, topic tags (legal, literature, procedural, technical, symbolic)</li>
+<li><strong>Plugin self-description</strong> — <code>plannerHints</code> in the plugin descriptor: supported acts, topic tags, evidence style, preferred depth, expected latency/cost</li>
+<li><strong>Historical EWMA stats</strong> — per-plugin success rate, latency, LLM cost, sufficiency rate from the shared stats store</li>
+<li><strong>Default priors</strong> — cheap-first ordering from <code>config/plugins.json</code></li>
+</ol>
+
+<h3>plannerHints Fields</h3>
+<table>
+<tr><th>Field</th><th>Type</th><th>Purpose</th></tr>
+<tr><td><code>supportedActs</code></td><td>string[]</td><td>Pragmatic acts this plugin handles well</td></tr>
+<tr><td><code>topicTags</code></td><td>string[]</td><td>Domain tags: legal, literature, procedural, technical, symbolic</td></tr>
+<tr><td><code>evidenceStyle</code></td><td>string[]</td><td>Retrieval approach: hybrid, symbolic-facts, lexical-only</td></tr>
+<tr><td><code>preferredDepth</code></td><td>string</td><td>shallow | medium | deep</td></tr>
+<tr><td><code>fallbackRole</code></td><td>string</td><td>cheap-probe | default | heavy-recovery</td></tr>
+<tr><td><code>expectedLatencyMs</code></td><td>number</td><td>Estimated latency for scoring</td></tr>
+<tr><td><code>expectedLLMCalls</code></td><td>number</td><td>Estimated LLM calls for scoring</td></tr>
+<tr><td><code>relativeCost</code></td><td>number</td><td>0–1 cost factor for budget-aware ranking</td></tr>
+<tr><td><code>confidenceWhenMatched</code></td><td>number</td><td>0–1 self-assessed confidence when task matches</td></tr>
+</table>
+
+<h2>Adaptive Learning</h2>
+<p>After each request, the planner records outcomes via EWMA (Exponentially Weighted Moving Average):</p>
+<pre><code>utility = successEWMA + 0.15 × sufficiencyEWMA
+        - latencyPenalty - llmCostPenalty</code></pre>
+<p>Stats are tracked per plugin ID: attempts, successes, failures, insufficiency count, latency EWMA, LLM call EWMA. Cold-start priors favor cheaper plugins.</p>
+<p>Planner-level stats are also recorded, allowing the engine to rank planner candidates when no explicit planner is pinned.</p>
+
+<h2>Cross-Planner Backtracking</h2>
+<p>The engine maintains a <code>plannerFallbackOrder</code> (default: <code>planner-default → planner-depth</code>). If the first planner's plan fails with a retryable error, the engine tries the next planner with the remaining budget. Explicit planner pinning disables this backtracking.</p>
+
+<h2>Weak Outcome Recovery</h2>
+<p>If a planner produces only a <code>no-context</code> answer after insufficient KB retrieval, the engine escalates to the next planner. If all planners produce weak results, the best weak answer is accepted rather than returning an error.</p>
+
+<h2>Configuration</h2>
+<pre><code>// config/plugins.json
+{
+  "defaultPlannerPlugin": "planner-default",
+  "plannerFallbackOrder": ["planner-default", "planner-depth"],
+  "defaultSeedDetectorPlan": ["sd-symbolic", "sd-llm-fast", "sd-llm-deep"],
+  "defaultKBPlan": ["kb-fast", "kb-balanced", "kb-thinkingdb"],
+  "defaultGoalSolverPlan": ["gs-symbolic", "gs-llm-fast", "gs-llm-deep"]
+}</code></pre>
+
+<div class="nav-bottom"><a href="processing-modes.html" class="prev">← Plugin Types</a> <a href="evaluation.html">Evaluation →</a></div>
+</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>

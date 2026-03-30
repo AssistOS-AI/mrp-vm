@@ -79,15 +79,27 @@ KB plugins own:
 
 The current baseline preserves:
 
-- where a unit came from
-- which chunk it came from
+- where a unit came from (`sourceId`, `chunkId`)
+- which chunk it came from with offsets
 - its source-level identity and hash
-- optional structural hints such as chunk type,
-  section title, and empty-or-populated lineage lists
+- structural hints: `unitType`, `chunkType`,
+  `sectionTitle`
+- hierarchical links: `parentUnitIds` and
+  `childUnitIds` connecting leaf units to section
+  aggregates and section aggregates to source
+  aggregates
 
-Richer cross-unit hierarchies are still incremental
-work, but the persisted schema now carries lineage
-slots instead of omitting them entirely.
+The ingest pipeline (DS018) now produces three
+levels of units:
+
+1. **Leaf units** — grouped semantic claims
+2. **Section aggregates** — summaries with
+   `childUnitIds` pointing to leaf units
+3. **Source aggregates** — summaries with
+   `childUnitIds` pointing to section aggregates
+
+KB plugins can traverse these links to expand or
+narrow retrieval granularity per question.
 
 ## Dependencies
 

@@ -74,7 +74,9 @@ export class MRPEngine {
       sufficient = null,
       error = null,
       model = null,
-      modelRole = null
+      modelRole = null,
+      inputSnippet = null,
+      outputSnippet = null
     ) => {
       executionTrace.stages.push({
         stage,
@@ -86,8 +88,16 @@ export class MRPEngine {
         sufficient,
         error,
         model,
-        modelRole
+        modelRole,
+        inputSnippet,
+        outputSnippet
       });
+    };
+
+    const snip = (text, max = 300) => {
+      if (!text) return null;
+      const s = typeof text === 'string' ? text : JSON.stringify(text);
+      return s.length <= max ? s : s.slice(0, max) + '…';
     };
 
     const checkBudget = () => {
@@ -169,6 +179,7 @@ export class MRPEngine {
         } = prepared;
 
         executionTrace.sessionId = session.sessionId;
+        executionTrace.inputMessage = snip(currentMessage, 500);
         pluginCtx = this._buildPluginContext(requestId, session);
         let plannerCandidates = unique([
           requestedPlannerPlugin,
@@ -181,6 +192,7 @@ export class MRPEngine {
           plannerCandidates = this.plannerStatsStore.rankPlanners(plannerCandidates);
         }
         plannerCandidates = plannerCandidates.slice(0, this.maxPluginsPerStage);
+        executionTrace.plannerCandidates = plannerCandidates;
 
         const finalizeExecution = async (executed, plannerId) => {
           this.conversationHandler.commitSuccessfulTurn(
@@ -215,13 +227,31 @@ export class MRPEngine {
         };
 
         const executePlan = async (plan) => {
+          const planNode = {
+            type: 'plan',
+            plannerPluginId: plan.plannerPluginId,
+            notes: plan.notes,
+            seedDetectorOrder: plan.seedDetectorOrder,
+            kbPluginOrder: plan.kbPluginOrder,
+            goalSolverOrder: plan.goalSolverOrder,
+            children: []
+          };
+          executionTrace.trees = executionTrace.trees || [];
+          executionTrace.trees.push(planNode);
+
+          // --- Seed detection ---
+          const seedNode = { type: 'stage', stage: 'seed-detector', children: [] };
+          planNode.children.push(seedNode);
           let seedResult = null;
           let selectedSeedDetectorPlugin = null;
           const seedCandidates = (plan.seedDetectorOrder || []).slice(0, this.maxPluginsPerStage);
           for (const pluginId of seedCandidates) {
             const plugin = this.pluginRegistry.get('sd-plugin', pluginId);
             if (!plugin) continue;
-            if (!reserveBudgetOrSkip('seed-detector', pluginId, plugin)) continue;
+            if (!reserveBudgetOrSkip('seed-detector', pluginId, plugin)) {
+              seedNode.children.push({ type: 'plugin', pluginId, status: 'skipped-budget' });
+              continue;
+            }
             const startedAt = Date.now();
             const result = await plugin.detectSeeds({
               currentMessage,
@@ -232,17 +262,22 @@ export class MRPEngine {
             }, pluginCtx);
             llmCallCount += result.metadata?.llmCalls || 0;
             checkBudget();
-            addStageTrace(
-              'seed-detector',
-              pluginId,
-              result.status,
-              startedAt,
-              result.metadata?.llmCalls || 0,
-              result.status === 'success',
-              result.error || null,
-              result.metadata?.model || null,
-              plugin.getDescriptor().modelRoles?.[0] || null
-            );
+            const pluginNode = {
+              type: 'plugin', pluginId, status: result.status,
+              durationMs: Date.now() - startedAt,
+              llmCalls: result.metadata?.llmCalls || 0,
+              model: result.metadata?.model || null,
+              input: currentMessage,
+              output: result.intentCNL || null,
+              contextCNL: result.currentTurnContextCNL || null,
+              error: result.error || null
+            };
+            seedNode.children.push(pluginNode);
+            addStageTrace('seed-detector', pluginId, result.status, startedAt,
+              result.metadata?.llmCalls || 0, result.status === 'success',
+              result.error || null, result.metadata?.model || null,
+              plugin.getDescriptor().modelRoles?.[0] || null,
+              snip(currentMessage), snip(result.intentCNL));
             if (result.status === 'success') {
               seedResult = result;
               selectedSeedDetectorPlugin = pluginId;
@@ -250,125 +285,199 @@ export class MRPEngine {
             }
           }
           if (!seedResult) {
-            throw new MRPError(
-              'PLUGIN_STAGE_EXHAUSTED',
-              MOD,
+            throw new MRPError('PLUGIN_STAGE_EXHAUSTED', MOD,
               'No seed detector plugin produced valid seeds',
-              { stage: 'seed-detector', pluginsTried: seedCandidates }
-            );
+              { stage: 'seed-detector', pluginsTried: seedCandidates });
           }
 
+          // --- Parse & Decompose ---
           const intentGroups = this.parser.parseIntentCNL(seedResult.intentCNL);
           if (intentGroups.length === 0) {
             throw new MRPError('DECOMPOSER_EMPTY_RESULT', MOD, 'No intent groups produced');
           }
-
           let currentTurnUnits = [];
           if (seedResult.currentTurnContextCNL?.trim()) {
             currentTurnUnits = this.parser.parseContextCNL(seedResult.currentTurnContextCNL);
           }
-
           const decomposedIntents = this.decomposer.decompose(intentGroups);
           const contextProfiles = decomposedIntents.map(d => this.decomposer.deriveContextProfile(d));
 
-          let kbResult = null;
-          let selectedKBPlugin = null;
-          let kbSufficient = false;
+          const decomposeNode = {
+            type: 'decompose',
+            intentGroups: intentGroups.map(g => ({ groupNumber: g.groupNumber, act: g.act, intent: g.intent, output: g.output })),
+            contextProfiles: contextProfiles.map(p => ({ intentGroupNumber: p.intentGroupNumber, neededRoles: p.neededRoles, queryTerms: p.queryTerms?.slice(0, 15) })),
+            currentTurnUnitCount: currentTurnUnits.length
+          };
+          planNode.children.push(decomposeNode);
+
+          // --- KB retrieval (collect all results for backtracking) ---
+          const kbNode = { type: 'stage', stage: 'kb', children: [] };
+          planNode.children.push(kbNode);
+          const kbResults = []; // ordered best-first
           const kbCandidates = (plan.kbPluginOrder || []).slice(0, this.maxPluginsPerStage);
           for (const pluginId of kbCandidates) {
             const plugin = this.pluginRegistry.get('kb-plugin', pluginId);
             if (!plugin) continue;
             const startedAt = Date.now();
             const result = await plugin.retrieve({
-              decomposedIntents,
-              contextProfiles,
-              currentTurnUnits,
-              session,
+              decomposedIntents, contextProfiles, currentTurnUnits, session,
               kbIndex: session.workspace?.getIndex() || this.kbIndex
             }, pluginCtx);
-            addStageTrace(
-              'kb',
-              pluginId,
-              result.status,
-              startedAt,
-              0,
-              result.sufficient,
-              result.error || null
-            );
-            if (result.status === 'success') {
-              kbResult = result;
-              selectedKBPlugin = pluginId;
-              kbSufficient = true;
-              break;
-            }
-            if (result.status === 'insufficient') {
-              kbResult = result;
-              selectedKBPlugin = pluginId;
-              kbSufficient = false;
+            const evidenceCount = (result.resolvedIntents || []).reduce((s, ri) =>
+              s + (ri.currentTurnContextUnits?.length || 0) + (ri.sessionUnits?.length || 0) + (ri.kbUnits?.length || 0), 0);
+            const riSummary = (result.resolvedIntents || []).map(ri => ({
+              intentRef: ri.intentRef,
+              act: ri.decomposed?.act,
+              intent: ri.decomposed?.intent || '',
+              retrievalProfile: ri.retrievalProfile || '',
+              currentTurnCount: ri.currentTurnContextUnits?.length || 0,
+              sessionCount: ri.sessionUnits?.length || 0,
+              kbCount: ri.kbUnits?.length || 0,
+              currentTurnClaims: (ri.currentTurnContextUnits || []).slice(0, 3).map(u => `[${u.role}] ${u.claim || u.procedure || ''}`).filter(Boolean),
+              sessionClaims: (ri.sessionUnits || []).slice(0, 3).map(u => `[${u.unit?.role}] ${u.unit?.claim || u.unit?.procedure || ''} (${u.score?.toFixed(2)})`).filter(Boolean),
+              kbClaims: (ri.kbUnits || []).slice(0, 5).map(u => `[${u.unit?.role}] ${u.unit?.claim || u.unit?.procedure || ''} (${u.score?.toFixed(2)})`).filter(Boolean),
+              resolvedMarkdown: ri.resolvedMarkdown || null
+            }));
+            kbNode.children.push({
+              type: 'plugin', pluginId, status: result.status,
+              durationMs: Date.now() - startedAt,
+              sufficient: result.sufficient,
+              evidenceCount,
+              resolvedIntents: riSummary,
+              input: decomposedIntents.map(d => `[${d.act}] ${d.intent}`).join('\n'),
+              error: result.error || null
+            });
+            addStageTrace('kb', pluginId, result.status, startedAt, 0,
+              result.sufficient, result.error || null, null, null,
+              snip(contextProfiles.map(p => p.queryText).join(' | ')),
+              snip(`${evidenceCount} evidence units, sufficient=${result.sufficient}`));
+            if (result.status === 'success' || result.status === 'insufficient') {
+              kbResults.push({ result, pluginId, sufficient: result.status === 'success' });
             }
           }
-          if (!kbResult) {
-            throw new MRPError(
-              'PLUGIN_STAGE_EXHAUSTED',
-              MOD,
+          if (!kbResults.length) {
+            throw new MRPError('PLUGIN_STAGE_EXHAUSTED', MOD,
               'No KB plugin produced a retrieval result',
-              { stage: 'kb', pluginsTried: kbCandidates }
-            );
+              { stage: 'kb', pluginsTried: kbCandidates });
           }
 
-          const resolvedIntents = kbResult.resolvedIntents || [];
-
+          // --- Goal solving with KB backtracking ---
+          const goalNode = { type: 'stage', stage: 'goal-solver', children: [] };
+          planNode.children.push(goalNode);
           let goalResult = null;
           let selectedGoalSolverPlugin = null;
+          let selectedKBPlugin = null;
+          let kbSufficient = false;
           let weakGoalResult = null;
           let weakGoalSolverPlugin = null;
+          let weakKBPlugin = null;
+          let weakKBSufficient = false;
           const goalCandidates = (plan.goalSolverOrder || []).slice(0, this.maxPluginsPerStage);
-          for (const pluginId of goalCandidates) {
-            const plugin = this.pluginRegistry.get('gs-plugin', pluginId);
-            if (!plugin) continue;
-            if (!reserveBudgetOrSkip('goal-solver', pluginId, plugin)) continue;
-            const startedAt = Date.now();
-            const result = await plugin.solve({
-              sessionId: session.sessionId,
-              resolvedIntents,
-              systemPrompt,
-              requestedModel,
-              sessionModel: session.preferredModel
-            }, pluginCtx);
-            llmCallCount += result.metadata?.llmCalls || 0;
-            checkBudget();
-            addStageTrace(
-              'goal-solver',
-              pluginId,
-              result.status,
-              startedAt,
-              result.metadata?.llmCalls || 0,
-              result.status === 'success' ? true : result.status === 'no-context' ? false : null,
-              result.error || null,
-              result.metadata?.model || null,
-              plugin.getDescriptor().modelRoles?.[0] || null
-            );
-            if (result.status === 'success') {
-              goalResult = result;
-              selectedGoalSolverPlugin = pluginId;
-              break;
+
+          for (const kb of kbResults) {
+            const resolvedIntentsForKB = kb.result.resolvedIntents || [];
+            for (const pluginId of goalCandidates) {
+              const plugin = this.pluginRegistry.get('gs-plugin', pluginId);
+              if (!plugin) continue;
+              if (!reserveBudgetOrSkip('goal-solver', pluginId, plugin)) {
+                goalNode.children.push({ type: 'plugin', pluginId, status: 'skipped-budget' });
+                continue;
+              }
+              const startedAt = Date.now();
+              const result = await plugin.solve({
+                sessionId: session.sessionId, resolvedIntents: resolvedIntentsForKB, systemPrompt,
+                requestedModel, sessionModel: session.preferredModel
+              }, pluginCtx);
+              llmCallCount += result.metadata?.llmCalls || 0;
+              checkBudget();
+              goalNode.children.push({
+                type: 'plugin', pluginId, status: result.status,
+                durationMs: Date.now() - startedAt,
+                llmCalls: result.metadata?.llmCalls || 0,
+                model: result.metadata?.model || null,
+                kbPluginId: kb.pluginId,
+                input: resolvedIntentsForKB.map(ri => `[${ri.decomposed?.act}] ${ri.decomposed?.intent || ''}`).join('\n'),
+                output: result.responseMarkdown || null,
+                error: result.error || null
+              });
+              addStageTrace('goal-solver', pluginId, result.status, startedAt,
+                result.metadata?.llmCalls || 0,
+                result.status === 'success' ? true : result.status === 'no-context' ? false : null,
+                result.error || null, result.metadata?.model || null,
+                plugin.getDescriptor().modelRoles?.[0] || null,
+                snip(`${resolvedIntentsForKB.length} resolved intents (kb:${kb.pluginId})`),
+                snip(result.responseMarkdown));
+              if (result.status === 'success') {
+                goalResult = result; selectedGoalSolverPlugin = pluginId;
+                selectedKBPlugin = kb.pluginId; kbSufficient = kb.sufficient;
+                break;
+              }
+              if (result.status === 'no-context' && !weakGoalResult) {
+                weakGoalResult = result; weakGoalSolverPlugin = pluginId;
+                weakKBPlugin = kb.pluginId; weakKBSufficient = kb.sufficient;
+              }
             }
-            if (result.status === 'no-context') {
-              weakGoalResult = result;
-              weakGoalSolverPlugin = pluginId;
-            }
+            if (goalResult) break; // found a good answer, stop backtracking
           }
+
           if (!goalResult && weakGoalResult) {
-            goalResult = weakGoalResult;
-            selectedGoalSolverPlugin = weakGoalSolverPlugin;
+            goalResult = weakGoalResult; selectedGoalSolverPlugin = weakGoalSolverPlugin;
+            selectedKBPlugin = weakKBPlugin; kbSufficient = weakKBSufficient;
           }
           if (!goalResult) {
-            throw new MRPError(
-              'PLUGIN_STAGE_EXHAUSTED',
-              MOD,
+            throw new MRPError('PLUGIN_STAGE_EXHAUSTED', MOD,
               'No goal solver plugin produced a final answer',
-              { stage: 'goal-solver', pluginsTried: goalCandidates }
-            );
+              { stage: 'goal-solver', pluginsTried: goalCandidates });
+          }
+
+          const resolvedIntents = (kbResults.find(k => k.pluginId === selectedKBPlugin) || kbResults[0]).result.resolvedIntents || [];
+
+          // --- Validation ---
+          const valCandidates = this.pluginRegistry.listByType('val-plugin').map(d => d.id);
+          let validationVerdict = 'accepted';
+          let validationReason = '';
+          if (valCandidates.length > 0 && goalResult.status === 'success') {
+            const valNode = { type: 'stage', stage: 'validation', children: [] };
+            planNode.children.push(valNode);
+            for (const valId of valCandidates.slice(0, this.maxPluginsPerStage)) {
+              const valPlugin = this.pluginRegistry.get('val-plugin', valId);
+              if (!valPlugin) continue;
+              if (!reserveBudgetOrSkip('validation', valId, valPlugin)) {
+                valNode.children.push({ type: 'plugin', pluginId: valId, status: 'skipped-budget' });
+                continue;
+              }
+              const startedAt = Date.now();
+              const valResult = await valPlugin.validate({
+                originalMessage: currentMessage,
+                responseMarkdown: goalResult.responseMarkdown,
+                resolvedIntents,
+                requestedModel,
+                sessionModel: session.preferredModel
+              }, pluginCtx);
+              llmCallCount += valResult.metadata?.llmCalls || 0;
+              checkBudget();
+              valNode.children.push({
+                type: 'plugin', pluginId: valId, status: valResult.status,
+                durationMs: Date.now() - startedAt,
+                llmCalls: valResult.metadata?.llmCalls || 0,
+                model: valResult.metadata?.model || null,
+                input: currentMessage,
+                output: `${valResult.verdict}: ${valResult.reason}`,
+                error: valResult.error || null
+              });
+              addStageTrace('validation', valId, valResult.status, startedAt,
+                valResult.metadata?.llmCalls || 0, valResult.verdict === 'accepted',
+                valResult.error || null, valResult.metadata?.model || null,
+                valPlugin.getDescriptor().modelRoles?.[0] || null,
+                snip(currentMessage), snip(`${valResult.verdict}: ${valResult.reason}`));
+              validationVerdict = valResult.verdict;
+              validationReason = valResult.reason;
+              break;
+            }
+          }
+          if (validationVerdict === 'rejected') {
+            goalResult.validationRejected = true;
+            goalResult.validationReason = validationReason;
           }
 
           return {
@@ -388,7 +497,8 @@ export class MRPEngine {
           'PLUGIN_STAGE_EXHAUSTED',
           'ENGINE_BUDGET_EXCEEDED',
           'DECOMPOSER_EMPTY_RESULT',
-          'PLAN_INSUFFICIENT_EVIDENCE'
+          'PLAN_INSUFFICIENT_EVIDENCE',
+          'VALIDATION_REJECTED'
         ]);
 
         for (const plannerId of plannerCandidates) {
@@ -423,6 +533,14 @@ export class MRPEngine {
                 goalSolverPlugin: session.preferredGoalSolverPlugin
               }
             }, pluginCtx);
+
+            executionTrace.lastPlan = {
+              plannerPluginId: plan.plannerPluginId,
+              seedDetectorOrder: plan.seedDetectorOrder,
+              kbPluginOrder: plan.kbPluginOrder,
+              goalSolverOrder: plan.goalSolverOrder,
+              notes: plan.notes
+            };
 
             const executed = await executePlan(plan);
             if (executed.weakOutcome && executed.kbSufficient === false) {

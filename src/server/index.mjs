@@ -10,7 +10,7 @@ import { AnswerSynthesizer } from '../synthesis/answer-synthesizer.mjs';
 import { ConversationHandler } from '../conversation/handler.mjs';
 import { PluginManager } from '../plugins/manager.mjs';
 import { TypedPluginRegistry } from '../plugins/typed-registry.mjs';
-import { StrategySeedDetectorPlugin, RetrievalKBPlugin, StrategyGoalSolverPlugin } from '../plugins/builtin-plugins.mjs';
+import { StrategySeedDetectorPlugin, RetrievalKBPlugin, StrategyGoalSolverPlugin, LLMValidationPlugin } from '../plugins/builtin-plugins.mjs';
 import { LLMRoleSettingsStore } from '../plugins/settings.mjs';
 import { PlannerStatsStore } from '../plugins/planner-stats.mjs';
 import { DefaultPlannerPlugin } from '../plugins/default-planner.mjs';
@@ -302,6 +302,15 @@ async function boot() {
       plannerStyle: 'deep-first'
     }
   ));
+
+  // Validation plugin
+  if (llmBridge) {
+    typedPluginRegistry.register(new LLMValidationPlugin(
+      'val-llm',
+      llmBridge,
+      { description: 'LLM-backed response validator.', costClass: 'moderate', modelRole: 'validation' }
+    ));
+  }
 
   // Build engine
   const engine = new MRPEngine(

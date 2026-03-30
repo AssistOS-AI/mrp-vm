@@ -9,6 +9,7 @@ and execution rules for all MRP-VM plugin types.
 - `sd-plugin`
 - `kb-plugin`
 - `gs-plugin`
+- `val-plugin`
 - `mrp-plan-plugin`
 
 Type-specific interfaces are defined in DS027.
