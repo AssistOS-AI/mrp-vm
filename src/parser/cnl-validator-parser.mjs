@@ -258,8 +258,14 @@ export class CNLParser {
       };
       return {
         id,
+        kuType: block.fields['KUType']?.value.trim() || null,
+        title: block.fields['Title']?.value.trim() || null,
         sourceId: block.fields['SourceId']?.value.trim() || '',
         sourceName: block.fields['SourceName']?.value.trim() || null,
+        sourceType: block.fields['SourceType']?.value.trim() || null,
+        author: block.fields['Author']?.value.trim() || null,
+        ingestedAt: block.fields['IngestedAt']?.value.trim() || null,
+        knowledgeDate: block.fields['KnowledgeDate']?.value.trim() || null,
         chunkId: block.fields['ChunkId']?.value.trim() || '',
         chunkIndex: parseInteger('ChunkIndex'),
         unitIndex: parseInteger('UnitIndex'),

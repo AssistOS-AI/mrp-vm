@@ -66,6 +66,17 @@ Command:
 npm run eval -- [filters]
 ```
 
+Default behavior is session-centric: one shared
+session per suite, one reusable source load through
+`POST /sessions/:id/context`, then all suite
+questions through `/chat/completions` with the same
+stable `session_id`, with engine-selected plugins.
+Explicit workspace source staging is secondary and
+should only be enabled when the test is specifically
+about workspace / KB ingest behavior. Use
+runner-specific flags such as `--matrix` when
+comparative plugin-combination coverage is needed.
+
 The evaluation runner uses suite folders under:
 
 ```text

@@ -18,7 +18,8 @@ Each session stores:
   preferredModel,
   mountedKbId,
   workspace,
-  sessionContextUnits
+  sessionContextUnits,
+  pendingTurnContextUnits
 }
 ```
 
@@ -55,6 +56,88 @@ so the planner can distinguish:
 
 - hard pins from the current request
 - soft priors from session state
+
+## Session Context Reuse
+
+Sessions are the canonical mechanism for reusing
+conversation-local context across multiple chat turns.
+
+This includes:
+
+- message history
+- selected plugin preferences
+- accumulated `sessionContextUnits`
+- session-local retrieval index built from those units
+- the currently loaded KB repository identity
+- the session workspace draft derived from that KB
+
+For long conversational source context that should be
+reused across later questions, the preferred path is:
+
+1. create or reuse a session
+2. load the reusable source through
+   `POST /sessions/:id/context`
+3. let the selected `sd-plugin` derive KUs for that
+   source load
+4. commit those KUs directly into
+   `sessionContextUnits`
+5. ask later questions through `/chat/completions`
+   with the same stable `session_id`
+
+This is the default session-level context reuse path.
+Explicit workspace or KB source staging is a separate
+capability and SHOULD be used only when the user
+actually wants source authoring, repository
+persistence, or plugin-private artifact generation.
+
+## Session-Scoped KB Lifecycle
+
+KB operations are part of session state, not a
+separate global toggle.
+
+The session layer MUST support:
+
+- creating a session with an initial loaded KB
+- loading a named KB into an existing session
+- saving the current session draft back into a KB
+- forking the current session draft into a new KB
+
+When one of those operations occurs, the conversation
+layer MUST notify all enabled `kb-plugin`s so each
+plugin can update any session-local caches or
+repository-local derived state it owns.
+
+Loading a KB into a session does not require the core
+to perform extra shared caching work beyond mounting
+the repository/workspace view. The main contract is
+that all `kb-plugin`s are informed of the session
+transition and can choose how to react.
+
+Likewise, loading reusable session context does not
+require the shared server layer to build a second
+cache structure of its own. The contract is that the
+conversation layer commits the derived KUs into the
+session and all `kb-plugin`s are notified, after
+which each plugin MAY cache or ignore that signal as
+it sees fit.
+
+## Turn-Local KU Staging
+
+Before retrieval for a chat turn, the current
+`sd-plugin` output MAY include current-turn KUs.
+Those KUs MUST be staged into transient session
+state as `pendingTurnContextUnits`.
+
+Rules:
+
+- staged turn KUs are visible to the current turn
+- staged turn KUs are not yet durable session memory
+- on successful turn commit, deduplicated staged KUs
+  are promoted into `sessionContextUnits`
+- on failed turn completion, staged turn KUs MUST be
+  discarded
+- `kb-plugin`s MUST be notified when turn KUs are
+  staged and when they are committed
 
 ## Turn Commit
 

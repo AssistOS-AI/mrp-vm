@@ -96,8 +96,14 @@ Validator error codes:
 ```javascript
 {
   id: string,
+  kuType: string | null,
+  title: string | null,
   sourceId: string,
   sourceName: string | null,
+  sourceType: string | null,
+  author: string | null,
+  ingestedAt: string | null,
+  knowledgeDate: string | null,
   chunkId: string,
   chunkIndex: number | null,
   unitIndex: number | null,
@@ -145,10 +151,14 @@ Validator error codes:
 - Heading: `## Context Unit <ID>`.
 - Required fields: SourceId, ChunkId, Role,
   Topic.
-- Allowed fields: SourceId, ChunkId, Role, Topic,
-  Claim, Condition, Procedure, Subject, Relation,
-  Object, Confidence, UtilityActs, UtilityNote,
-  Hash.
+- Allowed fields: SourceId, ChunkId, KUType, Title,
+  Role, Topic, Claim, Condition, Procedure, Subject,
+  Relation, Object, Confidence, UtilityActs,
+  UtilityNote, Hash, SourceName, SourceType, Author,
+  IngestedAt, KnowledgeDate, ChunkIndex, UnitIndex,
+  UnitType, TextBody, ParentUnitIds, ChildUnitIds,
+  DerivedFromUnitIds, CharStart, CharEnd, CreatedAt,
+  ChunkType, SectionTitle.
 - Claim required if Role ≠ Procedure.
 - Procedure required if Role = Procedure.
 - Claim and Procedure cannot coexist →

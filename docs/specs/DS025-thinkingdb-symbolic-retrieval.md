@@ -1,17 +1,20 @@
-# DS025 — ThinkingDB Symbolic Retrieval Backend
+# DS025 — ThinkingDB Symbolic Backend (kb-thinkingdb)
 
 ## Purpose
-Defines the symbolic retrieval backend used by
-`kb-thinkingdb`.
+Defines the symbolic retrieval backend used
+internally by the built-in `kb-thinkingdb` plugin.
 
-The backend builds a bounded local proof/search space
-over symbolic facts extracted from Context CNL units.
+This is a plugin-private backend, not a VM-level
+shared service. The VM core does not depend on or
+reference ThinkingDB directly. Other KB plugins are
+free to use entirely different symbolic strategies.
 
 ## Architectural Position
 
-- ThinkingDB is a backend, not a standalone core
-  mode
-- it is typically invoked by `kb-thinkingdb`
+- ThinkingDB is a backend owned by `kb-thinkingdb`
+- the VM core provides only the LLM bridge and
+  execution frame machinery; all retrieval logic
+  belongs to plugins
 - it complements lexical retrieval with relation- and
   closure-aware evidence selection
 

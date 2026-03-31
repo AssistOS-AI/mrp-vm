@@ -11,18 +11,16 @@ export class KBIndex {
   constructor(config = {}) {
     this.fieldWeights = config.fieldWeights || DEFAULT_WEIGHTS;
     this.roleBoostFactor = config.roleBoostFactor || 1.3;
-    // inverted index: term → Map<unitId, Map<field, freq>>
     this.invertedIndex = new Map();
-    // doc lengths: unitId → { field: length }
     this.docLengths = new Map();
-    // avg doc lengths per field
     this.avgDocLengths = {};
-    // idf cache: term → idf
     this.idfCache = new Map();
-    // units store
     this.units = new Map();
     this.totalDocs = 0;
+    this._changeListeners = [];
   }
+
+  onChange(fn) { this._changeListeners.push(fn); }
 
   _fieldText(unit, field) {
     if (field === 'utilityActs') return (unit.utilityActs || []).join(' ');
@@ -74,6 +72,7 @@ export class KBIndex {
     this.docLengths.delete(unitId);
     for (const [, postings] of this.invertedIndex) postings.delete(unitId);
     this._rebuildAvgAndIdf();
+    for (const fn of this._changeListeners) fn('remove', unitId);
   }
 
   updateUnit(unit) {
@@ -90,6 +89,7 @@ export class KBIndex {
       this._indexUnit(u);
     }
     this._rebuildAvgAndIdf();
+    for (const fn of this._changeListeners) fn('rebuild', null);
   }
 
   search(query, options = {}) {

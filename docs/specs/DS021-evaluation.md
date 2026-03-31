@@ -12,10 +12,36 @@ The shipped runner is:
 test/evaluation/run.mjs
 ```
 
-It starts an isolated server, stages suite knowledge
-into a temporary workspace, runs one or more
-question/strategy combinations, and reports answer
-quality plus context quality.
+It starts an isolated server and exercises the
+canonical conversational path by default.
+
+In default mode:
+
+- one session is created per suite
+- the suite story is loaded once through
+  `POST /sessions/:id/context`
+- the same stable `session_id` is reused for all
+  later questions in that suite
+- all suite questions are sent through
+  `/chat/completions`
+- plugin selection is left to the engine unless the
+  caller explicitly requests matrix mode
+
+This is the preferred evaluation path because it
+matches the canonical session-backed API usage:
+session creation, explicit reusable context load, and
+later question answering through chat.
+
+The runner MAY also support:
+
+- an explicit matrix mode that expands
+  `pluginCombos` for comparative runs
+- an explicit workspace-ingest path for suites that
+  intentionally need staged KB/workspace sources
+
+Workspace source staging is secondary. It SHOULD NOT
+be treated as the default conversational evaluation
+path.
 
 ## Suite Layout
 
@@ -30,14 +56,14 @@ suiteXX/
 `eval.json` defines:
 
 - suite metadata
-- preferred `pluginCombos` entries describing typed
-  plugin requests
+- optional `pluginCombos` entries describing typed
+  plugin requests for matrix mode
 - optional legacy `modes` / `profiles` only for
   migration coverage
 - questions
 - expected intent/content/context checks
 
-Preferred combo shape:
+Preferred combo shape for matrix mode:
 
 ```json
 {
@@ -49,10 +75,11 @@ Preferred combo shape:
 }
 ```
 
-The runner MAY derive compatibility aliases from
-those plugin IDs for reporting. If `pluginCombos`
-are absent, it may still expand legacy
-`modes × profiles` into compatibility combos.
+When matrix mode is enabled, the runner MAY derive
+compatibility aliases from those plugin IDs for
+reporting. If `pluginCombos` are absent, it may still
+expand legacy `modes × profiles` into compatibility
+combos.
 
 ## Recorded Runtime Surface
 
@@ -115,8 +142,10 @@ question F1.
 
 ## Evaluation Output
 
-Per combination, the runner reports:
+Per default suite run, and per combination in matrix
+mode, the runner reports:
 
+- delivery path used for the suite
 - total passed / failed
 - answer-pass count
 - context-pass count
@@ -133,7 +162,9 @@ Use DS021 when comparing:
 
 - planner choices
 - KB plugin quality
-- symbolic vs LLM tradeoffs
+- session-based conversational behavior
+- symbolic vs LLM tradeoffs after the normal chat
+  path has selected them
 - expensive-plugin avoidance
 
 ## Dependencies

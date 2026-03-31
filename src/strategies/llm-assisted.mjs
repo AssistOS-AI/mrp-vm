@@ -18,6 +18,18 @@ function stripFences(text) {
   return text.replace(/^```(?:markdown)?\s*\n?/gm, '').replace(/\n?```\s*$/gm, '').trim();
 }
 
+function splitSeedBundle(text) {
+  const normalized = stripFences(text || '');
+  const match = normalized.match(/^# Intent CNL\s*\n([\s\S]*?)\n# Session Context CNL\s*\n?([\s\S]*)$/);
+  if (!match) {
+    throw new Error('Invalid seed bundle format');
+  }
+  return {
+    intentCNL: match[1].trim(),
+    currentTurnContextCNL: match[2].trim()
+  };
+}
+
 export class LLMAssistedStrategy extends LanguageProcessingStrategy {
   constructor(llmBridge) {
     super();
@@ -28,28 +40,49 @@ export class LLMAssistedStrategy extends LanguageProcessingStrategy {
   usesLLM() { return true; }
   supportsModelOverride() { return true; }
   getCapabilities() {
-    return ['normalize-intent', 'extract-session-context', 'normalize-persistent-context', 'synthesize-response'];
+    return ['detect-seeds', 'normalize-persistent-context', 'synthesize-response'];
+  }
+
+  async detectSeedBundle({ rawNL, history, systemPrompt, requestedModel }) {
+    const prompt = loadPrompt('normalize-seed-bundle.md');
+    const historyText = (history || []).map(m => `${m.role}: ${m.content}`).join('\n');
+    const stableHistory = historyText
+      .replace(/sess-[a-f0-9-]+/g, 'sess-REF')
+      .replace(/src-[a-f0-9]+/g, 'src-REF')
+      .replace(/req-[a-f0-9]+/g, 'req-REF');
+    const userMsg = [
+      systemPrompt ? `System instructions: ${systemPrompt}` : null,
+      stableHistory ? `Conversation history:\n${stableHistory}` : null,
+      `Current request:\n${rawNL}`
+    ].filter(Boolean).join('\n\n');
+    const result = await this.llm.callWithRetry(prompt, userMsg, {
+      model: requestedModel,
+      operation: 'detect-seeds'
+    });
+    return splitSeedBundle(result);
   }
 
   async normalizeIntent({ rawNL, history, systemPrompt, requestedModel }) {
-    const prompt = loadPrompt('normalize-intent.md');
-    const historyText = (history || []).map(m => `${m.role}: ${m.content}`).join('\n');
-    const userMsg = `${systemPrompt ? `System instructions: ${systemPrompt}\n` : ''}${historyText ? `Conversation history:\n${historyText}\n\n` : ''}Current request:\n${rawNL}`;
-    const result = await this.llm.callWithRetry(prompt, userMsg, { model: requestedModel });
-    return { intentCNL: result };
+    const result = await this.detectSeedBundle({ rawNL, history, systemPrompt, requestedModel });
+    return { intentCNL: result.intentCNL };
   }
 
   async extractSessionContext({ rawNL, systemPrompt, requestedModel }) {
-    const prompt = loadPrompt('normalize-session-context.md');
-    const userMsg = `${systemPrompt ? `System instructions: ${systemPrompt}\n` : ''}Current user message:\n${rawNL}`;
-    const result = await this.llm.callWithRetry(prompt, userMsg, { model: requestedModel });
-    return { contextCNL: result };
+    const result = await this.detectSeedBundle({ rawNL, history: [], systemPrompt, requestedModel });
+    return { contextCNL: result.currentTurnContextCNL };
   }
 
   async normalizePersistentContext({ chunkText, provenance, requestedModel, systemPrompt }) {
     const prompt = loadPrompt('normalize-context.md');
-    const userMsg = `${systemPrompt ? `${systemPrompt}\n\n` : ''}Source: ${provenance.sourceId}\nChunk: ${provenance.chunkId}\nChunk index: ${provenance.chunkIndex}\n\nText:\n${chunkText}`;
-    const result = await this.llm.callWithRetry(prompt, userMsg, { model: requestedModel });
+    // Normalize source/chunk IDs for cache stability — same content should hit cache
+    // regardless of the random source ID assigned at upload time
+    const stableSource = provenance.sourceName || 'source';
+    const stableChunk = `chunk-${provenance.chunkIndex ?? 0}`;
+    const userMsg = `${systemPrompt ? `${systemPrompt}\n\n` : ''}Source: ${stableSource}\nChunk: ${stableChunk}\nChunk index: ${provenance.chunkIndex}\n\nText:\n${chunkText}`;
+    const result = await this.llm.callWithRetry(prompt, userMsg, {
+      model: requestedModel,
+      operation: 'normalize-persistent-context'
+    });
     return { contextCNL: result };
   }
 
@@ -66,7 +99,10 @@ export class LLMAssistedStrategy extends LanguageProcessingStrategy {
       }
     }
     const userMsg = `${systemPrompt ? `System instructions: ${systemPrompt}\n\n` : ''}${evidenceDoc}`;
-    let result = await this.llm.callWithRetry(prompt, userMsg, { model: requestedModel });
+    let result = await this.llm.callWithRetry(prompt, userMsg, {
+      model: requestedModel,
+      operation: 'synthesize-response'
+    });
     result = stripFences(result);
     const responseDocument = buildResponseDocument(
       sessionId,

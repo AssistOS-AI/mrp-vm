@@ -20,12 +20,18 @@
   const roleSelects = $$('#settings-panel select[data-role]');
   const kbSelect = $('#kb-select');
   const fileInput = $('#file-input');
+  const newKbBtn = $('#new-kb-btn');
   const loadKbBtn = $('#load-kb-btn');
   const forkKbBtn = $('#fork-kb-btn');
   const saveKbBtn = $('#save-kb-btn');
 
-  let sessionId = null;
+  let sessionId = sessionStorage.getItem('mrp_sessionId') || null;
   let workspaceState = null;
+
+  function persistSessionId() {
+    if (sessionId) sessionStorage.setItem('mrp_sessionId', sessionId);
+    else sessionStorage.removeItem('mrp_sessionId');
+  }
 
   function esc(value) {
     return (value || '')
@@ -391,6 +397,7 @@
   function applySessionMeta(meta) {
     if (!meta) return;
     sessionId = meta.session_id || sessionId;
+    persistSessionId();
     workspaceState = workspaceState || {};
     workspaceState.kbId = meta.kb_id || workspaceState.kbId || kbSelect.value;
     workspaceState.kbName = meta.kb_name || workspaceState.kbName || workspaceState.kbId;
@@ -404,20 +411,27 @@
     updateBadges();
   }
 
-  function buildRequestConfig(body) {
+  function buildPluginRequestConfig(body) {
     if (plannerSelect.value) body.planner_plugin = plannerSelect.value;
     if (seedSelect.value) body.seed_detector_plugin = seedSelect.value;
     if (kbPluginSelect.value) body.kb_plugin = kbPluginSelect.value;
     if (goalSelect.value) body.goal_solver_plugin = goalSelect.value;
+  }
+
+  function buildSessionCreateBody() {
+    const body = {};
+    buildPluginRequestConfig(body);
     if (kbSelect.value) body.kb_id = kbSelect.value;
+    return body;
   }
 
   async function loadKbList(selectedKbId = null) {
     const data = await fetchJson('/kbs');
     const current = selectedKbId || kbSelect.value || localStorage.getItem('mrp_kb') || '';
     kbSelect.innerHTML = (data.kbs || []).map(kb => {
-      const label = `${kb.name} (${kb.kbId})`;
-      return `<option value="${kb.kbId}">${esc(label)}</option>`;
+      const kbId = kb.id || kb.kbId;
+      const label = `${kb.name} (${kbId})`;
+      return `<option value="${kbId}">${esc(label)}</option>`;
     }).join('');
     if (current && [...kbSelect.options].some(option => option.value === current)) kbSelect.value = current;
     savePrefs();
@@ -481,8 +495,7 @@
       await refreshSessionState();
       return sessionId;
     }
-    const body = {};
-    buildRequestConfig(body);
+    const body = buildSessionCreateBody();
     const data = await fetchJson('/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -552,13 +565,14 @@
   async function sendMessage(text) {
     showLoading('Processing...');
     errorBar.classList.add('hidden');
-    const body = {
-      messages: [{ role: 'user', content: text }],
-      stream: false
-    };
-    if (sessionId) body.session_id = sessionId;
-    buildRequestConfig(body);
     try {
+      await ensureSelectedKbLoaded();
+      const body = {
+        messages: [{ role: 'user', content: text }],
+        stream: false
+      };
+      if (sessionId) body.session_id = sessionId;
+      buildPluginRequestConfig(body);
       const data = await fetchJson('/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -584,6 +598,25 @@
     }
   }
 
+  async function ensureSelectedKbLoaded() {
+    await ensureSession();
+    if (!kbSelect.value) return sessionId;
+    if (workspaceState?.kbId === kbSelect.value) return sessionId;
+    if (workspaceState?.dirty) {
+      const discard = window.confirm(`Loading KB "${kbSelect.value}" will discard the current unsaved draft for "${workspaceState.kbName || workspaceState.kbId}". Continue?`);
+      if (!discard) throw new Error('KB load cancelled');
+    }
+    const data = await fetchJson(`/sessions/${sessionId}/kb/load`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kb_id: kbSelect.value, discard_draft: true })
+    });
+    if (data.error) throw new Error(data.error.message || 'Failed to load KB');
+    applySessionMeta(data);
+    await refreshWorkspace();
+    return sessionId;
+  }
+
   async function mountSelectedKb() {
     if (!kbSelect.value) return;
     await ensureSession();
@@ -594,7 +627,7 @@
     }
     showLoading('Loading KB...');
     try {
-      const data = await fetchJson(`/sessions/${sessionId}/kb/mount`, {
+      const data = await fetchJson(`/sessions/${sessionId}/kb/load`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kb_id: kbSelect.value, discard_draft: true })
@@ -606,6 +639,31 @@
     } catch (error) {
       hideLoading();
       showError(error.message);
+    }
+  }
+
+  async function createNewKb() {
+    const proposedName = `kb-${new Date().toISOString().slice(0, 10)}`;
+    const name = window.prompt('Name for the new KB:', proposedName);
+    if (!name) return false;
+    showLoading('Creating KB...');
+    try {
+      const created = await fetchJson('/kbs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      hideLoading();
+      if (created.error) throw new Error(created.error.message || 'Failed to create KB');
+      await loadKbList(created.kb_id);
+      kbSelect.value = created.kb_id;
+      await ensureSelectedKbLoaded();
+      addMessage('assistant', `Created and loaded KB "${created.kb_name}" for the current session.`);
+      return true;
+    } catch (error) {
+      hideLoading();
+      showError(error.message);
+      return false;
     }
   }
 
@@ -666,7 +724,7 @@
   }
 
   async function stageFileInWorkspace(file, content) {
-    await ensureSession();
+    await ensureSelectedKbLoaded();
     const useCurrentDraft = window.confirm(`Add "${file.name}" to the current session draft for KB "${workspaceState?.kbName || workspaceState?.kbId || kbSelect.value}"? Press Cancel to fork the KB first and stage the file on the fork.`);
     if (!useCurrentDraft) {
       const forked = await forkCurrentKb();
@@ -695,7 +753,7 @@
   }
 
   async function stageContentInWorkspace(name, content) {
-    await ensureSession();
+    await ensureSelectedKbLoaded();
     showLoading(`Staging ${name}...`);
     try {
       const body = { name, content };
@@ -739,6 +797,7 @@
 
   $('#new-session-btn').addEventListener('click', () => {
     sessionId = null;
+    persistSessionId();
     workspaceState = null;
     messagesEl.innerHTML = '';
     updateBadges();
@@ -757,6 +816,7 @@
     settingsPanel.classList.toggle('hidden');
   });
   saveSettingsBtn.addEventListener('click', () => saveRoleSettings());
+  newKbBtn.addEventListener('click', () => createNewKb());
   loadKbBtn.addEventListener('click', () => mountSelectedKb());
   forkKbBtn.addEventListener('click', () => forkCurrentKb());
   saveKbBtn.addEventListener('click', () => saveCurrentKb());

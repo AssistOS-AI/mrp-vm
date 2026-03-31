@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VM Execution Model - MRP-VM</title>
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="page">
+<nav class="top">
+  <a href="../index.html">Home</a>
+  <a href="ARCH-VM.html">Vision</a>
+  <a href="PIPELINE.html">Pipeline</a>
+  <a href="vm-execution.html" class="current">VM Model</a>
+  <a href="plugin-inventory.html">Plugin Inventory</a>
+  <a href="../architecture/engine.html">Engine Detail</a>
+  <a href="../concepts/planner.html">Planner</a>
+</nav>
+
+<h1>VM Execution Model</h1>
+
+<p>MRP-VM is a lightweight plugin-kernel system. The VM core provides only three things:</p>
+<ol>
+  <li><strong>LLM Bridge</strong> — a single shared interface to language models (DS015)</li>
+  <li><strong>Execution Frame Stack</strong> — recursive task execution with budget enforcement (DS002)</li>
+  <li><strong>Plugin Orchestration</strong> — typed plugin registry, planner-driven ordering, and CNL validation (DS003)</li>
+</ol>
+<p>All domain logic — knowledge extraction, indexing, retrieval, scoring, synthesis — belongs to plugins. The VM is syntax-agnostic with respect to the content transmitted between plugins; it only enforces the structural delimiters defined by each plugin type's CNL schema.</p>
+
+<h2>The Standard Execution Loop</h2>
+<p>Every execution frame runs a loop with four phases:</p>
+<table>
+<tr><th>Phase</th><th>Plugin Type</th><th>What Happens</th></tr>
+<tr><td>1. Seed Generation</td><td><code>sd-plugin</code></td><td>Extracts intents (fine-grained task seeds as Intent CNL) and knowledge (semantically coherent KUs as Context CNL) from the input.</td></tr>
+<tr><td>2. Plan Generation</td><td><code>mrp-plan-plugin</code></td><td>Builds an execution plan ordering KB and goal solver plugins. Uses plugin descriptions and plannerHints for relevance filtering.</td></tr>
+<tr><td>3. Task Resolution</td><td><code>kb-plugin</code> → <code>gs-plugin</code></td><td>KB plugin retrieves relevant Knowledge Units at the appropriate abstraction level. Goal solver produces a grounded answer using the assembled context.</td></tr>
+<tr><td>4. Result Composition</td><td>(core)</td><td>Results are assembled into the response document and Markdown output. Validation plugin runs if registered.</td></tr>
+</table>
+
+<h2>Execution Frames and Recursive Resolution</h2>
+<p>Task resolution is recursive. When a task is too broad or complex for direct resolution, the VM creates a <strong>child execution frame</strong> — analogous to a function call pushed onto a call stack.</p>
+
+<pre><code>Root Frame (original user request)
+  ├── Seed: 3 intent groups detected
+  ├── Plan: kb-balanced → gs-llm-fast
+  ├── Intent 1: resolved directly
+  ├── Intent 2: resolved directly
+  └── Intent 3: gs-plugin returns "needs-decomposition"
+        └── Child Frame (sub-task)
+              ├── Seed: decomposed into 2 sub-intents
+              ├── Plan: kb-thinkingdb → gs-llm-deep
+              ├── Sub-intent 3a: resolved
+              └── Sub-intent 3b: resolved
+              → result returned to parent frame</code></pre>
+
+<h3>When is a child frame created?</h3>
+<ul>
+  <li>The planner explicitly requests decomposition (<code>decompose: true</code> in the plan)</li>
+  <li>A goal solver returns <code>needs-decomposition</code></li>
+  <li>All goal solvers produce only weak <code>no-context</code> results and the planner determines decomposition may help</li>
+</ul>
+
+<h3>Frame structure</h3>
+<ul>
+  <li><code>frameId</code> — unique identifier</li>
+  <li><code>parentFrameId</code> — null for root frame</li>
+  <li><code>depth</code> — nesting level (0 for root)</li>
+  <li><code>maxDepth</code> — budget limit (default: 3)</li>
+  <li><code>localState</code> — seeds, plan, evidence, partial results (frame-scoped)</li>
+  <li><code>globalStateRef</code> — shared session/request state (budgets, trace)</li>
+</ul>
+
+<h2>Knowledge Units (KU)</h2>
+<p>Knowledge is represented as hierarchical <strong>Knowledge Units</strong> (DS030) at all levels:</p>
+<ul>
+  <li><strong>Session memory</strong> — KUs extracted from chat turns</li>
+  <li><strong>Persistent KB</strong> — hierarchical KU trees per ingested source</li>
+  <li><strong>Retrieval context</strong> — KUs selected at the appropriate abstraction level</li>
+</ul>
+
+<h3>KU Hierarchy per Source</h3>
+<pre><code>Source Aggregate (root summary, kuType: "aggregate")
+  ├── Section Aggregate (chapter/section, kuType: "composite")
+  │     ├── Atomic KU (leaf claim/fact)
+  │     ├── Atomic KU (leaf claim/fact)
+  │     └── Atomic KU (leaf procedure step)
+  └── Section Aggregate
+        └── ...</code></pre>
+
+<p>KB plugins traverse this hierarchy to select the right abstraction level: summaries for broad context, intermediate KUs for moderate detail, leaf KUs for specific evidence.</p>
+
+<h2>Inter-Plugin Communication</h2>
+<p>Plugins communicate through natural language using two CNL formats:</p>
+<ul>
+  <li><strong>Intent CNL</strong> (DS004) — structured intent/task descriptions</li>
+  <li><strong>Context CNL</strong> (DS005) — structured Knowledge Units with provenance</li>
+</ul>
+<p>The VM is agnostic to the content inside these formats. It enforces only the structural delimiters (headings, field names) defined by each CNL schema. A future extension may allow plugins to exchange a more formal intermediate representation (IR) for specific domains.</p>
+
+<h2>Validation and Backtracking</h2>
+<p>After a goal solver produces a successful answer, a <code>val-plugin</code> may validate it. If rejected, the core throws <code>VALIDATION_REJECTED</code> and the planner backtracking loop attempts an alternative plan. Backtracking can happen:</p>
+<ol>
+  <li>Within a stage — try the next plugin candidate</li>
+  <li>Across planners — fall back to a heavier planner</li>
+  <li>Via decomposition — open a child frame for the failing sub-task</li>
+</ol>
+
+<h2>Budget Enforcement</h2>
+<ul>
+  <li>Max LLM calls per request (shared across all frames)</li>
+  <li>Request timeout (shared)</li>
+  <li>Max plugins per stage</li>
+  <li>Max frame depth (default: 3)</li>
+  <li>Pre-invocation budget check: skip plugins whose <code>maxLLMCalls</code> exceeds remaining budget</li>
+</ul>
+
+<div class="nav-bottom">
+  <a href="PIPELINE.html" class="prev">← Pipeline</a>
+  <a href="plugin-inventory.html">Plugin Inventory →</a>
+</div>
+</div>
+<footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer>
+</body>
+</html>

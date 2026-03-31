@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plugin Inventory - MRP-VM</title>
+<link rel="stylesheet" href="../assets/docs.css">
+<style>
+.plugin-table{width:100%;border-collapse:collapse;margin:1rem 0;font-size:.9rem}
+.plugin-table th,.plugin-table td{border:1px solid var(--border);padding:.4rem .6rem;text-align:left}
+.plugin-table th{background:var(--card)}
+.type-badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:.8rem;font-weight:600}
+.type-sd{background:#e3f2fd;color:#1565c0}
+.type-kb{background:#e8f5e9;color:#2e7d32}
+.type-gs{background:#fff3e0;color:#e65100}
+.type-val{background:#fce4ec;color:#c62828}
+.type-plan{background:#f3e5f5;color:#6a1b9a}
+</style>
+</head>
+<body>
+<div class="page">
+<nav class="top">
+  <a href="../index.html">Home</a>
+  <a href="vm-execution.html">VM Model</a>
+  <a href="plugin-inventory.html" class="current">Plugin Inventory</a>
+  <a href="../architecture/plugin-guide.html">Plugin Dev Guide</a>
+  <a href="../concepts/planner.html">Planner</a>
+  <a href="../architecture/engine.html">Engine Detail</a>
+</nav>
+
+<h1>Plugin Inventory</h1>
+<p>MRP-VM organizes all behavior through five typed plugin families. The VM core provides only the LLM bridge, execution frames, and plugin orchestration. All domain logic belongs to plugins.</p>
+
+<h2>Plugin Categories</h2>
+
+<table class="plugin-table">
+<tr><th>Type</th><th>Role in VM Loop</th><th>Phase</th></tr>
+<tr><td><span class="type-badge type-sd">sd-plugin</span></td><td>Extracts intents (fine-grained) and knowledge (semantically coherent KUs) from user input or source text.</td><td>Seed Generation</td></tr>
+<tr><td><span class="type-badge type-plan">mrp-plan-plugin</span></td><td>Builds execution plans ordering plugins per stage. Uses descriptions and plannerHints for relevance filtering. May request task decomposition.</td><td>Plan Generation</td></tr>
+<tr><td><span class="type-badge type-kb">kb-plugin</span></td><td>Retrieves relevant Knowledge Units from the hierarchical KB at the appropriate abstraction level. Builds plugin-private indices during ingest.</td><td>Task Resolution</td></tr>
+<tr><td><span class="type-badge type-gs">gs-plugin</span></td><td>Produces grounded answers from resolved intents and retrieved evidence. May signal <code>needs-decomposition</code>.</td><td>Task Resolution</td></tr>
+<tr><td><span class="type-badge type-val">val-plugin</span></td><td>Validates goal solver output. Rejection triggers planner backtracking.</td><td>Result Composition</td></tr>
+</table>
+
+<h2>Built-In Plugins</h2>
+
+<h3><span class="type-badge type-sd">sd-plugin</span> — Seed Detectors</h3>
+<table class="plugin-table">
+<tr><th>ID</th><th>Description</th><th>Uses LLM</th><th>Cost</th></tr>
+<tr><td><code>sd-symbolic</code></td><td>Rule-based intent and knowledge extraction. Fast, deterministic, no LLM cost. Best for simple factual queries and structured input.</td><td>No</td><td>cheap</td></tr>
+<tr><td><code>sd-llm-fast</code></td><td>Lightweight LLM-backed normalization. Good balance of quality and speed for most conversational input.</td><td>Yes</td><td>moderate</td></tr>
+<tr><td><code>sd-llm-deep</code></td><td>Thorough LLM normalization with richer intent decomposition. Best for ambiguous, multi-part, or complex requests.</td><td>Yes</td><td>expensive</td></tr>
+</table>
+
+<h3><span class="type-badge type-kb">kb-plugin</span> — Knowledge Retrievers</h3>
+<table class="plugin-table">
+<tr><th>ID</th><th>Description</th><th>Backend</th><th>Cost</th></tr>
+<tr><td><code>kb-fast</code></td><td>Lexical-first retrieval with small result budget. Cheapest path, suitable for simple focused questions.</td><td>BM25 (DS009)</td><td>cheap</td></tr>
+<tr><td><code>kb-balanced</code></td><td>Lexical + associative retrieval with diversity-aware reranking. Recommended default for moderate-complexity questions.</td><td>BM25 + HDC/VSA (DS009, DS024)</td><td>moderate</td></tr>
+<tr><td><code>kb-thinkingdb</code></td><td>Lexical + bounded symbolic closure. Best for multi-hop, relation-sensitive, or proof-bearing retrieval tasks.</td><td>BM25 + ThinkingDB (DS009, DS025)</td><td>expensive</td></tr>
+</table>
+
+<h3><span class="type-badge type-gs">gs-plugin</span> — Goal Solvers</h3>
+<table class="plugin-table">
+<tr><th>ID</th><th>Description</th><th>Uses LLM</th><th>Cost</th></tr>
+<tr><td><code>gs-symbolic</code></td><td>Deterministic answer assembly from retrieved evidence. No LLM cost. Produces structured bullet-point answers.</td><td>No</td><td>cheap</td></tr>
+<tr><td><code>gs-llm-fast</code></td><td>Lightweight LLM synthesis from evidence. Good fluency with low latency.</td><td>Yes</td><td>moderate</td></tr>
+<tr><td><code>gs-llm-deep</code></td><td>Thorough LLM synthesis with richer reasoning. Best for complex or nuanced answers.</td><td>Yes</td><td>expensive</td></tr>
+</table>
+
+<h3><span class="type-badge type-plan">mrp-plan-plugin</span> — Planners</h3>
+<table class="plugin-table">
+<tr><th>ID</th><th>Description</th><th>Style</th></tr>
+<tr><td><code>planner-default</code></td><td>Adaptive cheap-first planner with EWMA learning. Inspects task signals (depth, speed, symbolic cues) to adjust ordering.</td><td>cheap-first</td></tr>
+<tr><td><code>planner-depth</code></td><td>Heavy-first fallback planner for multi-hop or recovery paths. Used when cheap planners exhaust their options.</td><td>deep-first</td></tr>
+</table>
+
+<h3><span class="type-badge type-val">val-plugin</span> — Validators</h3>
+<table class="plugin-table">
+<tr><th>ID</th><th>Description</th><th>Uses LLM</th></tr>
+<tr><td><code>val-llm</code></td><td>LLM-backed response validator. Checks that the answer is grounded in evidence and addresses the question. Rejection triggers replanning.</td><td>Yes</td></tr>
+</table>
+
+<h2>How to Build a Plugin</h2>
+
+<h3>Step 1: Choose the Plugin Type</h3>
+<p>Decide which phase of the execution loop your plugin serves. Each type has a specific contract defined in <a href="../specs/DS027-plugin-types.md">DS027</a>.</p>
+
+<h3>Step 2: Implement the Interface</h3>
+<p>Every plugin must implement:</p>
+<ul>
+  <li><code>getDescriptor()</code> — returns the plugin descriptor (see below)</li>
+  <li>The type-specific methods:
+    <ul>
+      <li><code>sd-plugin</code>: <code>detectSeeds(input, ctx)</code>, <code>normalizePersistentContext(input, ctx)</code></li>
+      <li><code>kb-plugin</code>: <code>retrieve(input, ctx)</code>, <code>onSourceText(input, ctx)</code></li>
+      <li><code>gs-plugin</code>: <code>solve(input, ctx)</code></li>
+      <li><code>val-plugin</code>: <code>validate(input, ctx)</code></li>
+      <li><code>mrp-plan-plugin</code>: <code>buildPlan(input, ctx)</code>, <code>recordOutcome(outcome, ctx)</code></li>
+    </ul>
+  </li>
+</ul>
+
+<h3>Step 3: Write the Descriptor</h3>
+<pre><code>{
+  id: "my-kb-plugin",
+  type: "kb-plugin",
+  name: "My Custom KB Retriever",
+  version: "1.0.0",
+  description: "Semantic search using embeddings.
+    Best for long-form technical documents.",
+  costClass: "moderate",
+  usesLLM: false,
+  modelRoles: [],
+  maxLLMCalls: 0,
+  tags: ["custom", "embeddings"],
+  timeoutMs: 15000,
+  plannerHints: {
+    expectedLatencyMs: 200,
+    expectedLLMCalls: 0,
+    relativeCost: 0.3,
+    supportedActs: ["explain", "compare", "define"],
+    topicTags: ["technical"],
+    preferredDepth: "medium",
+    confidenceWhenMatched: 0.7
+  },
+  provides: ["retrieve-context"],
+  accepts: ["chat-turn", "source-text"]
+}</code></pre>
+
+<h4>Descriptor Requirements</h4>
+<ul>
+  <li><code>id</code> and <code>type</code> are mandatory</li>
+  <li><code>description</code> must be concise (1–3 sentences) and operationally useful for planner filtering</li>
+  <li><code>plannerHints</code> are required for <code>sd-plugin</code>, <code>kb-plugin</code>, <code>gs-plugin</code></li>
+  <li><code>maxLLMCalls</code> must be a conservative upper bound — the core uses it for budget pre-checks</li>
+</ul>
+
+<h3>Step 4: Register the Plugin</h3>
+
+<h4>Built-in plugins (JavaScript)</h4>
+<p>Register programmatically in <code>src/server/index.mjs</code> during boot:</p>
+<pre><code>typedPluginRegistry.register(new MyKBPlugin(...));</code></pre>
+
+<h4>External wrapper plugins (any language)</h4>
+<p>Create a directory under <code>wrappers/</code>:</p>
+<pre><code>wrappers/my-plugin/
+├── manifest.json    # descriptor + command + args
+├── wrapper.js       # (or .py, .rs, etc.)
+└── README.md</code></pre>
+
+<p>The <code>manifest.json</code> follows the same descriptor shape plus:</p>
+<pre><code>{
+  "command": "node",
+  "args": ["wrapper.js"],
+  "protocolVersion": 1,
+  "maxInputSizeBytes": 65536
+}</code></pre>
+
+<p>Add the plugin ID to <code>pluginAllowlist</code> in <code>config/engine.json</code>.</p>
+
+<h3>Step 5: Configure</h3>
+<ul>
+  <li><code>config/plugins.json</code> — default plan ordering, fallback chains</li>
+  <li><code>config/llm-role-settings.json</code> — model assignments per role</li>
+  <li><code>config/engine.json</code> — budget limits, allowlist</li>
+</ul>
+
+<h3>Step 6: Test</h3>
+<ul>
+  <li>Deterministic tests: <code>test/deterministic/</code></li>
+  <li>Live LLM tests: <code>test/live-llm/</code></li>
+  <li>Evaluation suites: <code>test/evaluation/suiteXX/</code></li>
+</ul>
+
+<h2>Plugin Communication</h2>
+<p>Plugins communicate through natural language using CNL formats:</p>
+<ul>
+  <li><strong>Intent CNL</strong> (DS004) — <code>sd-plugin</code> output, consumed by decomposer and planner</li>
+  <li><strong>Context CNL</strong> (DS005) — KU serialization, produced by <code>sd-plugin</code> and consumed by <code>kb-plugin</code> and <code>gs-plugin</code></li>
+  <li><strong>Resolved Markdown</strong> (DS016) — evidence bundle sent to external wrapper plugins via stdin</li>
+</ul>
+<p>The VM is agnostic to the content inside these formats. It enforces only the structural delimiters (headings, field names) defined by each CNL schema.</p>
+
+<div class="nav-bottom">
+  <a href="vm-execution.html" class="prev">← VM Model</a>
+  <a href="../architecture/plugin-guide.html">Plugin Dev Guide →</a>
+</div>
+</div>
+<footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer>
+</body>
+</html>

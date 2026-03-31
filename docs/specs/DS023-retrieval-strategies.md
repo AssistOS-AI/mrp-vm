@@ -18,10 +18,11 @@ Therefore KB plugins MUST be:
 - context-aware
 - budget-aware
 - diversity-aware
+- able to surface strategy guidance for the planner
 - able to perform sufficiency checks
 
-The current built-in plugins implement a lightweight
-baseline of that rule:
+The reference built-in plugins implement a
+lightweight version of that rule:
 
 - hybrid candidate generation through one or more
   backends
@@ -44,20 +45,36 @@ authoring remain forward work.
 
 Every KB plugin SHOULD implement this generic shape:
 
-1. receive normalized goal seeds and context profile
-2. generate candidates from multiple memory views
-3. score candidates by expected marginal utility
-4. penalize redundancy
-5. expand to parent units when broader context is
+1. receive normalized goal seeds, context profile,
+   and retrieval purpose
+2. generate candidates from multiple memory views,
+   considering KUs at all hierarchy levels
+3. distinguish strategy-guidance KUs from task-
+   evidence KUs when both are relevant
+4. score candidates by expected marginal utility
+5. penalize redundancy
+6. select the appropriate abstraction level per KU:
+   - use summaries for broad context
+   - use intermediate KUs for moderate detail
+   - use leaf KUs for specific evidence
+7. if a relevant KU is too large, extract only the
+   most relevant child KUs or fragments
+8. expand to parent KUs when broader context is
    required
-6. check sufficiency before handing evidence to the
-   goal solver
+9. check whether strategy guidance is sufficient for
+   planner dispatch and whether task evidence is
+   sufficient for the goal solver
 
 The planner chooses among `kb-plugin`s at stage
 granularity. A built-in KB plugin MAY still compose
 multiple retrieval backends internally and MAY
 perform local cheap-to-heavy escalation between its
 primary and secondary retrieval strategies.
+
+If the mounted KB contains procedure, policy,
+evaluation, or solver-selection guidance, KB plugins
+MUST make that guidance retrievable to the planner,
+not only to the goal solver.
 
 ## Candidate Sources
 
@@ -70,17 +87,29 @@ KB plugins MAY retrieve from:
 - derived memory units
 - plugin-private indices
 
+These sources MAY contain:
+
+- procedural guidance
+- evaluation rules
+- solver applicability notes
+- task evidence
+
 ## Semantic Units
 
-The storage/retrieval target is the semantic unit,
-not the file and not an arbitrary fixed chunk.
+The storage/retrieval target is the Knowledge Unit
+(DS030), not the file and not an arbitrary fixed
+chunk.
 
-A unit SHOULD be:
+A KU SHOULD be:
 
-- the smallest stable meaningful retrievable piece
+- semantically coherent at its abstraction level
 - large enough to preserve local semantics
-- linked to parent/child units
+- linked to parent/child KUs in the hierarchy
 - auditable through provenance
+
+KB plugins MUST be able to traverse the KU hierarchy
+to select the right abstraction level for the current
+task.
 
 ## Derived Memory
 
@@ -127,8 +156,9 @@ all enabled KB plugins. Each plugin may:
 - create derived memory units
 - store plugin-private artifacts
 
-The current built-in baseline writes lightweight
-plugin-private ingest artifacts that summarize source
+The reference built-in implementation writes
+lightweight plugin-private ingest artifacts that
+summarize source
 hashes, unit counts, symbolic-fact counts, and role
 coverage. Richer derived memories remain optional
 future work.
@@ -136,8 +166,9 @@ future work.
 ## Dependencies
 
 - DS008 — KB storage substrate
-- DS018 — semantic unit extraction
+- DS018 — KU tree extraction
 - DS024 — HDC/VSA backend used by KB plugins
 - DS025 — ThinkingDB backend used by KB plugins
 - DS026 — repositories/workspaces
 - DS027 — plugin contracts
+- DS030 — Knowledge Unit model

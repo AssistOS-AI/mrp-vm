@@ -12,6 +12,11 @@ is transformed after normalization. It is structured
 Markdown, easy to read, validate, and process
 symbolically.
 
+In the current baseline, Intent CNL is normally
+emitted together with Context CNL from the same
+seed-detection pass. Intent CNL represents problem
+seeds, not contextual facts.
+
 ## Document Structure
 
 A document contains one or more Intent Groups.

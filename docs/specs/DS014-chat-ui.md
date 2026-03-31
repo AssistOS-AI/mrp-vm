@@ -14,6 +14,26 @@ The main chat view MUST expose selectors for:
 - goal solver plugin
 - mounted KB
 
+The UI SHOULD label the seed-detector selector
+clearly enough that it is not confused with the KB
+plugin selector or the mounted KB repository. The
+seed detector extracts both problem seeds and session
+knowledge units from each user turn.
+
+The chat UI MUST treat KB selection as session-scoped
+state, not as a loose local preference. When the user
+chooses a KB, the UI SHOULD call the dedicated
+session-scoped KB endpoints from DS013 to load, save,
+or fork the active KB for that session.
+
+Minimum KB actions exposed in the chat surface:
+
+- list available KBs by name and stable ID
+- create a new named KB
+- load a KB into the current session
+- save the current session draft into a KB
+- fork the current session draft into a new KB
+
 ## Settings Page/Panel
 
 The UI MUST provide a settings page or settings panel
@@ -36,6 +56,9 @@ Minimum roles shown:
 - UI preferences MAY use `localStorage`
 - server-backed LLM role settings MUST persist via
   DS013 settings endpoints
+- the mounted KB MUST be synchronized through the
+  dedicated session-scoped KB endpoints rather than
+  inferred only from local UI state
 
 ## Input Behavior
 
@@ -49,4 +72,5 @@ The main chat textarea MUST use:
 
 - DS013 — API
 - DS019 — session preferences
+- DS026 — KB repositories/workspaces
 - DS028 — role-based model settings

@@ -20,17 +20,14 @@
 
 <nav class="top">
   <a href="index.html" class="current">Home</a>
+  <a href="overview/vm-execution.html">VM Model</a>
+  <a href="overview/plugin-inventory.html">Plugins</a>
   <a href="architecture/engine.html">Engine</a>
   <a href="concepts/cnl-formats.html">CNL Formats</a>
-  <a href="concepts/retrieval-algorithms.html">Retrieval</a>
-  <a href="concepts/processing-modes.html">Plugin Types</a>
-  <a href="architecture/plugin-guide.html">Plugins</a>
-  <a href="architecture/session-lifecycle.html">Sessions</a>
   <a href="concepts/planner.html">Planner</a>
-  <a href="future/agentic-loops.html">Agentic Loops</a>
-  <a href="future/symbolic-execution.html">Symbolic Exec</a>
+  <a href="architecture/plugin-guide.html">Plugin Guide</a>
+  <a href="architecture/session-lifecycle.html">Sessions</a>
   <a href="concepts/evaluation.html">Evaluation</a>
-  <a href="concepts/llm-cache.html">LLM Cache</a>
 </nav>
 
 <h1>MRP-VM Documentation</h1>
@@ -42,6 +39,10 @@
     <h3>The Vision <span class="badge done">done</span></h3>
     <p>MRP-VM as a governed neuro-symbolic control layer. Architecture diagram and component overview.</p>
   </a></div>
+  <div class="card"><a href="overview/vm-execution.html">
+    <h3>VM Execution Model <span class="badge done">done</span></h3>
+    <p>Standard execution loop, execution frames, recursive resolution, Knowledge Units, inter-plugin communication.</p>
+  </a></div>
   <div class="card"><a href="overview/PIPELINE.html">
     <h3>Execution Pipeline <span class="badge done">done</span></h3>
     <p>The lifecycle of an intent: from raw NL to grounded answer in 5 phases.</p>
@@ -50,9 +51,13 @@
     <h3>Knowledge &amp; Retrieval <span class="badge done">done</span></h3>
     <p>Two evidence stores, lexical and associative retrieval, and an evolving symbolic retrieval direction.</p>
   </a></div>
+  <div class="card"><a href="overview/plugin-inventory.html">
+    <h3>Plugin Inventory <span class="badge done">done</span></h3>
+    <p>All built-in plugins, plugin categories, how to build a plugin tutorial, configuration and testing guide.</p>
+  </a></div>
   <div class="card"><a href="overview/PLUGINS.html">
-    <h3>Plugin Ecosystem <span class="badge done">done</span></h3>
-    <p>External interpreters for symbolic grounding: Z3, custom code, any language.</p>
+    <h3>External Interpreters <span class="badge done">done</span></h3>
+    <p>External interpreter plugins for symbolic grounding: Z3, custom code, any language.</p>
   </a></div>
 </div>
 

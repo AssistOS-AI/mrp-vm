@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { KBRepositoryManager } from '../../src/kb/repository-manager.mjs';
 import { ConversationHandler } from '../../src/conversation/handler.mjs';
+import { TypedPluginRegistry } from '../../src/plugins/typed-registry.mjs';
 
 const tmpRoots = [];
 
@@ -140,7 +141,7 @@ describe('KB repositories and session workspaces', () => {
     conversation.attachKBRepositoryManager(manager);
 
     const session = await conversation.createSession(null, 'symbolic-only', 'thinkingdb', 'default');
-    conversation.commitSuccessfulTurn(
+    await conversation.commitSuccessfulTurn(
       session,
       'AchillesIDE uses Ploinky.',
       '# Answer',
@@ -245,7 +246,7 @@ describe('KB repositories and session workspaces', () => {
     conversation.attachKBRepositoryManager(manager);
 
     const session = await conversation.createSession(null, 'llm-assisted', 'balanced', 'default');
-    conversation.commitSuccessfulTurn(
+    await conversation.commitSuccessfulTurn(
       session,
       'Verify this relation.',
       '# Answer',
@@ -294,5 +295,197 @@ describe('KB repositories and session workspaces', () => {
     assert.equal(existsSync(repositoryArtifactPath), true);
     assert.equal(existsSync(rehydratedWorkspacePath), true);
     assert.equal(JSON.parse(readFileSync(repositoryArtifactPath, 'utf-8')).note, 'workspace-artifact');
+  });
+
+  it('notifies kb-plugins when turn KUs are staged and then committed into session memory', async () => {
+    const kbConfig = makeKbConfig();
+    const manager = new KBRepositoryManager(null, {}, kbConfig);
+    await manager.boot();
+
+    const conversation = new ConversationHandler({
+      defaultSeedDetectorPlugin: 'sd-symbolic',
+      defaultKBPlugin: 'kb-thinkingdb',
+      defaultGoalSolverPlugin: 'gs-symbolic'
+    });
+    conversation.attachKBRepositoryManager(manager);
+
+    const events = [];
+    const registry = new TypedPluginRegistry();
+    registry.register({
+      getDescriptor() {
+        return {
+          id: 'kb-test-turn-kus',
+          type: 'kb-plugin',
+          name: 'kb-test-turn-kus',
+          description: 'Turn KU lifecycle plugin',
+          maxLLMCalls: 0,
+          provides: ['retrieve-context', 'session-lifecycle']
+        };
+      },
+      async retrieve() {
+        return {
+          status: 'insufficient',
+          resolvedIntents: [],
+          sufficient: false,
+          retrievalTrace: {},
+          error: null
+        };
+      },
+      async onSessionEvent(input) {
+        events.push({
+          eventType: input.eventType,
+          scope: input.scope || null,
+          units: (input.units || []).length
+        });
+        return { status: 'accepted', error: null };
+      }
+    });
+    conversation.attachPluginRegistry(registry);
+
+    const session = await conversation.createSession(null, null, null, 'default');
+    const detectedUnits = makeSourceEntry(
+      'src-turn',
+      'turn.txt',
+      'Aurora Station provides thermal shielding.',
+      {
+        subject: 'Aurora Station',
+        relation: 'provides',
+        object: 'thermal shielding',
+        confidence: 0.9
+      }
+    ).units;
+
+    await conversation.stageDetectedContextUnits(session, detectedUnits, {
+      scope: 'current-turn',
+      reason: 'seed-detection'
+    });
+    assert.equal(session.pendingTurnContextUnits.length, 1);
+    assert.equal(events[2].eventType, 'session-kus-added');
+    assert.equal(events[2].scope, 'current-turn');
+    assert.equal(events[2].units, 1);
+
+    await conversation.commitSuccessfulTurn(
+      session,
+      'Aurora Station provides thermal shielding.',
+      '# Answer',
+      detectedUnits,
+      null
+    );
+    assert.equal(session.pendingTurnContextUnits.length, 0);
+    assert.equal(session.sessionContextUnits.length, 1);
+    assert.equal(events[3].eventType, 'session-kus-added');
+    assert.equal(events[3].scope, 'committed-session');
+    assert.equal(events[3].units, 1);
+  });
+
+  it('generates cryptographically random KB ids for new repositories and lists them alongside names', async () => {
+    const kbConfig = makeKbConfig();
+    const manager = new KBRepositoryManager(null, {}, kbConfig);
+    await manager.boot();
+
+    const meta = await manager.createEmptyRepository('Analysis KB');
+    assert.match(meta.kbId, /^kb-[a-f0-9]{16}$/);
+    assert.equal(meta.name, 'Analysis KB');
+
+    const listed = manager.listRepositories().find(kb => kb.kbId === meta.kbId);
+    assert.ok(listed);
+    assert.equal(listed.id, meta.kbId);
+    assert.equal(listed.name, 'Analysis KB');
+  });
+
+  it('notifies all kb-plugins when sessions are created, KBs are loaded, and KBs are saved or forked', async () => {
+    const kbConfig = makeKbConfig();
+    const manager = new KBRepositoryManager(null, {}, kbConfig);
+    await manager.boot();
+    const secondary = await manager.createEmptyRepository('Secondary KB');
+
+    const conversation = new ConversationHandler({
+      defaultSeedDetectorPlugin: 'sd-symbolic',
+      defaultKBPlugin: 'kb-thinkingdb',
+      defaultGoalSolverPlugin: 'gs-symbolic'
+    });
+    conversation.attachKBRepositoryManager(manager);
+
+    const events = [];
+    const registry = new TypedPluginRegistry();
+    registry.register({
+      getDescriptor() {
+        return {
+          id: 'kb-test-lifecycle',
+          type: 'kb-plugin',
+          name: 'kb-test-lifecycle',
+          description: 'Test lifecycle plugin',
+          maxLLMCalls: 0,
+          provides: ['retrieve-context', 'session-lifecycle']
+        };
+      },
+      async retrieve() {
+        return {
+          status: 'insufficient',
+          resolvedIntents: [],
+          sufficient: false,
+          retrievalTrace: {},
+          error: null
+        };
+      },
+      async onSessionEvent(input) {
+        events.push({
+          eventType: input.eventType,
+          sessionId: input.sessionId,
+          kbId: input.kbId,
+          previousKbId: input.previousKbId || null,
+          reason: input.reason || null
+        });
+        return { status: 'accepted', error: null };
+      }
+    });
+    conversation.attachPluginRegistry(registry);
+
+    const session = await conversation.createSession(null, null, null, 'default');
+    assert.equal(events[0].eventType, 'session-created');
+    assert.equal(events[1].eventType, 'kb-loaded');
+    assert.equal(events[1].kbId, 'default');
+    assert.equal(events[1].reason, 'session-create');
+
+    await conversation.mountRepository(session.sessionId, secondary.kbId, {
+      discardDraft: true,
+      reason: 'load-api'
+    });
+    assert.equal(events[2].eventType, 'kb-loaded');
+    assert.equal(events[2].kbId, secondary.kbId);
+    assert.equal(events[2].previousKbId, 'default');
+    assert.equal(events[2].reason, 'load-api');
+
+    await conversation.stageWorkspaceSource(
+      session.sessionId,
+      'draft.txt',
+      'Delta depends on Gamma.',
+      makeSourceEntry('src-draft-lifecycle', 'draft.txt', 'Delta depends on Gamma.', {
+        subject: 'Delta',
+        relation: 'depends_on',
+        object: 'Gamma',
+        confidence: 0.9
+      }).units,
+      { sourceId: 'src-draft-lifecycle' }
+    );
+
+    const saveMeta = await conversation.saveWorkspace(session.sessionId, {
+      name: 'Secondary KB',
+      includeConversationUnits: false
+    });
+    assert.equal(saveMeta.kb_id, secondary.kbId);
+    assert.equal(events[3].eventType, 'kb-loaded');
+    assert.equal(events[3].kbId, secondary.kbId);
+    assert.equal(events[3].reason, 'save');
+    assert.equal(events[4].eventType, 'kb-saved');
+    assert.equal(events[4].kbId, secondary.kbId);
+
+    const forkMeta = await conversation.forkWorkspace(session.sessionId, 'Forked KB');
+    assert.match(forkMeta.kb_id, /^kb-[a-f0-9]{16}$/);
+    assert.equal(events[5].eventType, 'kb-loaded');
+    assert.equal(events[5].kbId, forkMeta.kb_id);
+    assert.equal(events[5].reason, 'fork');
+    assert.equal(events[6].eventType, 'kb-forked');
+    assert.equal(events[6].kbId, forkMeta.kb_id);
   });
 });

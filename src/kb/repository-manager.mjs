@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { KnowledgeBase } from './knowledge-base.mjs';
 import { FileMemoryPersistence } from './persistence.mjs';
 import { KBIndex } from '../retrieval/kb-index.mjs';
@@ -66,6 +66,7 @@ export class KBRepositoryManager {
   listRepositories() {
     return [...this.repositories.values()]
       .map(record => ({
+        id: record.meta.kbId,
         kbId: record.meta.kbId,
         name: record.meta.name,
         createdAt: record.meta.createdAt,
@@ -117,6 +118,10 @@ export class KBRepositoryManager {
     record.meta = meta;
     this.repositories.set(kbId, record);
     return this.getRepositoryMeta(kbId);
+  }
+
+  async createEmptyRepository(name, options = {}) {
+    return this.createRepositoryFromSnapshot(name, { sources: [] }, options);
   }
 
   async saveSnapshotToRepository(kbId, snapshot, options = {}) {
@@ -199,16 +204,9 @@ export class KBRepositoryManager {
   }
 
   _generateKbId(name) {
-    const base = (name || `kb-${randomUUID().substring(0, 6)}`)
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || `kb-${randomUUID().substring(0, 6)}`;
-    let kbId = base;
-    let suffix = 0;
+    let kbId = `kb-${randomBytes(8).toString('hex')}`;
     while (this.repositories.has(kbId) || existsSync(join(this.repositoriesDir, kbId))) {
-      suffix += 1;
-      kbId = `${base}-${suffix}`;
+      kbId = `kb-${randomBytes(8).toString('hex')}`;
     }
     return kbId;
   }

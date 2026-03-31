@@ -3,5 +3,5 @@
   "defaultTemperature": 0.1,
   "maxTransportRetriesPerAttempt": 2,
   "timeoutMs": 30000,
-  "defaultModel": "test-fast"
+  "defaultModel": "fast"
 }

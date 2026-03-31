@@ -41,8 +41,14 @@ export class KnowledgeBase {
 
   _normalizeUnit(unit, sourceMeta = null) {
     const next = { ...unit };
+    next.kuType = next.kuType || 'atomic';
+    next.title = next.title || next.topic || '';
     next.hash = next.hash || this._hashUnit(next);
     next.sourceName = next.sourceName || sourceMeta?.name || null;
+    next.sourceType = next.sourceType || null;
+    next.author = next.author || null;
+    next.ingestedAt = next.ingestedAt || sourceMeta?.addedAt || null;
+    next.knowledgeDate = next.knowledgeDate || null;
     next.chunkIndex = next.chunkIndex ?? null;
     next.unitIndex = next.unitIndex ?? null;
     next.unitType = next.unitType || 'semantic-unit';

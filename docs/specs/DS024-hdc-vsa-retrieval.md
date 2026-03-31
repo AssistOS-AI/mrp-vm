@@ -1,19 +1,23 @@
-# DS024 — HDC/VSA Retrieval Backend
+# DS024 — HDC/VSA Retrieval Backend (kb-balanced)
 
 ## Purpose
-Defines the associative retrieval backend implemented
-by `HDCVSAStrategy`.
+Defines the associative retrieval backend used
+internally by the built-in `kb-balanced` plugin.
 
-This backend complements lexical BM25 by capturing
-structural and semantic similarity through
-hyperdimensional encodings.
+This is a plugin-private backend, not a VM-level
+shared service. The VM core does not depend on or
+reference HDC/VSA directly. Other KB plugins are free
+to use entirely different associative strategies.
 
 ## Architectural Position
 
-- DS024 is a backend behind `kb-plugin`s
-- it is currently used primarily by `kb-balanced`
-- it does not replace lexical retrieval; it adds a
-  second view for fusion
+- DS024 is a backend owned by `kb-balanced`
+- the VM core provides only the LLM bridge and
+  execution frame machinery; all retrieval logic
+  belongs to plugins
+- it complements lexical BM25 by capturing structural
+  and semantic similarity through hyperdimensional
+  encodings
 
 ## Main Interface
 

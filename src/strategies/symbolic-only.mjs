@@ -33,24 +33,38 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
   usesLLM() { return false; }
   supportsModelOverride() { return false; }
   getCapabilities() {
-    return ['normalize-intent', 'extract-session-context', 'normalize-persistent-context', 'synthesize-response'];
+    return ['detect-seeds', 'normalize-persistent-context', 'synthesize-response'];
+  }
+
+  async detectSeedBundle({ rawNL }) {
+    return {
+      intentCNL: this._buildIntentCNL(rawNL),
+      currentTurnContextCNL: this._buildSessionContextCNL(rawNL)
+    };
   }
 
   async normalizeIntent({ rawNL }) {
-    const act = detectAct(rawNL);
-    const sentences = rawNL.length < 200 ? [rawNL] : rawNL.split(/[.?!]+/).map(s => s.trim()).filter(Boolean);
-    const intentCNL = sentences.map((s, i) => {
-      const a = i === 0 ? act : detectAct(s);
-      return `## Intent Group ${i + 1}\nAct: ${a}\nIntent: ${s}\nOutput: Structured response.`;
-    }).join('\n\n');
-    return { intentCNL };
+    return { intentCNL: this._buildIntentCNL(rawNL) };
   }
 
   async extractSessionContext({ rawNL }) {
+    return { contextCNL: this._buildSessionContextCNL(rawNL) };
+  }
+
+  _buildIntentCNL(rawNL) {
+    const act = detectAct(rawNL);
+    const sentences = rawNL.length < 200 ? [rawNL] : rawNL.split(/[.?!]+/).map(s => s.trim()).filter(Boolean);
+    return sentences.map((s, i) => {
+      const a = i === 0 ? act : detectAct(s);
+      return `## Intent Group ${i + 1}\nAct: ${a}\nIntent: ${s}\nOutput: Structured response.`;
+    }).join('\n\n');
+  }
+
+  _buildSessionContextCNL(rawNL) {
     const sentences = rawNL.split(/[.!]+/).map(s => s.trim()).filter(Boolean);
     const facts = sentences.filter(s => !s.endsWith('?') && !s.startsWith('Please') && !s.startsWith('Can you')
       && /\b(is|are|use|have|has|deploy|run|prefer|need|require|want|live|exist|situated|located)\b/i.test(s));
-    if (facts.length === 0) return { contextCNL: '' };
+    if (facts.length === 0) return '';
 
     const groups = this._groupRelatedSentences(facts);
     const units = [];
@@ -64,7 +78,8 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
       const topic = group.topic || combinedText.split(/\s+/).slice(0, 8).join(' ').replace(/[^\w\s-]/g, '');
       const hash = createHash('sha256').update(`${combinedText}|${role}|${topic}`).digest('hex');
       const fact = extractSymbolicFact(group.sentences[0]);
-      let md = `## Context Unit session::turn::unit-${String(unitIdx).padStart(3, '0')}\nSourceId: session\nChunkId: session::turn\nRole: ${role}\nTopic: ${topic}\nClaim: ${combinedText}\n`;
+      const kuType = group.sentences.length === 1 ? 'atomic' : 'composite';
+      let md = `## Context Unit session::turn::unit-${String(unitIdx).padStart(3, '0')}\nSourceId: session\nChunkId: session::turn\nKUType: ${kuType}\nSourceType: chat-turn\nRole: ${role}\nTopic: ${topic}\nClaim: ${combinedText}\n`;
       if (fact) {
         md += `Subject: ${fact.subject}\nRelation: ${fact.relation}\nObject: ${fact.object}\nConfidence: ${fact.confidence}\n`;
       }
@@ -72,33 +87,58 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
       units.push(md);
       unitIdx++;
     }
-    return { contextCNL: units.join('\n\n') };
+    return units.join('\n\n');
   }
 
   async normalizePersistentContext({ chunkText, provenance }) {
     const sentences = chunkText.split(/[.!]+/).map(s => s.trim()).filter(Boolean);
     if (sentences.length === 0) return { contextCNL: '' };
 
-    // Group related sentences by shared subjects/topics
-    const groups = this._groupRelatedSentences(sentences);
+    // Separate fact-bearing sentences from non-fact sentences
+    const tagged = sentences.map(s => ({ text: s, fact: extractSymbolicFact(s) }));
+
+    // Build units: fact-bearing sentences become individual atomic KUs;
+    // non-fact sentences are grouped by semantic coherence.
+    const nonFactBuffer = [];
+    const emitQueue = []; // { sentences, fact? }
+
+    for (const t of tagged) {
+      if (t.fact) {
+        // Flush any buffered non-fact sentences as a group first
+        if (nonFactBuffer.length > 0) {
+          const groups = this._groupRelatedSentences([...nonFactBuffer]);
+          for (const g of groups) emitQueue.push({ sentences: g.sentences, topic: g.topic, fact: null });
+          nonFactBuffer.length = 0;
+        }
+        emitQueue.push({ sentences: [t.text], topic: t.text.substring(0, 60), fact: t.fact });
+      } else {
+        nonFactBuffer.push(t.text);
+      }
+    }
+    if (nonFactBuffer.length > 0) {
+      const groups = this._groupRelatedSentences([...nonFactBuffer]);
+      for (const g of groups) emitQueue.push({ sentences: g.sentences, topic: g.topic, fact: null });
+    }
+
     const units = [];
     let unitIdx = 0;
-
-    for (const group of groups) {
+    for (const entry of emitQueue) {
       const unitId = `${provenance.sourceId}::${provenance.chunkId.split('::').pop()}::unit-${String(unitIdx).padStart(3, '0')}`;
-      const combinedText = group.sentences.join('. ').replace(/\.\./g, '.');
+      const combinedText = entry.sentences.join('. ').replace(/\.\./g, '.');
       const role = this._inferRole(combinedText);
       const acts = [detectAct(combinedText)];
-      const topic = group.topic || combinedText.substring(0, 60);
+      const topic = entry.topic || combinedText.substring(0, 60);
       const hash = createHash('sha256').update(`${combinedText}|${role}|${topic}`).digest('hex');
-      let md = `## Context Unit ${unitId}\nSourceId: ${provenance.sourceId}\nChunkId: ${provenance.chunkId}\nRole: ${role}\nTopic: ${topic}\n`;
+      const kuType = entry.sentences.length === 1 ? 'atomic' : 'composite';
+      let md = `## Context Unit ${unitId}\nSourceId: ${provenance.sourceId}\nChunkId: ${provenance.chunkId}\nKUType: ${kuType}\nTitle: ${topic}\nRole: ${role}\nTopic: ${topic}\n`;
+      if (provenance.sourceName) md += `SourceName: ${provenance.sourceName}\n`;
+      if (provenance.createdAt) md += `IngestedAt: ${provenance.createdAt}\n`;
       if (role === 'Procedure') {
         md += `Procedure: ${combinedText}\n`;
       } else {
         md += `Claim: ${combinedText}\n`;
-        const fact = extractSymbolicFact(group.sentences[0]);
-        if (fact) {
-          md += `Subject: ${fact.subject}\nRelation: ${fact.relation}\nObject: ${fact.object}\nConfidence: ${fact.confidence}\n`;
+        if (entry.fact) {
+          md += `Subject: ${entry.fact.subject}\nRelation: ${entry.fact.relation}\nObject: ${entry.fact.object}\nConfidence: ${entry.fact.confidence}\n`;
         }
       }
       md += `UtilityActs: ${acts.join(', ')}\nHash: ${hash}`;

@@ -34,10 +34,11 @@ export const INTENT_ALLOWED_FIELDS = ['Act', 'Intent', 'Context', 'Criterion', '
 // Context CNL fields
 export const CONTEXT_REQUIRED_FIELDS = ['SourceId', 'ChunkId', 'Role', 'Topic'];
 export const CONTEXT_ALLOWED_FIELDS = [
-  'SourceId', 'ChunkId', 'Role', 'Topic', 'Claim',
+  'SourceId', 'ChunkId', 'KUType', 'Title', 'Role', 'Topic', 'Claim',
   'Condition', 'Procedure', 'UtilityActs', 'UtilityNote',
   'Hash', 'Subject', 'Relation', 'Object', 'Confidence',
-  'SourceName', 'ChunkIndex', 'UnitIndex', 'UnitType',
+  'SourceName', 'SourceType', 'Author', 'IngestedAt', 'KnowledgeDate',
+  'ChunkIndex', 'UnitIndex', 'UnitType',
   'TextBody', 'ParentUnitIds', 'ChildUnitIds',
   'DerivedFromUnitIds', 'CharStart', 'CharEnd',
   'CreatedAt', 'ChunkType', 'SectionTitle'

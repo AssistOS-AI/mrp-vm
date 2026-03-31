@@ -2,6 +2,18 @@ function unique(ids = []) {
   return [...new Set(ids.filter(Boolean))];
 }
 
+function toUnitText(item) {
+  const unit = item?.unit || item || {};
+  return [
+    unit.role || '',
+    unit.topic || '',
+    unit.claim || '',
+    unit.procedure || '',
+    unit.utilityNote || '',
+    (unit.utilityActs || []).join(' ')
+  ].join(' ').trim();
+}
+
 export class DefaultPlannerPlugin {
   constructor(pluginRegistry, statsStore, config = {}) {
     this.pluginRegistry = pluginRegistry;
@@ -37,16 +49,9 @@ export class DefaultPlannerPlugin {
     const notes = ['adaptive-ranking'];
     const signals = this._deriveSignals(input);
     const defaults = this._defaultsForInput(signals, notes);
+    const decompose = this._shouldDecompose(input, signals, explicit, notes);
     return {
       plannerPluginId: this.getDescriptor().id,
-      seedDetectorOrder: this._order(
-        'sd-plugin',
-        explicit.seedDetectorPlugin,
-        sessionPrefs.seedDetectorPlugin,
-        defaults.seedDetectorPlan,
-        signals,
-        notes
-      ),
       kbPluginOrder: this._order(
         'kb-plugin',
         explicit.kbPlugin,
@@ -63,6 +68,8 @@ export class DefaultPlannerPlugin {
         signals,
         notes
       ),
+      decompose,
+      framePurpose: decompose ? this._framePurposeFor(signals) : null,
       notes
     };
   }
@@ -84,9 +91,20 @@ export class DefaultPlannerPlugin {
   }
 
   _deriveSignals(input) {
-    const text = `${input?.currentMessage || ''} ${
-      (input?.historyForPrompt || []).map(message => message.content || '').join(' ')
-    }`.toLowerCase();
+    const historyText = (input?.historyForPrompt || [])
+      .map(message => message.content || '')
+      .join(' ');
+    const intentText = (input?.intentGroups || [])
+      .map(group => [group.act, group.intent, group.context, group.criterion, group.evidence, group.output].filter(Boolean).join(' '))
+      .join(' ');
+    const currentTurnText = (input?.currentTurnUnits || [])
+      .map(unit => toUnitText(unit))
+      .join(' ');
+    const guidanceUnits = input?.strategyGuidanceUnits || [];
+    const guidanceText = guidanceUnits
+      .map(unit => toUnitText(unit))
+      .join(' ');
+    const text = `${input?.currentMessage || ''} ${historyText} ${intentText} ${currentTurnText} ${guidanceText}`.toLowerCase();
     const topicTags = new Set();
     if (/\b(legal|contract|policy|compliance|regulation|clause|obligation)\b/.test(text)) topicTags.add('legal');
     if (/\b(story|character|theme|chapter|scene|book|narrative|literature)\b/.test(text)) topicTags.add('literature');
@@ -94,21 +112,57 @@ export class DefaultPlannerPlugin {
     if (/\b(api|code|runtime|system|architecture|debug|deploy|latency|technical)\b/.test(text)) topicTags.add('technical');
     if (/\b(symbolic|constraint|proof|formal|rule|invariant|logic)\b/.test(text)) topicTags.add('symbolic');
 
+    const guidanceRoles = new Set(
+      guidanceUnits
+        .map(item => (item?.unit?.role || item?.role || '').toLowerCase())
+        .filter(Boolean)
+    );
+    const guidanceActs = new Set(
+      guidanceUnits
+        .flatMap(item => item?.unit?.utilityActs || item?.utilityActs || [])
+        .map(act => String(act).toLowerCase())
+    );
+    const parsedActs = (input?.intentGroups || [])
+      .map(group => group?.act)
+      .filter(Boolean);
+    const primaryAct =
+      parsedActs[0] ||
+      (/\bcompare\b/.test(text) ? 'compare' :
+      /\bverify|prove|confirm|validate|check\b/.test(text) ? 'verify' :
+      /\brecommend|best\b/.test(text) ? 'recommend' :
+      /\bdefine|what is\b/.test(text) ? 'define' :
+      /\bidentify|which|who\b/.test(text) ? 'identify' :
+      /\bdescribe\b/.test(text) ? 'describe' :
+      'explain');
+
     return {
       text,
+      phase: input?.phase || 'post-seed',
       wantsDepth: /\b(deep|thorough|careful|step-by-step|multi-hop|ambiguous|trade-?off|synthesi[sz]e|proof|prove|reason)\b/.test(text),
       wantsSpeed: /\b(quick|brief|fast|concise|short answer)\b/.test(text),
-      symbolicCue: /\b(verify|constraint|satisfiable|formal|rule|invariant)\b/.test(text),
-      retrievalHeavy: /\b(compare|relationship|connect|dependency|dependencies|across|why|because|context|evidence)\b/.test(text),
-      supportedAct:
-        /\bcompare\b/.test(text) ? 'compare' :
-        /\bverify|prove|confirm|validate|check\b/.test(text) ? 'verify' :
-        /\brecommend|best\b/.test(text) ? 'recommend' :
-        /\bdefine|what is\b/.test(text) ? 'define' :
-        /\bidentify|which|who\b/.test(text) ? 'identify' :
-        /\bdescribe\b/.test(text) ? 'describe' :
-        'explain',
-      topicTags
+      symbolicCue:
+        /\b(verify|constraint|satisfiable|formal|rule|invariant)\b/.test(text) ||
+        guidanceRoles.has('constraint') ||
+        guidanceRoles.has('condition'),
+      retrievalHeavy:
+        /\b(compare|relationship|connect|dependency|dependencies|across|why|because|context|evidence)\b/.test(text) ||
+        (input?.decomposedIntents || []).length > 1,
+      supportedAct: primaryAct,
+      topicTags,
+      intentCount: Math.max((input?.intentGroups || []).length, (input?.decomposedIntents || []).length, 1),
+      hasStrategyGuidance: guidanceUnits.length > 0,
+      hasProcedureGuidance:
+        guidanceRoles.has('procedure') ||
+        guidanceActs.has('implement') ||
+        guidanceActs.has('recommend'),
+      hasEvaluationGuidance:
+        guidanceRoles.has('evaluation') ||
+        guidanceActs.has('evaluate') ||
+        guidanceActs.has('recommend'),
+      hasConstraintGuidance:
+        guidanceRoles.has('constraint') ||
+        guidanceRoles.has('condition') ||
+        guidanceActs.has('verify')
     };
   }
 
@@ -166,16 +220,34 @@ export class DefaultPlannerPlugin {
       score -= relativeCost * 0.25;
       score -= Math.min(expectedLatencyMs / 5000, 0.15);
     }
-    if (signals.symbolicCue && (topicTags.has('symbolic') || evidenceStyle.has('symbolic-facts'))) {
+    if ((signals.symbolicCue || signals.hasConstraintGuidance) && (topicTags.has('symbolic') || evidenceStyle.has('symbolic-facts'))) {
       score += 0.12;
     }
     if (signals.retrievalHeavy && type === 'kb-plugin') {
       if (evidenceStyle.has('hybrid')) score += 0.10;
       if (evidenceStyle.has('symbolic-facts')) score += 0.08;
     }
+    if (signals.hasProcedureGuidance && type === 'gs-plugin') {
+      if (supportedActs.has('implement') || topicTags.has('procedural')) score += 0.08;
+    }
+    if (signals.hasEvaluationGuidance && type === 'kb-plugin') {
+      if (evidenceStyle.has('hybrid')) score += 0.05;
+    }
 
     score += confidenceWhenMatched * 0.1;
     score -= expectedLLMCalls * 0.03;
+
+    // DS003/DS029: description-driven relevance filtering
+    const description = (descriptor.description || '').toLowerCase();
+    if (description && signals.text) {
+      // Check if key query terms appear in the plugin description
+      const queryWords = signals.text.split(/\s+/).filter(w => w.length > 3);
+      let descHits = 0;
+      for (const w of queryWords) {
+        if (description.includes(w)) descHits++;
+      }
+      if (descHits > 0) score += Math.min(descHits * 0.03, 0.15);
+    }
 
     return score;
   }
@@ -188,16 +260,22 @@ export class DefaultPlannerPlugin {
 
   _defaultsForInput(signals, notes) {
     const cheapFirst = {
-      seedDetectorPlan: this.config.defaultSeedDetectorPlan || ['sd-symbolic', 'sd-llm-fast', 'sd-llm-deep'],
       kbPlan: this.config.defaultKBPlan || ['kb-fast', 'kb-balanced', 'kb-thinkingdb'],
       goalSolverPlan: this.config.defaultGoalSolverPlan || ['gs-symbolic', 'gs-llm-fast', 'gs-llm-deep']
     };
-    const { wantsDepth, wantsSpeed, symbolicCue, retrievalHeavy } = signals;
+    const {
+      wantsDepth,
+      wantsSpeed,
+      symbolicCue,
+      retrievalHeavy,
+      hasProcedureGuidance,
+      hasEvaluationGuidance,
+      hasConstraintGuidance
+    } = signals;
 
-    if (wantsDepth) {
-      notes.push('depth-signals');
+    if (wantsDepth || hasEvaluationGuidance) {
+      notes.push(hasEvaluationGuidance ? 'evaluation-guidance' : 'depth-signals');
       return {
-        seedDetectorPlan: ['sd-llm-deep', 'sd-llm-fast', 'sd-symbolic'],
         kbPlan: ['kb-thinkingdb', 'kb-balanced', 'kb-fast'],
         goalSolverPlan: ['gs-llm-deep', 'gs-llm-fast', 'gs-symbolic']
       };
@@ -206,17 +284,23 @@ export class DefaultPlannerPlugin {
     if (this.plannerStyle === 'deep-first') {
       notes.push('planner-style-deep-first');
       return {
-        seedDetectorPlan: ['sd-llm-deep', 'sd-llm-fast', 'sd-symbolic'],
         kbPlan: ['kb-thinkingdb', 'kb-balanced', 'kb-fast'],
         goalSolverPlan: ['gs-llm-deep', 'gs-llm-fast', 'gs-symbolic']
       };
     }
 
-    if (symbolicCue) {
-      notes.push('symbolic-cue');
+    if (symbolicCue || hasConstraintGuidance) {
+      notes.push(hasConstraintGuidance ? 'constraint-guidance' : 'symbolic-cue');
       return {
-        seedDetectorPlan: ['sd-symbolic', 'sd-llm-fast', 'sd-llm-deep'],
         kbPlan: retrievalHeavy ? ['kb-thinkingdb', 'kb-balanced', 'kb-fast'] : ['kb-fast', 'kb-balanced', 'kb-thinkingdb'],
+        goalSolverPlan: ['gs-symbolic', 'gs-llm-fast', 'gs-llm-deep']
+      };
+    }
+
+    if (hasProcedureGuidance) {
+      notes.push('procedure-guidance');
+      return {
+        kbPlan: ['kb-balanced', 'kb-thinkingdb', 'kb-fast'],
         goalSolverPlan: ['gs-symbolic', 'gs-llm-fast', 'gs-llm-deep']
       };
     }
@@ -224,7 +308,6 @@ export class DefaultPlannerPlugin {
     if (retrievalHeavy && !wantsSpeed) {
       notes.push('retrieval-heavy');
       return {
-        seedDetectorPlan: cheapFirst.seedDetectorPlan,
         kbPlan: ['kb-balanced', 'kb-fast', 'kb-thinkingdb'],
         goalSolverPlan: ['gs-llm-fast', 'gs-symbolic', 'gs-llm-deep']
       };
@@ -232,5 +315,24 @@ export class DefaultPlannerPlugin {
 
     notes.push(wantsSpeed ? 'speed-signals' : 'cheap-first');
     return cheapFirst;
+  }
+
+  _shouldDecompose(input, signals, explicit, notes) {
+    if (explicit?.goalSolverPlugin) return false;
+    if (signals.phase !== 'post-kb') return false;
+
+    if (signals.intentCount > 1 && !signals.hasStrategyGuidance) {
+      notes.push('decompose:multi-intent-without-guidance');
+      return true;
+    }
+    if (signals.retrievalHeavy && signals.wantsDepth && !signals.hasStrategyGuidance) {
+      notes.push('decompose:retrieval-heavy-without-guidance');
+      return true;
+    }
+    return false;
+  }
+
+  _framePurposeFor(signals) {
+    return signals.hasStrategyGuidance ? 'subtask-decomposition' : 'strategy-guidance';
   }
 }

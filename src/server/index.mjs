@@ -83,9 +83,16 @@ async function boot() {
   // 8. Initialize RetrievalStrategyRegistry
   const retrievalStrategyRegistry = new RetrievalStrategyRegistry();
   retrievalStrategyRegistry.register(new BM25LexicalStrategy(retrievalConfig));
-  retrievalStrategyRegistry.register(new HDCVSAStrategy());
+  const hdcStrategy = new HDCVSAStrategy();
+  retrievalStrategyRegistry.register(hdcStrategy);
   retrievalStrategyRegistry.register(new ThinkingDBSymbolicStrategy(thinkingdbConfig));
   retrievalStrategyRegistry.setProfiles(retrievalStrategiesConfig.profiles);
+
+  // Wire HDC cache invalidation to KB index changes
+  kbIndex.onChange((event, unitId) => {
+    if (event === 'rebuild') hdcStrategy.invalidate(null);
+    else if (unitId) hdcStrategy.invalidate(unitId);
+  });
 
   // Build remaining components
   const parser = new CNLParser();
@@ -104,7 +111,7 @@ async function boot() {
       symbolicStrategy,
       normalizer,
       {
-        description: 'Deterministic symbolic seed detector.',
+        description: 'Rule-based extraction of problem seeds and session knowledge units in one pass. Fast, deterministic, no LLM cost.',
         costClass: 'cheap',
         plannerHints: {
           expectedLatencyMs: 30,
@@ -125,13 +132,13 @@ async function boot() {
       llmStrategy,
       normalizer,
       {
-        description: 'LLM-backed seed detector using the fast seed role.',
+        description: 'Lightweight LLM-backed extraction of problem seeds and session knowledge units in one pass.',
         costClass: 'moderate',
         modelRole: 'seed-fast',
         ingestModelRole: 'kb-ingest',
         plannerHints: {
           expectedLatencyMs: 800,
-          expectedLLMCalls: 2,
+          expectedLLMCalls: 1,
           relativeCost: 0.35,
           supportedActs: ['compare', 'define', 'explain', 'identify', 'recommend', 'verify'],
           topicTags: ['general', 'technical', 'literature'],
@@ -146,13 +153,13 @@ async function boot() {
       llmStrategy,
       normalizer,
       {
-        description: 'LLM-backed seed detector using the deep seed role.',
+        description: 'Thorough LLM extraction of problem seeds and session knowledge units in one pass for ambiguous or multi-part requests.',
         costClass: 'expensive',
         modelRole: 'seed-deep',
         ingestModelRole: 'kb-ingest',
         plannerHints: {
           expectedLatencyMs: 1800,
-          expectedLLMCalls: 4,
+          expectedLLMCalls: 1,
           relativeCost: 0.75,
           supportedActs: ['compare', 'diagnose', 'explain', 'recommend', 'verify'],
           topicTags: ['general', 'technical', 'legal', 'literature'],
@@ -163,12 +170,13 @@ async function boot() {
       }
     ));
   }
+  conversationHandler.attachPluginRegistry(typedPluginRegistry);
   typedPluginRegistry.register(new RetrievalKBPlugin(
     'kb-fast',
     retrieval,
     'fast',
     {
-      description: 'Cheap lexical-first KB plugin.',
+      description: 'Lexical-first retrieval with small result budget. Cheapest path, suitable for simple focused questions with clear keywords.',
       costClass: 'cheap',
       plannerHints: {
         expectedLatencyMs: 50,
@@ -188,7 +196,7 @@ async function boot() {
     retrieval,
     'balanced',
     {
-      description: 'Balanced lexical + associative KB plugin.',
+      description: 'Lexical + associative retrieval with diversity-aware reranking. Recommended default for moderate-complexity questions.',
       costClass: 'moderate',
       plannerHints: {
         expectedLatencyMs: 120,
@@ -208,7 +216,7 @@ async function boot() {
     retrieval,
     'thinkingdb',
     {
-      description: 'Symbolic ThinkingDB KB plugin.',
+      description: 'Lexical + bounded symbolic closure. Best for multi-hop, relation-sensitive, or proof-bearing retrieval tasks.',
       costClass: 'expensive',
       plannerHints: {
         expectedLatencyMs: 220,
@@ -229,7 +237,7 @@ async function boot() {
       symbolicStrategy,
       synthesizer,
       {
-        description: 'Deterministic symbolic goal solver.',
+        description: 'Deterministic answer assembly from retrieved evidence. No LLM cost. Produces structured bullet-point answers from KB claims.',
         costClass: 'cheap',
         plannerHints: {
           expectedLatencyMs: 25,
@@ -250,7 +258,7 @@ async function boot() {
       llmStrategy,
       synthesizer,
       {
-        description: 'LLM-backed goal solver using the fast goal role.',
+        description: 'Lightweight LLM synthesis from evidence. Good fluency with low latency for most questions.',
         costClass: 'moderate',
         modelRole: 'goal-fast',
         plannerHints: {
@@ -270,7 +278,7 @@ async function boot() {
       llmStrategy,
       synthesizer,
       {
-        description: 'LLM-backed goal solver using the deep goal role.',
+        description: 'Thorough LLM synthesis with richer reasoning. Best for complex, nuanced, or multi-faceted answers.',
         costClass: 'expensive',
         modelRole: 'goal-deep',
         plannerHints: {
@@ -316,9 +324,10 @@ async function boot() {
   const engine = new MRPEngine(
     {
       ...engineConfig,
-      defaultPlannerPlugin: pluginsConfig.defaultPlannerPlugin || 'planner-default',
-      plannerFallbackOrder: pluginsConfig.plannerFallbackOrder || ['planner-default', 'planner-depth'],
-      maxPluginsPerStage: pluginsConfig.maxPluginsPerStage || engineConfig.maxPluginsPerStage || 4
+      defaultPlannerPlugin: engineConfig.defaultPlannerPlugin || pluginsConfig.defaultPlannerPlugin || 'planner-default',
+      plannerFallbackOrder: engineConfig.plannerFallbackOrder || pluginsConfig.plannerFallbackOrder || ['planner-default', 'planner-depth'],
+      maxPluginsPerStage: engineConfig.maxPluginsPerStage || pluginsConfig.maxPluginsPerStage || 4,
+      maxFrameDepth: engineConfig.maxFrameDepth ?? 3
     },
     typedPluginRegistry,
     conversationHandler,

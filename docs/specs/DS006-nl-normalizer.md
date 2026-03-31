@@ -18,8 +18,8 @@ Typical users:
 
 ## Responsibilities
 
-- NL -> Intent CNL
-- NL -> Context CNL
+- NL -> seed bundle
+- validation of both problem seeds and session KUs
 - validation-correction retry loop for LLM-backed
   plugins
 - shared input-size enforcement
@@ -28,10 +28,12 @@ Typical users:
 
 ```javascript
 class NLNormalizer {
-  async toIntentCNL(rawNL, history, systemPrompt,
-    strategy, requestedModel) -> string
-  async toSessionContextCNL(rawNL, systemPrompt,
-    strategy, requestedModel) -> string
+  async toSeedBundleCNL(rawNL, history, systemPrompt,
+    strategy, requestedModel) -> {
+      intentCNL: string,
+      currentTurnContextCNL: string,
+      attemptCount: number
+    }
   async toContextCNL(chunkText, provenance,
     strategy, requestedModel) -> string
 }
@@ -39,6 +41,24 @@ class NLNormalizer {
 
 `strategy` here is an implementation helper used by a
 plugin, not a user-visible VM mode.
+
+## Seed Bundle Rule
+
+For a chat turn, the normalizer SHOULD treat problem
+seeds and session knowledge units as one normalization
+job.
+
+That means:
+
+- one extraction pass over the user turn
+- one logical `sd-plugin.detectSeeds(...)` result
+- one validation/correction loop over the combined
+  seed bundle
+
+Separate intent-only and context-only normalization
+passes for the same user turn are no longer the
+preferred design because they duplicate semantic work
+and often duplicate LLM cost.
 
 ## Dependencies
 

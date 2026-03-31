@@ -44,6 +44,10 @@ export class PluginManager {
           continue;
         }
         manifest._dir = join(dir, entry.name);
+        if (!manifest.protocolVersion || manifest.protocolVersion !== 1) {
+          logger.warn(MOD, `Plugin ${manifest.id} has missing or unsupported protocolVersion (${manifest.protocolVersion}), skipping`);
+          continue;
+        }
         this._plugins.set(manifest.id, manifest);
         logger.info(MOD, `Registered plugin: ${manifest.id}`);
       } catch (e) {

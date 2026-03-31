@@ -18,14 +18,17 @@
     <div id="config-bar">
       <label for="planner-select">Planner:</label>
       <select id="planner-select" aria-label="Planner plugin"></select>
-      <label for="seed-select">Seed:</label>
+      <label for="seed-select">Seed Detector:</label>
       <select id="seed-select" aria-label="Seed detector plugin"></select>
-      <label for="kb-plugin-select">KB:</label>
+      <label for="kb-plugin-select">KB Plugin:</label>
       <select id="kb-plugin-select" aria-label="KB plugin"></select>
       <label for="goal-select">Goal:</label>
       <select id="goal-select" aria-label="Goal solver plugin"></select>
       <button id="settings-toggle" type="button" aria-label="Open settings">Settings</button>
       <button id="reset-config" type="button" aria-label="Reset to defaults">Reset</button>
+    </div>
+    <div id="concept-hint" aria-live="polite">
+      Each user turn is parsed once into problem seeds and session knowledge units. KB repositories are loaded, saved, and forked per session.
     </div>
     <section id="settings-panel" class="hidden" aria-label="LLM role settings">
       <h2>LLM Role Settings</h2>
@@ -44,6 +47,8 @@
         <select id="role-kb-derive" data-role="kb-derive"></select>
         <label for="role-planner">Planner</label>
         <select id="role-planner" data-role="planner"></select>
+        <label for="role-validation">Validation</label>
+        <select id="role-validation" data-role="validation"></select>
       </div>
       <div class="settings-actions">
         <button id="save-settings-btn" type="button">Save Settings</button>
@@ -52,6 +57,7 @@
     <div id="kb-bar">
       <label for="kb-select">KB:</label>
       <select id="kb-select" aria-label="Mounted knowledge base"></select>
+      <button id="new-kb-btn" type="button">New KB</button>
       <button id="load-kb-btn" type="button">Load KB</button>
       <button id="fork-kb-btn" type="button">Fork KB</button>
       <button id="save-kb-btn" type="button">Save KB</button>

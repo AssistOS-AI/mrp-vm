@@ -6,9 +6,20 @@ layer that orders plugin execution per request.
 
 ## Responsibilities
 
+- consume parsed problem seeds, current-turn KUs,
+  session state, and KB-scoped guidance
 - choose cheap-first or heavy-first order depending
-  on task signals
+  on task signals plus retrieved strategy guidance
 - decide fallback/escalation chains
+- use plugin descriptions and `plannerHints` to rank
+  plugins by relevance and discard clearly irrelevant
+  candidates
+- decide whether direct solver dispatch is justified
+  or whether a new frame must be opened first
+- request task decomposition by setting
+  `decompose: true` in the execution plan when the
+  task appears too broad, too underspecified, or not
+  yet method-justified
 - log outcomes
 - adapt future ordering from historical evidence
 
@@ -37,8 +48,8 @@ Tracked per plugin:
 Cold-start priors SHOULD mildly favor cheaper
 plugins.
 
-The current baseline also records planner-level EWMA
-statistics in the shared store:
+The reference implementation also records planner-
+level EWMA statistics in the shared store:
 
 - attempts
 - successes
@@ -54,8 +65,6 @@ the request does not explicitly pin a planner.
 
 Typical default order:
 
-- seed detection:
-  `sd-symbolic -> sd-llm-fast -> sd-llm-deep`
 - retrieval:
   `kb-fast -> kb-balanced -> kb-thinkingdb`
 - goal solving:
@@ -64,8 +73,7 @@ Typical default order:
 The planner currently orders whole plugins, not the
 internal retrieval backends used inside a built-in
 `kb-plugin`. Therefore stage-level planning and
-plugin-internal backend escalation coexist in the
-baseline implementation.
+plugin-internal backend escalation coexist.
 
 The planner MAY override this order when:
 
@@ -74,10 +82,23 @@ The planner MAY override this order when:
 - past traces show a lightweight plugin repeatedly
   fails for similar tasks
 
-The current baseline planner inspects the active
-message/history for simple depth, speed, symbolic,
-and retrieval-heavy cues before ranking the final
-order.
+The planner MUST inspect:
+
+- parsed Intent CNL and decomposed intents
+- current-turn KUs staged in the session
+- mounted KB identity and session-scoped KB state
+- plugin descriptions and `plannerHints`
+- explicit request pins and session preferences
+- historical planner/plugin utility
+
+The planner SHOULD also consume KB-resident strategy
+guidance when available, especially KUs describing:
+
+- required procedure
+- evaluation policy
+- allowed or forbidden solver families
+- proof or validation expectations
+- domain-specific resolution rules
 
 The built-in adaptive planner now combines:
 
@@ -119,8 +140,8 @@ Backtracking MAY happen:
 The core MUST still enforce global budget and safety
 limits.
 
-The current baseline implementation ships two built-
-in planners:
+The reference implementation ships two built-in
+planners:
 
 - `planner-default` — adaptive cheap-first
 - `planner-depth` — heavy-first fallback
@@ -134,20 +155,50 @@ may reorder that candidate set through planner-level
 utility scores when the request does not explicitly
 pin a planner.
 
-## Current Baseline Boundaries
+## Dispatch Rule
 
-The built-in planners order the fixed VM stages
-(`sd -> kb -> gs`). They do not yet define arbitrary
-new stage kinds or agentic loops. This is intentional
-for the current baseline and should not be read as a
-claim that planner plugins are limited to a single
-implementation per type.
+The planner MUST NOT dispatch a goal solver blindly
+from a static ranking alone.
 
-The baseline also still ships built-in `kb-plugin`s
-that internally reuse the shared retrieval stack and
-legacy profile configuration. This is acceptable as a
-transitional implementation detail, but it is not the
-long-term target architecture.
+Direct solver dispatch is allowed only when at least
+one of the following holds:
+
+- the user explicitly pinned the solver/plugin family
+- plugin metadata strongly matches the parsed problem
+- KB guidance or session context explicitly prescribes
+  the solving method
+- a parent frame already established the method and
+  passed that decision downward
+
+If solver applicability is still uncertain, the
+planner MUST prefer one of these actions before
+direct dispatch:
+
+- retrieve strategy guidance from KB/session context
+- open a child frame for decomposition
+- escalate to a heavier planner or solver family
+
+## Frame-Opening Rule
+
+The planner uses plugin `description` fields and
+`plannerHints` to:
+
+- rank plugins by likely relevance to the current
+  problem
+- discard plugins that are clearly irrelevant for
+  the current task
+- decide whether decomposition or strategy-guidance
+  framing is required before attempting direct
+  resolution
+
+When the planner returns `decompose: true`, the core
+MUST create a child frame before direct solver
+dispatch.
+
+The planner MUST treat KB-stored procedural and
+evaluation knowledge as first-class planning input,
+not merely as downstream evidence for the final
+answer.
 
 ## Dependencies
 

@@ -8,6 +8,14 @@ export class LanguageProcessingStrategy {
   usesLLM() { return false; }
   supportsModelOverride() { return false; }
   getCapabilities() { return []; }
+  async detectSeedBundle(input) {
+    const intent = await this.normalizeIntent(input);
+    const context = await this.extractSessionContext(input);
+    return {
+      intentCNL: intent?.intentCNL || '',
+      currentTurnContextCNL: context?.contextCNL || ''
+    };
+  }
   async normalizeIntent(_input) { throw new Error('Not implemented'); }
   async extractSessionContext(_input) { throw new Error('Not implemented'); }
   async normalizePersistentContext(_input) { throw new Error('Not implemented'); }

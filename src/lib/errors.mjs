@@ -7,6 +7,7 @@ export class MRPError extends Error {
     this.details = details;
     this.requestId = null;
     this.sessionId = null;
+    this.frameId = null;
     this.timestamp = new Date().toISOString();
   }
 
@@ -18,6 +19,7 @@ export class MRPError extends Error {
       details: this.details,
       requestId: this.requestId,
       sessionId: this.sessionId,
+      frameId: this.frameId,
       timestamp: this.timestamp
     };
   }

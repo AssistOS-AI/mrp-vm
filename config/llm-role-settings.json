@@ -1,13 +1,13 @@
 {
   "roles": {
-    "seed-fast": { "model": "test-fast" },
-    "seed-deep": { "model": "test-fast" },
-    "goal-fast": { "model": "test-fast" },
-    "goal-deep": { "model": "test-fast" },
-    "kb-ingest": { "model": "test-fast" },
-    "kb-derive": { "model": "test-fast" },
-    "validation": { "model": "test-fast" },
-    "planner": { "model": "test-fast" }
+    "seed-fast": { "model": "fast" },
+    "seed-deep": { "model": "fast" },
+    "goal-fast": { "model": "fast" },
+    "goal-deep": { "model": "fast" },
+    "kb-ingest": { "model": "fast" },
+    "kb-derive": { "model": "fast" },
+    "validation": { "model": "fast" },
+    "planner": { "model": "fast" }
   },
   "pluginOverrides": {
     "sd-llm-fast": { "role": "seed-fast" },

@@ -39,10 +39,13 @@ UtilityNote: <optional explanation>
   simple symbolic fact, also emit:
   `Subject`, `Relation`, `Object`, and optional
   `Confidence`.
-- Emit symbolic fields only when the relation is one
-  of: uses, provides, has_capability, depends_on,
-  part_of, instance_of, relevant_for, supports,
-  mentions, about, causes.
+- Emit symbolic fields ONLY if you can map the
+  relation exactly to one of: uses, provides,
+  has_capability, depends_on, part_of, instance_of,
+  relevant_for, supports, mentions, about, causes.
+- Do NOT invent new relation values. If the relation
+  does not fit into the exact list above, omit the
+  symbolic fields (Subject, Relation, Object) entirely.
 - If you emit one of Subject/Relation/Object, you
   must emit all three.
 

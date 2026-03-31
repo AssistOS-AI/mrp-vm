@@ -38,7 +38,7 @@ export class StrategySeedDetectorPlugin {
       costClass: this.costClass,
       usesLLM: this.strategy.usesLLM(),
       modelRoles: [this.modelRole, this.ingestModelRole].filter(Boolean),
-      maxLLMCalls: this.strategy.usesLLM() ? 4 : 0,
+      maxLLMCalls: this.strategy.usesLLM() ? 2 : 0,
       provides: ['detect-seeds', 'normalize-persistent-context'],
       plannerHints: this.plannerHints
     });
@@ -52,25 +52,19 @@ export class StrategySeedDetectorPlugin {
       sessionModel: input.sessionModel || null
     });
     try {
-      const intentCNL = await this.normalizer.toIntentCNL(
+      const seedBundle = await this.normalizer.toSeedBundleCNL(
         input.currentMessage,
         input.historyForPrompt,
         input.systemPrompt,
         this.strategy,
         model
       );
-      const currentTurnContextCNL = await this.normalizer.toSessionContextCNL(
-        input.currentMessage,
-        input.systemPrompt,
-        this.strategy,
-        model
-      );
       return {
         status: 'success',
-        intentCNL,
-        currentTurnContextCNL,
+        intentCNL: seedBundle.intentCNL,
+        currentTurnContextCNL: seedBundle.currentTurnContextCNL,
         metadata: {
-          llmCalls: this.strategy.usesLLM() ? 2 : 0,
+          llmCalls: this.strategy.usesLLM() ? seedBundle.attemptCount || 1 : 0,
           model
         },
         error: null
@@ -81,7 +75,7 @@ export class StrategySeedDetectorPlugin {
         intentCNL: null,
         currentTurnContextCNL: null,
         metadata: {
-          llmCalls: this.strategy.usesLLM() ? 1 : 0,
+          llmCalls: this.strategy.usesLLM() ? error.details?.attemptCount || 1 : 0,
           model
         },
         error: { code: error.code || 'SEED_PLUGIN_FAILED', message: error.message }
@@ -156,7 +150,7 @@ export class RetrievalKBPlugin {
       description: this.description,
       costClass: this.costClass,
       maxLLMCalls: 0,
-      provides: ['retrieve-context', 'source-text-hook'],
+      provides: ['retrieve-context', 'source-text-hook', 'session-lifecycle'],
       plannerHints: this.plannerHints
     });
   }
@@ -195,6 +189,7 @@ export class RetrievalKBPlugin {
         return {
           intentRef: ri.intentRef,
           evidenceCount,
+          strategyCount: (ri.strategyUnits || []).length,
           neededRoles: [...neededRoles],
           coveredRoles: [...roleSet].sort(),
           matchedRoles,
@@ -203,6 +198,7 @@ export class RetrievalKBPlugin {
         };
       });
       const evidenceCount = intentAssessments.reduce((sum, item) => sum + item.evidenceCount, 0);
+      const strategyUnitCount = intentAssessments.reduce((sum, item) => sum + item.strategyCount, 0);
       const sufficient = intentAssessments.length > 0 && intentAssessments.every(item => item.sufficient);
       return {
         status: sufficient ? 'success' : 'insufficient',
@@ -211,6 +207,11 @@ export class RetrievalKBPlugin {
         retrievalTrace: {
           profileId: this.profileId,
           evidenceCount,
+          strategyUnitCount,
+          purpose:
+            strategyUnitCount === 0 ? 'task-evidence' :
+            strategyUnitCount >= evidenceCount ? 'strategy-guidance' :
+            'mixed',
           intentAssessments
         },
         error: null
@@ -286,6 +287,13 @@ export class RetrievalKBPlugin {
     return {
       status: 'accepted',
       artifacts: [{ ...artifact, artifactPath, summaryPath }],
+      error: null
+    };
+  }
+
+  async onSessionEvent() {
+    return {
+      status: 'accepted',
       error: null
     };
   }
@@ -404,20 +412,31 @@ export class LLMValidationPlugin {
       return { status: 'accepted', verdict: 'accepted', reason: 'No LLM bridge available, accepting by default', metadata: { llmCalls: 0, model: null }, error: null };
     }
     const prompt = [
-      'You are a response validator for a meta-rational VM.',
-      'The user asked a question. The system produced an answer using retrieved evidence.',
-      'Your job: decide if the answer is CORRECT and GROUNDED in the evidence.',
+      'You are a response validator. Decide if the answer is acceptable.',
       'Reply with exactly one JSON object: {"verdict":"accepted","reason":"..."} or {"verdict":"rejected","reason":"..."}',
-      'Reject if: the answer contradicts the evidence, fabricates facts not in evidence, or fails to address the question.',
-      'Accept if: the answer is grounded, addresses the question, and does not contradict evidence.'
+      '',
+      'REJECT only if the answer:',
+      '- directly contradicts the provided evidence, OR',
+      '- fabricates specific facts that are not in the evidence and presents them as true.',
+      '',
+      'ACCEPT if the answer:',
+      '- is grounded in the evidence even if incomplete,',
+      '- honestly states when information is missing or insufficient,',
+      '- partially addresses the question using available evidence,',
+      '- does not contradict or fabricate.',
+      '',
+      'An incomplete but honest answer is ACCEPTABLE. Only fabrication or contradiction is grounds for rejection.'
     ].join('\n');
     const userMsg = [
       '## Original Question', input.originalMessage || '',
-      '## System Answer', input.responseMarkdown || '',
-      '## Evidence Used', (input.resolvedIntents || []).map(ri => ri.resolvedMarkdown || '').join('\n---\n')
+      '## System Answer', (input.responseMarkdown || '').replace(/sess-[a-f0-9-]+/g, 'sess-REF').replace(/src-[a-f0-9]+/g, 'src-REF'),
+      '## Evidence Used', (input.resolvedIntents || []).map(ri => (ri.resolvedMarkdown || '').replace(/sess-[a-f0-9-]+/g, 'sess-REF').replace(/src-[a-f0-9]+/g, 'src-REF')).join('\n---\n')
     ].join('\n\n');
     try {
-      const raw = await this.llmBridge.call(prompt, userMsg, { model });
+      const raw = await this.llmBridge.call(prompt, userMsg, {
+        model,
+        operation: 'validate-response'
+      });
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}');
       const verdict = parsed.verdict === 'rejected' ? 'rejected' : 'accepted';
       return {

@@ -24,7 +24,9 @@ Every plugin MUST expose a descriptor equivalent to:
   type: "kb-plugin",
   name: "Balanced KB Retriever",
   version: "1.0.0",
-  description: "...",
+  description: "Lexical + associative retrieval with
+    diversity-aware reranking. Recommended default
+    for moderate-complexity questions.",
   costClass: "cheap" | "moderate" | "expensive",
   usesLLM: boolean,
   modelRoles: ["kb-ingest"],
@@ -46,11 +48,32 @@ Every plugin MUST expose a descriptor equivalent to:
 }
 ```
 
-`plannerHints` are optional but strongly recommended
-for planner-facing plugins. They provide the initial
-cost/performance priors used by built-in
-`mrp-plan-plugin`s before enough historical learning
-has accumulated.
+### Description Requirements
+
+The `description` field MUST be:
+
+- concise (1–3 sentences)
+- operationally useful for planner-driven relevance
+  filtering
+- specific about what the plugin does, when it is
+  most useful, and what distinguishes it from
+  alternatives
+
+The planner uses `description` together with
+`plannerHints` to rank plugins by likely relevance
+and to discard plugins that are clearly irrelevant
+for the current task.
+
+### Planner Hints Requirements
+
+`plannerHints` are REQUIRED for all planner-facing
+plugins (`sd-plugin`, `kb-plugin`, `gs-plugin`).
+They are optional for `val-plugin` and
+`mrp-plan-plugin`.
+
+`plannerHints` provide the initial cost/performance
+priors used by built-in `mrp-plan-plugin`s before
+enough historical learning has accumulated.
 
 ## Discovery Modes
 

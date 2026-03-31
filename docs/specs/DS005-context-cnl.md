@@ -1,16 +1,26 @@
 # DS005 — Context CNL (Controlled Natural Language
-# for Knowledge Base)
+# for Knowledge Units)
 
 ## Purpose
 Defines the controlled natural language format used
-to represent knowledge units from the Knowledge Base.
+to serialize Knowledge Units (DS030) from the
+Knowledge Base and session memory.
 
 ## Description
 
-Context CNL is the form into which KB fragments are
-preprocessed and stored. Each raw NL fragment is
-transformed into a structured context unit with an
-explicit pragmatic role and provenance.
+Context CNL is the serialization format for Knowledge
+Units (KUs). Each raw NL fragment is transformed into
+a structured KU with an explicit pragmatic role,
+provenance, and hierarchical position.
+
+For chat turns, these KUs are normally emitted
+together with Intent CNL from the same seed-detection
+pass. They represent contextual knowledge, not
+problem seeds or requested actions.
+
+The semantic model behind Context CNL is defined in
+DS030. This document defines the Markdown
+serialization format and validation rules.
 
 ## Context Unit Structure
 
@@ -18,6 +28,8 @@ explicit pragmatic role and provenance.
 ## Context Unit <ID>
 SourceId: <sourceId>
 ChunkId: <chunkId>
+KUType: <atomic | composite | aggregate>
+Title: <short descriptive title>
 Role: <pragmatic role>
 Topic: <dominant subject>
 Claim: <main assertion or information>
@@ -31,13 +43,17 @@ UtilityActs: <list of pragmatic acts served>
 UtilityNote: <optional free-text explanation>
 Hash: <optional deterministic content hash>
 SourceName: <optional source file name>
+SourceType: <optional source kind>
+Author: <optional author name>
+IngestedAt: <optional ingestion timestamp>
+KnowledgeDate: <optional knowledge-relevant date>
 ChunkIndex: <optional numeric chunk index>
 UnitIndex: <optional numeric unit index within chunk>
 UnitType: <optional semantic unit kind>
 TextBody: <optional normalized body text>
-ParentUnitIds: <optional CSV of related parent unit IDs>
-ChildUnitIds: <optional CSV of related child unit IDs>
-DerivedFromUnitIds: <optional CSV of source/derived unit IDs>
+ParentUnitIds: <optional CSV of parent KU IDs>
+ChildUnitIds: <optional CSV of child KU IDs>
+DerivedFromUnitIds: <optional CSV of source KU IDs>
 CharStart: <optional start offset in source text>
 CharEnd: <optional end offset in source text>
 CreatedAt: <optional unit creation timestamp>
@@ -220,9 +236,9 @@ UtilityActs: implement
 
 ## Related DS Files
 
-- DS008 (KB) — stores Context CNL units.
+- DS030 (KU) — semantic model behind Context CNL.
+- DS008 (KB) — stores Knowledge Units.
 - DS009 (Indexing) — indexes based on fields.
-- DS012 (Retrieval) — matches Intent CNL with
-  Context CNL.
+- DS012 (Retrieval) — matches Intent CNL with KUs.
 - DS006 (Normalizer) — converts NL → Context CNL.
-- DS018 (Ingest) — provides chunks and provenance.
+- DS018 (Ingest) — produces hierarchical KU trees.

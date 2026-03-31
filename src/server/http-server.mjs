@@ -41,7 +41,7 @@ export class MRPServer {
   }
 
   start() {
-    const port = this.config.port || 3000;
+    const port = this.config.port ?? 3000;
     const host = this.config.host || '127.0.0.1';
     this.server = createServer((req, res) => this._handle(req, res));
     this.server.listen(port, host, () => {
@@ -76,11 +76,14 @@ export class MRPServer {
       if (path === '/processing-strategies' && req.method === 'GET') return this._getStrategies(res);
       if (path === '/retrieval-profiles' && req.method === 'GET') return this._getRetrievalProfiles(res);
       if (path === '/kbs' && req.method === 'GET') return this._listKbs(res);
+      if (path === '/kbs' && req.method === 'POST') return await this._createKb(req, res);
+      if (path.match(/^\/sessions\/[^/]+\/kb\/load$/) && req.method === 'POST') return await this._mountKb(req, res, path);
       if (path.match(/^\/sessions\/[^/]+\/kb\/mount$/) && req.method === 'POST') return await this._mountKb(req, res, path);
       if (path.match(/^\/sessions\/[^/]+\/kb\/fork$/) && req.method === 'POST') return await this._forkKb(req, res, path);
       if (path.match(/^\/sessions\/[^/]+\/kb\/save$/) && req.method === 'POST') return await this._saveKb(req, res, path);
+      if (path.match(/^\/sessions\/[^/]+\/context$/) && req.method === 'POST') return await this._loadSessionContext(req, res, path, reqId);
       if (path.match(/^\/sessions\/[^/]+\/workspace$/) && req.method === 'GET') return this._getWorkspace(path, res);
-      if (path.match(/^\/sessions\/[^/]+\/workspace\/sources$/) && req.method === 'POST') return await this._stageWorkspaceSource(req, res, path);
+      if (path.match(/^\/sessions\/[^/]+\/workspace\/sources$/) && req.method === 'POST') return await this._stageWorkspaceSource(req, res, path, reqId);
       if (path === '/eval-sources' && req.method === 'GET') return this._listEvalSources(res);
       if (path === '/health' && req.method === 'GET') return this._json(res, 200, { status: 'ok' });
       if (path === '/ready' && req.method === 'GET') return this._readiness(res);
@@ -304,6 +307,30 @@ export class MRPServer {
     this._json(res, 200, { kbs: this.kbRepositoryManager.listRepositories() });
   }
 
+  async _createKb(req, res) {
+    const body = JSON.parse(await this._readBody(req));
+    const name = String(body.name || '').trim();
+    if (!name) {
+      return this._json(res, 400, {
+        error: {
+          code: 'KB_VALIDATION_MISSING_NAME',
+          message: 'name is required',
+          type: 'invalid_request'
+        }
+      });
+    }
+    const meta = await this.kbRepositoryManager.createEmptyRepository(name);
+    this._json(res, 200, {
+      id: meta.kbId,
+      kb_id: meta.kbId,
+      kb_name: meta.name,
+      created_at: meta.createdAt,
+      updated_at: meta.updatedAt,
+      parent_kb_id: meta.parentKbId || null,
+      is_default: !!meta.isDefault
+    });
+  }
+
   _getWorkspace(path, res) {
     const sessionId = path.split('/')[2];
     const session = this.conversation.getSession(sessionId);
@@ -327,7 +354,10 @@ export class MRPServer {
     if (!body.kb_id) {
       return this._json(res, 400, { error: { code: 'KB_VALIDATION_MISSING_ID', message: 'kb_id is required', type: 'invalid_request' } });
     }
-    const meta = await this.conversation.mountRepository(sessionId, body.kb_id, { discardDraft: !!body.discard_draft });
+    const meta = await this.conversation.mountRepository(sessionId, body.kb_id, {
+      discardDraft: !!body.discard_draft,
+      reason: path.endsWith('/load') ? 'load-api' : 'mount-api'
+    });
     this._json(res, 200, meta);
   }
 
@@ -350,7 +380,7 @@ export class MRPServer {
     this._json(res, 200, meta);
   }
 
-  async _stageWorkspaceSource(req, res, path) {
+  async _stageWorkspaceSource(req, res, path, reqId = null) {
     const sessionId = path.split('/')[2];
     const body = JSON.parse(await this._readBody(req));
     if (!body.name || !body.content) {
@@ -375,12 +405,27 @@ export class MRPServer {
       body.model || null,
       session.preferredModel
     );
+    logger.debug(MOD, 'Workspace source ingest started', {
+      reqId,
+      sessionId,
+      sourceId: effectiveSourceId,
+      sourceName: body.name,
+      seedDetectorPlugin: seedDetectorPluginId
+    });
+    const ingestStartedAt = Date.now();
     const { units } = await this.kbRepositoryManager.ingestor.ingest(
       effectiveSourceId,
       body.content,
       body.name,
       ingestStrategy
     );
+    logger.debug(MOD, 'Workspace source ingest completed', {
+      reqId,
+      sessionId,
+      sourceId: effectiveSourceId,
+      unitCount: units.length,
+      durationMs: Date.now() - ingestStartedAt
+    });
     const meta = await this.conversation.stageWorkspaceSource(
       sessionId,
       body.name,
@@ -409,6 +454,13 @@ export class MRPServer {
 
     for (const plugin of this.pluginRegistry.listByType('kb-plugin')) {
       const instance = this.pluginRegistry.get('kb-plugin', plugin.id);
+      const hookStartedAt = Date.now();
+      logger.debug(MOD, 'Running kb-plugin source-text hook', {
+        reqId,
+        sessionId,
+        sourceId: effectiveSourceId,
+        pluginId: plugin.id
+      });
       await instance?.onSourceText?.({
         sourceId: effectiveSourceId,
         name: body.name,
@@ -416,15 +468,96 @@ export class MRPServer {
         units,
         sessionId
       }, ingestCtx);
+      logger.debug(MOD, 'Completed kb-plugin source-text hook', {
+        reqId,
+        sessionId,
+        sourceId: effectiveSourceId,
+        pluginId: plugin.id,
+        durationMs: Date.now() - hookStartedAt
+      });
     }
 
     const workspace = session.workspace.getStats();
+    logger.debug(MOD, 'Workspace source staged', {
+      reqId,
+      sessionId,
+      sourceId: meta.sourceId,
+      unitCount: meta.unitCount,
+      workspaceDirty: workspace.dirty
+    });
     this._json(res, 200, {
       sourceId: meta.sourceId,
       name: meta.name,
       unitCount: meta.unitCount,
       kb_id: session.mountedKbId,
       workspace_dirty: workspace.dirty,
+      seed_detector_plugin: seedDetectorPluginId
+    });
+  }
+
+  async _loadSessionContext(req, res, path, reqId = null) {
+    const sessionId = path.split('/')[2];
+    const body = JSON.parse(await this._readBody(req));
+    if (!body.content) {
+      return this._json(res, 400, { error: { code: 'INVALID_INPUT', message: 'content is required', type: 'invalid_request' } });
+    }
+    const session = this.conversation.getSession(sessionId);
+    if (!session) {
+      return this._json(res, 410, { error: { code: 'SESSION_EXPIRED', message: 'Session not found or expired', type: 'processing_error' } });
+    }
+
+    const legacySeed = mapLegacyProcessingMode(body.processing_mode).seedDetectorPlugin;
+    const seedDetectorPluginId = body.seed_detector_plugin || session.preferredSeedDetectorPlugin || legacySeed || 'sd-symbolic';
+    const seedPlugin = this.pluginRegistry.get('sd-plugin', seedDetectorPluginId);
+    if (!seedPlugin) {
+      return this._json(res, 400, { error: { code: 'INVALID_SEED_DETECTOR_PLUGIN', message: `Unknown seed detector plugin: ${seedDetectorPluginId}`, type: 'invalid_request' } });
+    }
+    if (!this.kbRepositoryManager?.ingestor) {
+      throw new MRPError('SESSION_INTERNAL_ERROR', MOD, 'Source ingestor not available for session context load');
+    }
+
+    const sourceId = body.source_id || `ctx-${randomUUID().substring(0, 10)}`;
+    const sourceName = body.name || 'session-context.txt';
+    const ingestStrategy = seedPlugin.createIngestStrategy(
+      { modelSettings: this.llmRoleSettings },
+      body.model || null,
+      session.preferredModel
+    );
+    logger.debug(MOD, 'Session context load started', {
+      reqId,
+      sessionId,
+      sourceId,
+      sourceName,
+      seedDetectorPlugin: seedDetectorPluginId
+    });
+    const startedAt = Date.now();
+    const { units } = await this.kbRepositoryManager.ingestor.ingest(
+      sourceId,
+      body.content,
+      sourceName,
+      ingestStrategy
+    );
+    const meta = await this.conversation.importSessionContext(sessionId, units, {
+      reason: 'session-context-api',
+      scope: 'committed-session'
+    });
+    logger.debug(MOD, 'Session context load completed', {
+      reqId,
+      sessionId,
+      sourceId,
+      unitCount: units.length,
+      durationMs: Date.now() - startedAt
+    });
+
+    this._json(res, 200, {
+      session_id: session.sessionId,
+      sourceId,
+      name: sourceName,
+      unitCount: units.length,
+      session_context_unit_count: meta.session_context_unit_count,
+      kb_id: session.mountedKbId,
+      kb_name: session.mountedKbName,
+      workspace_dirty: !!session.workspace?.dirty,
       seed_detector_plugin: seedDetectorPluginId
     });
   }

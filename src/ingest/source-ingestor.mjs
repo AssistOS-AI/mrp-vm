@@ -1,6 +1,7 @@
 // DS018 — Source Ingestion & Chunking
 import { MRPError } from '../lib/errors.mjs';
 import { createHash } from 'node:crypto';
+import { logger } from '../lib/logger.mjs';
 
 export class SourceIngestor {
   constructor(normalizer, config) {
@@ -15,6 +16,19 @@ export class SourceIngestor {
   }
 
   chunk(rawText, filename) {
+    // If the source fits comfortably in a single LLM context, don't chunk at all.
+    // Modern models handle 100K+ tokens; chunking small sources is pure overhead.
+    const singleChunkLimit = this.singleChunkLimit || 50000;
+    if (rawText.length <= singleChunkLimit) {
+      return [{
+        chunkIndex: 0,
+        text: rawText.trim(),
+        chunkType: 'whole-source',
+        sectionTitle: null,
+        charStart: 0,
+        charEnd: rawText.length
+      }];
+    }
     const isMarkdown = filename?.endsWith('.md');
     const chunks = isMarkdown ? this._chunkMarkdown(rawText) : this._chunkPlainText(rawText);
     return this._annotateOffsets(rawText, chunks);
@@ -174,13 +188,23 @@ export class SourceIngestor {
   async ingest(sourceId, rawText, filename, strategy) {
     const startTime = Date.now();
     const rawChunks = this.chunk(rawText, filename);
+    logger.info('ingest', 'Source ingest prepared', {
+      sourceId,
+      filename: filename || null,
+      chunkCount: rawChunks.length,
+      usesLLM: strategy?.usesLLM?.() ?? null,
+      charCount: rawText.length
+    });
     if (rawChunks.length > this.maxLLMCallsPerSource) {
       throw new MRPError('KB_INGEST_TOO_MANY_CHUNKS', 'ingest',
         `Source would produce ${rawChunks.length} chunks, exceeding limit of ${this.maxLLMCallsPerSource}`);
     }
     const allUnits = [];
     const createdAt = new Date().toISOString();
-    for (const chunk of rawChunks) {
+    const { CNLParser } = await import('../parser/cnl-validator-parser.mjs');
+    const parser = new CNLParser();
+
+    const processChunk = async (chunk) => {
       if (Date.now() - startTime > this.ingestTimeoutMs) {
         throw new MRPError('KB_INGEST_TIMEOUT', 'ingest', 'Ingest timeout exceeded');
       }
@@ -196,11 +220,10 @@ export class SourceIngestor {
         createdAt
       };
       const contextCNL = await this.normalizer.toContextCNL(chunk.text, provenance, strategy);
-      // Parse the CNL to get units
-      const { CNLParser } = await import('../parser/cnl-validator-parser.mjs');
-      const parser = new CNLParser();
-      const units = parser.parseContextCNL(contextCNL).map((unit, unitIndex) => ({
+      return parser.parseContextCNL(contextCNL).map((unit, unitIndex) => ({
         ...unit,
+        kuType: unit.kuType || 'atomic',
+        title: unit.title || unit.topic || '',
         sourceName: unit.sourceName || filename || null,
         chunkIndex: unit.chunkIndex ?? chunk.chunkIndex,
         unitIndex: unit.unitIndex ?? unitIndex,
@@ -215,7 +238,14 @@ export class SourceIngestor {
         chunkType: unit.chunkType || chunk.chunkType,
         sectionTitle: unit.sectionTitle || chunk.sectionTitle || null
       }));
-      allUnits.push(...units);
+    };
+
+    // Process chunks in parallel (up to 4 concurrent)
+    const CONCURRENCY = 4;
+    for (let i = 0; i < rawChunks.length; i += CONCURRENCY) {
+      const batch = rawChunks.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(batch.map(processChunk));
+      for (const units of results) allUnits.push(...units);
     }
     // Build hierarchical aggregate units
     const aggregates = this._buildAggregateUnits(sourceId, filename, rawChunks, allUnits, createdAt);
@@ -264,6 +294,8 @@ export class SourceIngestor {
       const acts = [...new Set(sectionUnits.flatMap(u => u.utilityActs || []))];
       aggregates.push({
         id: aggId,
+        kuType: 'composite',
+        title: `Section: ${topic}`,
         sourceId,
         chunkId: sectionUnits[0]?.chunkId || `${sourceId}::chunk-000`,
         role: roles.includes('Narrative') ? 'Narrative' : roles[0] || 'Explanation',
@@ -296,6 +328,8 @@ export class SourceIngestor {
       const topTopics = [...new Set(leafUnits.slice(0, 5).map(u => u.topic))].join(', ');
       aggregates.push({
         id: sourceAggId,
+        kuType: 'aggregate',
+        title: `Source: ${filename || sourceId}`,
         sourceId,
         chunkId: `${sourceId}::chunk-000`,
         role: 'Narrative',

@@ -1,10 +1,10 @@
 {
-  "maxPrimaryLLMStagesPerRequest": 3,
   "maxLLMAttemptsPerRequest": 5,
   "requestTimeoutMs": 60000,
-  "maxValidationCorrectionRetriesPerStage": 1,
   "maxPluginsPerStage": 4,
+  "maxFrameDepth": 3,
   "defaultPlannerPlugin": "planner-default",
+  "plannerFallbackOrder": ["planner-default", "planner-depth"],
   "pluginAllowlist": ["z3-solver"],
   "pluginTimeoutMs": 30000,
   "pluginMemoryLimitMB": 256

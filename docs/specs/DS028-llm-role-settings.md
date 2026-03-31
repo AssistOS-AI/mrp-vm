@@ -18,6 +18,7 @@ resolve models through shared named roles.
 - `kb-ingest`
 - `kb-derive`
 - `planner`
+- `validation`
 
 Projects MAY add more roles, but the core roles above
 must exist.

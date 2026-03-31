@@ -116,6 +116,12 @@ languages.
 |----|------|------|
 | DS015 | [DS015-llmagent-integration.md](docs/specs/DS015-llmagent-integration.md) | AchillesAgentLib integration, model discovery, retries, and role-based model resolution. |
 
+## Knowledge Unit Model
+
+| DS | File | Role |
+|----|------|------|
+| DS030 | [DS030-knowledge-unit.md](docs/specs/DS030-knowledge-unit.md) | Knowledge Unit (KU): hierarchical knowledge abstraction, provenance, and KU-based context construction. |
+
 ---
 
 ## Dependency Diagram
@@ -124,7 +130,7 @@ languages.
 DS013 / DS014
       |
       v
-DS002 Core Kernel
+DS002 Core Kernel (frames + loop)
       |
       +--> DS019 Conversation
       +--> DS003 Typed Plugin System
@@ -132,8 +138,13 @@ DS002 Core Kernel
       |      +--> DS029 Planner Plugins
       |      +--> DS028 LLM Role Settings
       |
+      +--> DS030 Knowledge Unit Model
+      |      +--> DS005 Context CNL (KU serialization)
+      |      +--> DS008 KB substrate
+      |      +--> DS018 KU tree extraction
+      |
       +--> DS006 / DS007 / DS011 shared helpers
-      +--> DS008 / DS010 / DS018 / DS026 KB substrate
+      +--> DS010 persistence
       +--> DS015 Achilles bridge
       |
       +--> DS022 sd/gs plugin families

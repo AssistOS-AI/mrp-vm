@@ -38,6 +38,9 @@ Current baseline status:
   promoted into the target repository plugin subtree
 - on mount, repository plugin artifacts are hydrated
   back into the session workspace
+- session-scoped KB lifecycle events are the trigger
+  by which each `kb-plugin` may refresh its own
+  in-memory caches or persisted derived state
 
 ## Atomicity
 

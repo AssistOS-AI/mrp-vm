@@ -2,32 +2,39 @@
 
 ## Purpose
 Defines the persistent KB substrate used by KB
-plugins.
+plugins, organized around hierarchical Knowledge
+Units (DS030).
 
 ## Storage Model
 
 The KB is natural-language-first and organized around
-semantic units, not raw files and not fixed-size
-token slices.
+Knowledge Units (KUs), not raw files and not
+fixed-size token slices.
 
 The KB stores:
 
-- source semantic units
-- aggregate semantic units
-- derived textual memory units
+- hierarchical KU trees per source
+- session-derived KUs
+- derived textual memory KUs
 - provenance metadata
 - parent/child relations
 - plugin-private artifacts
 
-## Unit Registry
+## KU Registry
 
-The current persisted v1 unit shape is:
+The persisted KU shape follows DS030:
 
 ```javascript
 {
   id,
+  kuType,
+  title,
   sourceId,
   sourceName,
+  sourceType,
+  author,
+  ingestedAt,
+  knowledgeDate,
   chunkId,
   chunkIndex,
   unitIndex,
@@ -56,16 +63,40 @@ The current persisted v1 unit shape is:
 }
 ```
 
-Not every unit source can populate every field, but
-this is the baseline persisted shape for KB-derived
-semantic units.
+Not every KU source can populate every field, but
+this is the baseline persisted shape.
+
+## Hierarchical Structure
+
+For each ingested source, the KB stores a
+hierarchical KU tree:
+
+1. **Leaf KUs** (`kuType: "atomic"`) — semantically
+   coherent knowledge objects. A leaf KU may contain
+   multiple related sentences when they describe the
+   same concept, scene, or entity. The system avoids
+   one KU per sentence unless each sentence carries
+   an independent symbolic fact.
+
+2. **Section aggregates** (`kuType: "composite"`) —
+   summaries of a section or thematic group, with
+   `childUnitIds` pointing to leaf KUs.
+
+3. **Source aggregates** (`kuType: "aggregate"`) —
+   summaries of the whole source, with
+   `childUnitIds` pointing to section aggregates.
+
+When the source material supports it, 2–3
+intermediate levels of abstraction SHOULD be
+produced.
 
 ## KB vs Plugins
 
 The KB substrate owns:
 
+- named repository identities
 - repository/workspace persistence
-- committed semantic units
+- committed KUs
 - shared source metadata
 
 KB plugins own:
@@ -74,29 +105,23 @@ KB plugins own:
 - plugin-private indices
 - derived memories/caches
 - sufficiency logic
+- abstraction-level selection during retrieval
 
 ## Required Relations
 
-The current baseline preserves:
+The baseline preserves:
 
-- where a unit came from (`sourceId`, `chunkId`)
+- where a KU came from (`sourceId`, `chunkId`)
 - which chunk it came from with offsets
 - its source-level identity and hash
 - structural hints: `unitType`, `chunkType`,
   `sectionTitle`
 - hierarchical links: `parentUnitIds` and
-  `childUnitIds` connecting leaf units to section
+  `childUnitIds` connecting leaf KUs to section
   aggregates and section aggregates to source
   aggregates
-
-The ingest pipeline (DS018) now produces three
-levels of units:
-
-1. **Leaf units** — grouped semantic claims
-2. **Section aggregates** — summaries with
-   `childUnitIds` pointing to leaf units
-3. **Source aggregates** — summaries with
-   `childUnitIds` pointing to section aggregates
+- provenance: `sourceName`, `sourceType`, `author`,
+  `ingestedAt`, `knowledgeDate`
 
 KB plugins can traverse these links to expand or
 narrow retrieval granularity per question.
@@ -104,6 +129,7 @@ narrow retrieval granularity per question.
 ## Dependencies
 
 - DS010 — persistence
-- DS018 — unit extraction
+- DS018 — KU tree extraction
 - DS023 — KB plugins
 - DS026 — repository/workspace semantics
+- DS030 — Knowledge Unit model
