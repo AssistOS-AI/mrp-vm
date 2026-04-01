@@ -91,6 +91,16 @@ The planner MUST inspect:
 - explicit request pins and session preferences
 - historical planner/plugin utility
 
+When available, the planner SHOULD treat these as
+distinct guidance channels rather than one undiffer-
+entiated bag of strategy KUs:
+
+- planner guidance
+- goal-solver guidance
+- decomposition guidance
+- validation guidance
+- seed-routing guidance
+
 The planner SHOULD also consume KB-resident strategy
 guidance when available, especially KUs describing:
 
@@ -139,6 +149,24 @@ Backtracking MAY happen:
 
 The core MUST still enforce global budget and safety
 limits.
+
+## Packaging
+
+Each concrete planner plugin SHOULD live in its own
+package directory under:
+
+```text
+src/plugins/mrp-plan-plugin/<planner-id>/
+```
+
+The reference implementation ships:
+
+- `planner-default`
+- `planner-depth`
+
+Both SHOULD be loadable from the same config-driven
+built-in plugin catalog used by the other plugin
+families.
 
 The reference implementation ships two built-in
 planners:
@@ -199,6 +227,11 @@ The planner MUST treat KB-stored procedural and
 evaluation knowledge as first-class planning input,
 not merely as downstream evidence for the final
 answer.
+
+Decomposition guidance may justify opening a child
+frame even when the task is otherwise lexically
+simple. Conversely, explicit direct-dispatch
+guidance may block unnecessary decomposition.
 
 ## Dependencies
 

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { KBRepositoryManager } from '../../src/kb/repository-manager.mjs';
-import { ConversationHandler } from '../../src/conversation/handler.mjs';
-import { TypedPluginRegistry } from '../../src/plugins/typed-registry.mjs';
+import { KBRepositoryManager } from '../../src/core/kb/repository-manager.mjs';
+import { ConversationHandler } from '../../src/core/conversation/handler.mjs';
+import { TypedPluginRegistry } from '../../src/plugins/runtime/typed-registry.mjs';
 
 const tmpRoots = [];
 
@@ -232,6 +232,43 @@ describe('KB repositories and session workspaces', () => {
     assert.equal(preparedExisting.explicitSeedDetectorPlugin, null);
     assert.equal(preparedExisting.explicitKBPlugin, null);
     assert.equal(preparedExisting.explicitGoalSolverPlugin, null);
+  });
+
+  it('leaves plugin preferences unset when a session is created without explicit selections', async () => {
+    const kbConfig = makeKbConfig();
+    const manager = new KBRepositoryManager(null, {}, kbConfig);
+    await manager.boot();
+
+    const conversation = new ConversationHandler({
+      defaultProcessingMode: null,
+      defaultRetrievalProfile: null,
+      defaultSeedDetectorPlugin: null,
+      defaultKBPlugin: null,
+      defaultGoalSolverPlugin: null
+    });
+    conversation.attachKBRepositoryManager(manager);
+
+    const prepared = await conversation.prepareTurn(
+      null,
+      [{ role: 'user', content: 'Diagnose the server issue.' }],
+      null,
+      null,
+      null,
+      'default',
+      null,
+      null,
+      null,
+      null
+    );
+
+    assert.equal(prepared.session.preferredSeedDetectorPlugin, null);
+    assert.equal(prepared.session.preferredKBPlugin, null);
+    assert.equal(prepared.session.preferredGoalSolverPlugin, null);
+    assert.equal(prepared.requestedSeedDetectorPlugin, null);
+    assert.equal(prepared.requestedKBPlugin, null);
+    assert.equal(prepared.requestedGoalSolverPlugin, null);
+    assert.equal(prepared.requestedProcessingMode, null);
+    assert.equal(prepared.requestedRetrievalProfile, null);
   });
 
   it('derives legacy compatibility fields from current plugin selections instead of stale aliases', async () => {

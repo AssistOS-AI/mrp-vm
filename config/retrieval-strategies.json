@@ -22,13 +22,14 @@
       "maxResults": 7,
       "minScore": 0.15,
       "minAcceptableCandidates": 4,
-      "confidenceGapThreshold": 0.35,
+      "confidenceGapThreshold": 0.25,
       "hardSymbolicPruning": false,
       "targetLatencyMs": 500
     },
     "thinkingdb": {
       "primaryStrategies": ["bm25-lexical"],
       "secondaryStrategies": ["thinkingdb-symbolic"],
+      "alwaysRunSecondary": true,
       "allowParallel": false,
       "maxStrategiesPerIntent": 2,
       "maxResults": 8,

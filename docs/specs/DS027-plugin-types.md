@@ -22,6 +22,28 @@ All plugins MUST:
 - publish `plannerHints` in the descriptor (required
   for `sd-plugin`, `kb-plugin`, `gs-plugin`;
   optional for `val-plugin` and `mrp-plan-plugin`)
+- keep SDK/plugin code decoupled from
+  `src/core/platform/**`; plugin-shared SDK modules
+  must rely on injected config and SDK-local errors
+
+## Packaging Rules
+
+Every shipped built-in plugin SHOULD live in its own
+directory under:
+
+```text
+src/plugins/<plugin-type>/<plugin-id>/
+```
+
+Each plugin package SHOULD include:
+
+- `index.mjs`
+- `plugin.json`
+- `plugin.kus.md`
+
+`plugin.kus.md` is the plugin-shipped KU metadata
+surface that explains the plugin's role, tradeoffs,
+and recommended usage to both humans and tooling.
 
 ## `sd-plugin`
 
@@ -61,6 +83,16 @@ granularity:
   Knowledge Units. Related information is grouped
   into useful knowledge objects, not fragmented per
   sentence.
+
+Those KUs SHOULD classify phase relevance through
+`PhaseScopes` whenever the detector can do so
+reliably. Typical examples:
+
+- output-shaping instructions -> `gs-plugin`
+- planning hints -> `mrp-plan-plugin`
+- decomposition hints -> `frame`
+- validation rules -> `val-plugin`
+- factual/evidential context -> `kb-plugin`
 
 The preferred execution model is one detection pass
 that emits both outputs together. For LLM-backed
@@ -121,6 +153,12 @@ KB plugins retrieve hierarchical Knowledge Units
   intermediate, or leaf)
 - whether to load a full KU or only selected child
   fragments when a KU is too large
+
+`ResolvedIntent` SHOULD separate:
+
+- evidence KUs for the goal solver
+- phase-scoped guidance KUs for planner / solver /
+  validation / decomposition
 
 The `retrievalTrace` SHOULD report which KU levels
 were used and how many KUs were considered vs
@@ -186,6 +224,10 @@ resolution, it MAY return
 then creates a child execution frame for the
 sub-task.
 
+Goal solver input SHOULD also include phase-scoped
+guidance KUs that describe output format, answer
+shape, or solving procedure expectations.
+
 ## `val-plugin`
 
 ```javascript
@@ -242,6 +284,9 @@ KB-aware decision. The input SHOULD include:
 - current-turn KUs staged in the session
 - mounted KB identity and session KB metadata
 - any previously retrieved strategy guidance
+- phase-specific guidance arrays for planner,
+  goal-solver, decomposition, validation, and seed
+  routing when available
 - explicit request-level pins
 - session preferences
 

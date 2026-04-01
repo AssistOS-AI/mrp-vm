@@ -1,0 +1,11 @@
+{
+  "id": "planner-default",
+  "type": "mrp-plan-plugin",
+  "name": "Default Planner",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Cheap-first planner with adaptive ranking from historical plugin outcomes.",
+  "plannerStyle": "adaptive-cheap-first",
+  "timeoutMs": 1000
+}
+

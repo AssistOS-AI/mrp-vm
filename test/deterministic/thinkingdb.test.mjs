@@ -1,9 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ThinkingDB } from '../../src/retrieval/thinkingdb.mjs';
-import { ThinkingDBSymbolicStrategy } from '../../src/retrieval/strategies/thinkingdb.mjs';
-import { SymbolicOnlyStrategy } from '../../src/strategies/symbolic-only.mjs';
-import { CNLParser } from '../../src/parser/cnl-validator-parser.mjs';
+import { ThinkingDB } from '../../src/mrp-vm-sdk/retrieval/thinkingdb.mjs';
+import { KBIndex } from '../../src/mrp-vm-sdk/retrieval/kb-index.mjs';
+import { ContextMatcher } from '../../src/mrp-vm-sdk/retrieval/context-matcher.mjs';
+import { RetrievalStrategyRegistry, BM25LexicalStrategy } from '../../src/mrp-vm-sdk/retrieval/strategies/registry.mjs';
+import { ThinkingDBSymbolicStrategy } from '../../src/mrp-vm-sdk/retrieval/strategies/thinkingdb.mjs';
+import { SymbolicOnlyStrategy } from '../../src/mrp-vm-sdk/strategies/symbolic-only.mjs';
+import { CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
 
 const RULES = [
   {
@@ -67,10 +70,10 @@ const UNITS = [
     sourceId: 'src',
     chunkId: 'src::chunk-000',
     role: 'Explanation',
-    topic: 'sandboxing',
-    claim: 'sandboxing is relevant for secure execution.',
+    topic: 'Sandboxing',
+    claim: 'Sandboxing is relevant for secure execution.',
     utilityActs: ['explain'],
-    subject: 'sandboxing',
+    subject: 'Sandboxing',
     relation: 'relevant_for',
     object: 'secure execution',
     confidence: 0.9
@@ -147,6 +150,93 @@ describe('ThinkingDBSymbolicStrategy', () => {
     });
     assert.ok(result.candidates.some(c => c.unitId === 'u2'));
     assert.ok(result.candidates.every(c => typeof c.normalizedScore === 'number'));
+  });
+});
+
+describe('ContextMatcher with ThinkingDB', () => {
+  it('keeps proof-backed base facts even when lexical evidence has a higher top score', async () => {
+    const kbIndex = new KBIndex();
+    kbIndex.rebuild([
+      ...NOISY_UNITS,
+      {
+        id: 'u5',
+        sourceId: 'src',
+        chunkId: 'src::chunk-002',
+        role: 'Explanation',
+        topic: 'AchillesIDE',
+        claim: 'AchillesIDE depends on Ploinky.',
+        utilityActs: ['explain'],
+        subject: 'AchillesIDE',
+        relation: 'depends_on',
+        object: 'Ploinky',
+        confidence: 1
+      },
+      {
+        id: 'u6',
+        sourceId: 'src',
+        chunkId: 'src::chunk-002',
+        role: 'Explanation',
+        topic: 'Ploinky',
+        claim: 'Ploinky depends on KernelX.',
+        utilityActs: ['explain'],
+        subject: 'Ploinky',
+        relation: 'depends_on',
+        object: 'KernelX',
+        confidence: 1
+      }
+    ]);
+
+    const registry = new RetrievalStrategyRegistry();
+    registry.register(new BM25LexicalStrategy({}));
+    registry.register(new ThinkingDBSymbolicStrategy({
+      maxDepth: 3,
+      maxDerivedFactsPerQuery: 16,
+      maxProofs: 16,
+      minConfidence: 0.01,
+      rules: RULES
+    }));
+    registry.setProfiles({
+      thinkingdb: {
+        primaryStrategies: ['bm25-lexical'],
+        secondaryStrategies: ['thinkingdb-symbolic'],
+        alwaysRunSecondary: true,
+        maxResults: 8,
+        minScore: 0.1,
+        minAcceptableCandidates: 6,
+        confidenceGapThreshold: 0.25
+      }
+    });
+
+    const matcher = new ContextMatcher(registry, {});
+    const [resolved] = await matcher.resolve(
+      [{
+        groupNumber: 1,
+        act: 'explain',
+        intent: 'Explain why AchillesIDE is relevant for secure execution.',
+        target: 'why AchillesIDE is relevant for secure execution',
+        criteria: [],
+        evidence: [],
+        explicitContext: null,
+        outputType: 'Structured response.'
+      }],
+      [{
+        intentGroupNumber: 1,
+        neededRoles: ['Explanation', 'Diagnostic', 'Narrative'],
+        queryText: 'why AchillesIDE is relevant for secure execution',
+        queryTerms: ['achilleside', 'relevant', 'secure', 'execution', 'depends', 'dependency', 'provides'],
+        focusTerms: ['achilleside'],
+        focusPhrases: ['achilleside'],
+        actBoost: 'explain',
+        maxResults: 10
+      }],
+      [],
+      { sessionIndex: null },
+      'thinkingdb',
+      kbIndex
+    );
+
+    assert.ok(resolved.kbUnits.some(entry => entry.unitId === 'u2'));
+    assert.ok(resolved.kbUnits.some(entry => entry.unitId === 'u3'));
   });
 });
 

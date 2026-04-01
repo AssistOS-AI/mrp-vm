@@ -6,8 +6,8 @@
   "defaultProcessingMode": null,
   "defaultRetrievalProfile": null,
   "defaultPlannerPlugin": "planner-default",
-  "defaultSeedDetectorPlugin": "sd-llm-fast",
-  "defaultKBPlugin": "kb-balanced",
-  "defaultGoalSolverPlugin": "gs-llm-fast",
+  "defaultSeedDetectorPlugin": null,
+  "defaultKBPlugin": null,
+  "defaultGoalSolverPlugin": null,
   "maxSessions": 1000
 }

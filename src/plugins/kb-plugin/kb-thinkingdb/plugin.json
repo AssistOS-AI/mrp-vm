@@ -1,0 +1,22 @@
+{
+  "id": "kb-thinkingdb",
+  "type": "kb-plugin",
+  "name": "ThinkingDB KB Retrieval",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Lexical plus bounded symbolic closure. Best for multi-hop, relation-sensitive, or proof-bearing retrieval tasks.",
+  "costClass": "expensive",
+  "profileId": "thinkingdb",
+  "plannerHints": {
+    "expectedLatencyMs": 220,
+    "expectedLLMCalls": 0,
+    "relativeCost": 0.35,
+    "supportedActs": ["compare", "diagnose", "explain", "recommend", "verify"],
+    "topicTags": ["symbolic", "technical", "legal"],
+    "preferredDepth": "deep",
+    "evidenceStyle": ["hybrid", "symbolic-facts"],
+    "fallbackRole": "heavy-recovery",
+    "confidenceWhenMatched": 0.84
+  }
+}
+

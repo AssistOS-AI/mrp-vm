@@ -79,7 +79,9 @@ enough historical learning has accumulated.
 
 ### Built-in plugins
 
-Registered programmatically at boot.
+Registered at boot from a config-driven built-in
+catalog rather than a monolithic hard-coded
+registration block.
 
 ### External wrapper plugins
 
@@ -95,6 +97,45 @@ manifest declaring:
 Wrapper plugins are trusted components gated by
 allowlist, timeout, input size, and manifest
 validation. There is still no OS-level sandboxing.
+
+## Repository Layout & Packaging
+
+The reference repository SHOULD package built-in
+plugins under:
+
+```text
+src/plugins/<plugin-type>/<plugin-id>/
+```
+
+Each shipped plugin package SHOULD contain at least:
+
+```text
+index.mjs
+plugin.json
+plugin.kus.md
+```
+
+Where:
+
+- `index.mjs` exports the plugin factory or plugin
+  object
+- `plugin.json` carries the plugin-local manifest /
+  descriptor seed
+- `plugin.kus.md` ships one or more KUs describing
+  what the plugin does and when it is useful
+
+Plugin-shared helpers used across multiple plugin
+families SHOULD live under `src/mrp-vm-sdk/**`.
+
+`src/mrp-vm-sdk/**` MUST NOT import runtime platform
+helpers from `src/core/platform/**` directly.
+Configuration and platform concerns must be injected
+from core boot wiring.
+
+The built-in catalog SHOULD be loaded from
+`config/plugins.json` (or an equivalent config file)
+so the server boot path does not have to hard-code
+every built-in plugin.
 
 ## Runtime Context
 
@@ -118,6 +159,14 @@ plugin call:
 Additional fields MAY be added later, but plugins
 must treat the context as read-only except for
 explicit callback surfaces.
+
+The VM remains agnostic to the internal syntax of
+payloads exchanged between plugins. In the baseline,
+those payloads are natural-language CNL blocks; a
+future deployment may substitute a more formal IR for
+specific domains without changing the core contract
+that the VM only manages boundaries, not payload
+semantics.
 
 The source-text ingest hook currently receives a
 documented subset plus ingest-specific additions:

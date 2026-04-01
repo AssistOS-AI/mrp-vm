@@ -1,0 +1,22 @@
+{
+  "id": "kb-balanced",
+  "type": "kb-plugin",
+  "name": "Balanced KB Retrieval",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Lexical plus associative retrieval with diversity-aware reranking. Recommended default for moderate-complexity questions.",
+  "costClass": "moderate",
+  "profileId": "balanced",
+  "plannerHints": {
+    "expectedLatencyMs": 120,
+    "expectedLLMCalls": 0,
+    "relativeCost": 0.22,
+    "supportedActs": ["compare", "define", "describe", "explain", "identify", "recommend"],
+    "topicTags": ["technical", "legal", "literature", "procedural"],
+    "preferredDepth": "medium",
+    "evidenceStyle": ["lexical", "hybrid"],
+    "fallbackRole": "default",
+    "confidenceWhenMatched": 0.76
+  }
+}
+

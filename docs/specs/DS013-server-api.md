@@ -18,7 +18,8 @@ typed plugin selections and shared settings.
   "model": "provider/model-name",
   "messages": [
     { "role": "user", "content": "..." }
-  ]
+  ],
+  "stream": true
 }
 ```
 
@@ -43,6 +44,22 @@ Rules:
 - legacy discovery endpoints MAY remain temporarily:
   `GET /processing-strategies` and
   `GET /retrieval-profiles`
+
+If `stream: true`, the server MUST return an SSE
+stream rather than a buffered JSON response.
+
+Minimum SSE events:
+
+- `progress` — overwrite-friendly execution status
+- `response.meta` — session/plugin metadata
+- `response.delta` — response text deltas
+- `response.completed` — final completion payload
+- `error` — terminal structured error
+
+If a stale or missing `session_id` is supplied, the
+API SHOULD return a structured `SESSION_NOT_FOUND` or
+`SESSION_EXPIRED` error instead of a generic combined
+message so clients can auto-recover safely.
 
 During a normal chat turn, the selected `sd-plugin`
 SHOULD emit both problem seeds and current-turn KUs
@@ -81,6 +98,13 @@ Structured error payloads SHOULD expose the full
 - `GET /plugins?type=kb-plugin`
 - `GET /plugins?type=gs-plugin`
 - `GET /plugins?type=mrp-plan-plugin`
+
+These discovery surfaces SHOULD reflect the
+config-driven built-in plugin catalog plus any
+validated external wrappers that are registered into
+the typed plugin runtime. The reference server
+should not require a monolithic hard-coded
+registration block in the boot module.
 
 Legacy discovery endpoints remain compatibility-only
 surfaces derived from alias mappings plus the typed

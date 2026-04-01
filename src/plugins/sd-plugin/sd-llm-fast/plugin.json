@@ -1,0 +1,23 @@
+{
+  "id": "sd-llm-fast",
+  "type": "sd-plugin",
+  "name": "Fast LLM Seed Detector",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Lightweight LLM-backed extraction of problem seeds and session knowledge units in one pass.",
+  "costClass": "moderate",
+  "strategyId": "llm-assisted",
+  "modelRole": "seed-fast",
+  "ingestModelRole": "kb-ingest",
+  "plannerHints": {
+    "expectedLatencyMs": 800,
+    "expectedLLMCalls": 1,
+    "relativeCost": 0.35,
+    "supportedActs": ["compare", "define", "explain", "identify", "recommend", "verify"],
+    "topicTags": ["general", "technical", "literature"],
+    "preferredDepth": "medium",
+    "fallbackRole": "default",
+    "confidenceWhenMatched": 0.72
+  }
+}
+

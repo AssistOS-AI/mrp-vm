@@ -40,6 +40,7 @@ Relation: <canonical symbolic relation, optional>
 Object: <canonical symbolic object, optional>
 Confidence: <0..1 confidence for symbolic fact, optional>
 UtilityActs: <list of pragmatic acts served>
+PhaseScopes: <optional CSV of plugin phases served>
 UtilityNote: <optional free-text explanation>
 Hash: <optional deterministic content hash>
 SourceName: <optional source file name>
@@ -78,6 +79,11 @@ SectionTitle: <optional enclosing section title>
 | Confidence  | No***    | Numeric confidence in `[0, 1]`     |
 | UtilityActs | No       | Pragmatic acts served (CSV).       |
 |             |          | Inferred from Role if absent.      |
+| PhaseScopes | No       | Which plugin phases should consume |
+|             |          | this KU (`sd-plugin`,              |
+|             |          | `mrp-plan-plugin`, `kb-plugin`,    |
+|             |          | `gs-plugin`, `frame`,              |
+|             |          | `val-plugin`).                     |
 | UtilityNote | No       | Free-text explanation              |
 | Hash        | No       | Content hash for deduplication     |
 
@@ -135,6 +141,29 @@ UtilityNote: Useful when evaluating retrieval
 This enables structural matching between the
 intent's pragmatic act and the context unit's
 utility.
+
+## PhaseScopes — Stage Relevance
+
+`PhaseScopes` is an optional CSV field describing
+which plugin phases should treat the KU as guidance
+rather than as ordinary retrieval evidence.
+
+Example:
+
+```markdown
+PhaseScopes: mrp-plan-plugin, gs-plugin
+```
+
+Rules:
+
+- when omitted, consumers MAY infer phase relevance
+  heuristically from role and content
+- a KU may still be factual evidence for `kb-plugin`
+  retrieval even if it also carries guidance scopes
+- output-format instructions SHOULD typically include
+  `gs-plugin`
+- decomposition instructions SHOULD typically
+  include `frame`
 
 ## Optional Symbolic Fact Block
 

@@ -1,0 +1,21 @@
+{
+  "id": "gs-symbolic",
+  "type": "gs-plugin",
+  "name": "Symbolic Goal Solver",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Deterministic answer assembly from retrieved evidence. No LLM cost. Produces structured answers from KB claims.",
+  "costClass": "cheap",
+  "strategyId": "symbolic-only",
+  "plannerHints": {
+    "expectedLatencyMs": 25,
+    "expectedLLMCalls": 0,
+    "relativeCost": 0.05,
+    "supportedActs": ["verify", "define", "identify", "describe", "explain"],
+    "topicTags": ["symbolic", "technical", "procedural"],
+    "preferredDepth": "shallow",
+    "fallbackRole": "cheap-probe",
+    "confidenceWhenMatched": 0.78
+  }
+}
+

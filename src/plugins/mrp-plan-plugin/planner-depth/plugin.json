@@ -1,0 +1,11 @@
+{
+  "id": "planner-depth",
+  "type": "mrp-plan-plugin",
+  "name": "Depth Planner",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Heavy-first fallback planner for multi-hop or recovery paths.",
+  "plannerStyle": "deep-first",
+  "timeoutMs": 1000
+}
+

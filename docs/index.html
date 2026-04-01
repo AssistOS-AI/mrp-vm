@@ -13,6 +13,16 @@
 .card h3{margin:0 0 .3rem;color:var(--accent)}
 .card p{font-size:.88rem;margin:0}
 .card .badge{float:right;margin-top:2px}
+.hero{display:grid;grid-template-columns:1.4fr .9fr;gap:1rem;margin:1.2rem 0 1rem}
+.hero-copy{padding:1.2rem;border:1px solid var(--border);border-radius:14px;background:linear-gradient(140deg,#0f172a,#1e293b);color:#e2e8f0;box-shadow:var(--shadow)}
+.hero-copy h1{margin:0 0 .6rem;color:#f8fafc}
+.hero-copy p{margin:.45rem 0;line-height:1.6}
+.hero-panel{padding:1rem;border:1px solid var(--border);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}
+.hero-panel h2{margin:0 0 .6rem}
+.hero-list{display:grid;gap:.55rem;font-size:.9rem}
+.hero-list strong{color:var(--accent)}
+.callout{margin:1rem 0;padding:1rem 1.1rem;border-left:4px solid var(--accent);background:var(--card);border-radius:10px;box-shadow:var(--shadow)}
+@media (max-width: 860px){.hero{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -30,50 +40,69 @@
   <a href="concepts/evaluation.html">Evaluation</a>
 </nav>
 
-<h1>MRP-VM Documentation</h1>
-<p>MRP-VM (Meta-Rational-Pragmatics Virtual Machine) processes natural language requests through a multi-phase pipeline: intent decomposition, CNL normalization, Knowledge Base retrieval, and answer synthesis. It uses external plugins for specialized interpretation and communicates with LLMs exclusively through AchillesAgentLib.</p>
+<section class="hero">
+  <div class="hero-copy">
+    <h1>MRP-VM Documentation</h1>
+    <p>MRP-VM is a thin execution kernel for typed plugins. The VM owns session state, execution frames, request-global budgets, tracing, and the AchillesAgentLib bridge.</p>
+    <p>Everything that looks like "reasoning policy" belongs to plugins: seed extraction, KB indexing, retrieval, solver choice, answer shaping, and validation. The VM glues plugin stages together and remains agnostic to the payload semantics beyond plugin-type boundaries.</p>
+    <p>The default system still speaks natural-language CNL between plugins, but the architecture is intentionally open to more formal IRs for domains such as logic or mathematics without changing the VM's orchestration role.</p>
+  </div>
+  <aside class="hero-panel">
+    <h2>Responsibility Boundary</h2>
+    <div class="hero-list">
+      <div><strong>VM owns:</strong> frames, loops, budgets, session/workspace state, tracing, shared LLM roles.</div>
+      <div><strong>Plugins own:</strong> KB indexing, retrieval policy, decomposition policy, solver heuristics, validation logic.</div>
+      <div><strong>KU routing:</strong> phase-aware KUs can target planner, KB, solver, decomposition, or validation.</div>
+      <div><strong>Default docs:</strong> built-in plugins have explicit DS coverage; plugin-private backends are documented at plugin level, not as VM internals.</div>
+    </div>
+  </aside>
+</section>
 
-<h2>Overview (High-Level)</h2>
+<div class="callout">
+  Start with <a href="overview/vm-execution.html">VM Execution Model</a> for the kernel boundary, then read <a href="architecture/plugin-guide.html">Plugin Development Guide</a> for the concrete repository layout: <code>src/core/**</code>, <code>src/plugins/&lt;type&gt;/&lt;id&gt;/**</code>, and <code>src/mrp-vm-sdk/**</code>.
+</div>
+
+<h2>Architecture Vision</h2>
 <div class="cards">
   <div class="card"><a href="overview/ARCH-VM.html">
     <h3>The Vision <span class="badge done">done</span></h3>
-    <p>MRP-VM as a governed neuro-symbolic control layer. Architecture diagram and component overview.</p>
+    <p>Kernel-first view of MRP-VM: the VM as an orchestration substrate rather than a hidden reasoning engine.</p>
   </a></div>
   <div class="card"><a href="overview/vm-execution.html">
     <h3>VM Execution Model <span class="badge done">done</span></h3>
-    <p>Standard execution loop, execution frames, recursive resolution, Knowledge Units, inter-plugin communication.</p>
+    <p>Request-global budgets, execution frames, child-frame replanning, and plugin-to-plugin glue via typed stage contracts.</p>
   </a></div>
   <div class="card"><a href="overview/PIPELINE.html">
     <h3>Execution Pipeline <span class="badge done">done</span></h3>
-    <p>The lifecycle of an intent: from raw NL to grounded answer in 5 phases.</p>
+    <p>Turn lifecycle from seed bundle to grounded answer, including streaming progress and stage backtracking.</p>
   </a></div>
   <div class="card"><a href="overview/RETRIEVAL.html">
     <h3>Knowledge &amp; Retrieval <span class="badge done">done</span></h3>
-    <p>Two evidence stores, lexical and associative retrieval, and an evolving symbolic retrieval direction.</p>
+    <p>KU-centric retrieval where built-in KB plugins own indexing, backends, and sufficiency logic.</p>
   </a></div>
   <div class="card"><a href="overview/plugin-inventory.html">
     <h3>Plugin Inventory <span class="badge done">done</span></h3>
-    <p>All built-in plugins, plugin categories, how to build a plugin tutorial, configuration and testing guide.</p>
+    <p>Built-in plugins and their intended roles, including which DS documents define their default behavior.</p>
   </a></div>
   <div class="card"><a href="overview/PLUGINS.html">
     <h3>External Interpreters <span class="badge done">done</span></h3>
-    <p>External interpreter plugins for symbolic grounding: Z3, custom code, any language.</p>
+    <p>Wrapper conventions for external helpers and typed plugin integration without expanding VM responsibilities.</p>
   </a></div>
 </div>
 
-<h2>Architecture (Detailed)</h2>
+<h2>Build Plugins</h2>
 <div class="cards">
   <div class="card"><a href="architecture/engine.html">
     <h3>Core Engine &amp; Pipeline <span class="badge done">done</span></h3>
-    <p>12-phase processing pipeline, LLM budget, boot sequence, and failure handling.</p>
+    <p>Detailed kernel behavior: execution loop, planner retries, child frames, validation, and request timeouts.</p>
   </a></div>
   <div class="card"><a href="architecture/plugin-guide.html">
     <h3>Plugin Development Guide <span class="badge done">done</span></h3>
-    <p>Build external interpreter plugins: manifest, protocol I/O, dispatch, and security.</p>
+    <p>Step-by-step tutorial for `sd-plugin`, `kb-plugin`, `gs-plugin`, `mrp-plan-plugin`, and `val-plugin` authors.</p>
   </a></div>
   <div class="card"><a href="architecture/session-lifecycle.html">
     <h3>Session Lifecycle <span class="badge done">done</span></h3>
-    <p>In-memory session management, turn preparation, commit, expiration, and context store.</p>
+    <p>How sessions, mounted KBs, workspace drafts, and staged KUs evolve across chat turns.</p>
   </a></div>
 </div>
 
@@ -81,23 +110,23 @@
 <div class="cards">
   <div class="card"><a href="concepts/cnl-formats.html">
     <h3>CNL Formats <span class="badge done">done</span></h3>
-    <p>Intent CNL and Context CNL structure, fields, pragmatic acts, and provenance.</p>
+    <p>Intent CNL, Context CNL, KU provenance, and phase-scoped guidance fields such as `PhaseScopes`.</p>
   </a></div>
   <div class="card"><a href="concepts/retrieval-algorithms.html">
     <h3>Retrieval Algorithms <span class="badge done">done</span></h3>
-    <p>BM25 indexing, HDC/VSA associative retrieval, symbolic retrieval planning, fusion rules, and curated risk profiles.</p>
+    <p>Plugin-private backends for lexical, associative, and symbolic retrieval rather than VM-owned algorithms.</p>
   </a></div>
   <div class="card"><a href="concepts/processing-modes.html">
     <h3>Plugin Types &amp; Strategies <span class="badge done">done</span></h3>
-    <p>Four typed plugin families, multiple implementations per type, fallback and backtracking semantics.</p>
+    <p>The five typed plugin families and how planners route between their concrete implementations.</p>
   </a></div>
   <div class="card"><a href="concepts/planner.html">
     <h3>Meta-Rational Planning <span class="badge done">done</span></h3>
-    <p>Adaptive plugin ordering, task signal detection, plannerHints, EWMA learning, cross-planner backtracking.</p>
+    <p>Adaptive plugin ordering driven by task signals, KU guidance buckets, planner hints, and historical outcomes.</p>
   </a></div>
   <div class="card"><a href="concepts/evaluation.html">
     <h3>Evaluation <span class="badge done">done</span></h3>
-    <p>Planner-centric behavioral evaluation, plugin combo testing, answer and context quality metrics.</p>
+    <p>Planner-centric evaluation plus regression coverage for budgets, child frames, ingest safety, and chat streaming.</p>
   </a></div>
   <div class="card"><a href="concepts/llm-cache.html">
     <h3>LLM Cache <span class="badge done">done</span></h3>

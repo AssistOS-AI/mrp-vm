@@ -104,6 +104,8 @@ facts directly; its children do.
 
 - `utilityActs` — list of pragmatic acts served
   (from DS004 enum)
+- `phaseScopes` — optional list of plugin phases for
+  which this KU is specifically relevant as guidance
 - `utilityNote` — free-text explanation (optional)
 
 ### Integrity
@@ -179,6 +181,15 @@ Session KUs follow the same structure but carry:
 
 Session KUs are typically atomic but MAY be composite
 when the user provides a block of related context.
+
+They MAY also carry phase-scoping metadata when a
+seed detector can distinguish:
+
+- factual retrieval context
+- output-shaping instructions
+- planning hints
+- decomposition hints
+- validation rules
 
 ## KU in Persistent KB
 

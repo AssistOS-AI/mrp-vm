@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MRP-VM Chat</title>
+  <link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+  <header>
+    <h1>MRP-VM</h1>
+    <div id="session-badge" aria-live="polite">No session</div>
+    <div id="kb-badge" aria-live="polite">KB: default</div>
+    <div id="workspace-badge" aria-live="polite">Draft: none</div>
+    <button id="new-session-btn" aria-label="Start new session">New Session</button>
+  </header>
+  <main>
+    <div id="config-bar">
+      <label for="planner-select">Planner:</label>
+      <select id="planner-select" aria-label="Planner plugin"></select>
+      <label for="seed-select">Seed Detector:</label>
+      <select id="seed-select" aria-label="Seed detector plugin"></select>
+      <label for="kb-plugin-select">KB Plugin:</label>
+      <select id="kb-plugin-select" aria-label="KB plugin"></select>
+      <label for="goal-select">Goal:</label>
+      <select id="goal-select" aria-label="Goal solver plugin"></select>
+      <button id="settings-toggle" type="button" aria-label="Open settings">Settings</button>
+      <button id="reset-config" type="button" aria-label="Reset to defaults">Reset</button>
+    </div>
+    <div id="concept-hint" aria-live="polite">
+      Each user turn is parsed once into problem seeds and session knowledge units. KB repositories are loaded, saved, and forked per session.
+    </div>
+    <section id="settings-panel" class="hidden" aria-label="LLM role settings">
+      <h2>LLM Role Settings</h2>
+      <div class="settings-grid">
+        <label for="role-seed-fast">Seed Fast</label>
+        <select id="role-seed-fast" data-role="seed-fast"></select>
+        <label for="role-seed-deep">Seed Deep</label>
+        <select id="role-seed-deep" data-role="seed-deep"></select>
+        <label for="role-goal-fast">Goal Fast</label>
+        <select id="role-goal-fast" data-role="goal-fast"></select>
+        <label for="role-goal-deep">Goal Deep</label>
+        <select id="role-goal-deep" data-role="goal-deep"></select>
+        <label for="role-kb-ingest">KB Ingest</label>
+        <select id="role-kb-ingest" data-role="kb-ingest"></select>
+        <label for="role-kb-derive">KB Derive</label>
+        <select id="role-kb-derive" data-role="kb-derive"></select>
+        <label for="role-planner">Planner</label>
+        <select id="role-planner" data-role="planner"></select>
+        <label for="role-validation">Validation</label>
+        <select id="role-validation" data-role="validation"></select>
+      </div>
+      <div class="settings-actions">
+        <button id="save-settings-btn" type="button">Save Settings</button>
+      </div>
+    </section>
+    <div id="kb-bar">
+      <label for="kb-select">KB:</label>
+      <select id="kb-select" aria-label="Mounted knowledge base"></select>
+      <button id="new-kb-btn" type="button">New KB</button>
+      <button id="load-kb-btn" type="button">Load KB</button>
+      <button id="fork-kb-btn" type="button">Fork KB</button>
+      <button id="save-kb-btn" type="button">Save KB</button>
+    </div>
+    <section id="thinking-panel" class="hidden" aria-live="polite">
+      <div class="thinking-label">Execution Stream</div>
+      <div id="thinking-text"></div>
+    </section>
+    <div id="messages" role="log" aria-live="polite"></div>
+    <div id="loading" class="hidden" aria-live="assertive">Processing…</div>
+    <div id="error-bar" class="hidden" role="alert"></div>
+    <form id="chat-form">
+      <label for="user-input" class="sr-only">Message</label>
+      <textarea id="user-input" placeholder="Type your message…" rows="2" required aria-label="Message input"></textarea>
+      <button type="submit" aria-label="Send message">Send</button>
+        <div id="attach-menu-wrap">
+          <button type="button" id="attach-btn" aria-label="Attach file">+</button>
+          <button type="button" id="eval-btn" aria-label="Load eval example">📄</button>
+          <div id="eval-dropdown" class="hidden"></div>
+          <input type="file" id="file-input" accept=".md,.txt,.nl" class="sr-only">
+        </div>
+    </form>
+  </main>
+  <script src="/ui/chat.js"></script>
+</body>
+</html>

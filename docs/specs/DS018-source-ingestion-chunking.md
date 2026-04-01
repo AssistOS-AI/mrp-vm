@@ -99,6 +99,19 @@ their containing aggregate. Section aggregates carry
 8. KB plugins may build plugin-private indices or
    derived memory.
 
+## Chunk Safety Rule
+
+Any optimization that keeps a source as a single
+chunk MUST still honor the maximum input size
+accepted by the active normalization surface
+(DS006).
+
+The ingest layer MUST therefore use a downstream-safe
+single-chunk ceiling, not an independent guess about
+what a model might support in theory. Sources above
+that ceiling MUST be chunked before calling
+`toContextCNL()`.
+
 ## Provenance Surface
 
 For each KU, the ingest pipeline materializes:

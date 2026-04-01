@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plugin Development Guide — MRP-VM</title>
 <link rel="stylesheet" href="../assets/docs.css">
+<style>
+.hero{display:grid;grid-template-columns:1.3fr .9fr;gap:1rem;margin:1rem 0 1.2rem}
+.panel{border:1px solid var(--border);border-radius:14px;background:var(--card);padding:1rem 1.1rem;box-shadow:var(--shadow)}
+.hero .panel:first-child{background:linear-gradient(145deg,#0f172a,#1e293b);color:#e2e8f0}
+.hero h1{margin:0 0 .55rem}
+.hero p{line-height:1.6;margin:.45rem 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin:1rem 0}
+.card{border:1px solid var(--border);border-radius:12px;padding:1rem;background:var(--card);box-shadow:var(--shadow)}
+.card h3{margin:0 0 .45rem;color:var(--accent)}
+.card p{margin:0;line-height:1.55}
+pre{overflow:auto}
+table code, pre code{font-size:.9em}
+@media (max-width: 860px){.hero{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
 <div class="page">
@@ -14,157 +28,157 @@
   <a href="engine.html">Engine</a>
   <a href="../concepts/cnl-formats.html">CNL Formats</a>
   <a href="../concepts/retrieval-algorithms.html">Retrieval</a>
-  <a href="../concepts/processing-modes.html">Processing Modes</a>
+  <a href="../concepts/processing-modes.html">Plugin Types</a>
   <a href="plugin-guide.html" class="current">Plugins</a>
   <a href="session-lifecycle.html">Sessions</a>
-  <a href="../future/agentic-loops.html">Agentic Loops</a>
-  <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="../future/thinkingdb.html">ThinkingDB</a>
+  <a href="../concepts/planner.html">Planner</a>
   <a href="../concepts/evaluation.html">Evaluation</a>
-  <a href="../concepts/llm-cache.html">LLM Cache</a>
 </nav>
 
-<h1>Plugin Development Guide <span class="badge done">IMPLEMENTED</span></h1>
+<section class="hero">
+  <div class="panel">
+    <h1>Plugin Development Guide</h1>
+    <p>MRP-VM is a typed plugin kernel. The VM does not own retrieval, indexing, decomposition policy, solver heuristics, or answer format logic. Those live inside plugins.</p>
+    <p>This guide shows how to build each plugin family, where the files usually live, which metadata is required, and which configuration surfaces matter for the default system.</p>
+  </div>
+  <aside class="panel">
+    <h2>Kernel Boundary</h2>
+    <ul>
+      <li><strong>VM owns:</strong> frames, budgets, tracing, session/workspace state, shared LLM role settings.</li>
+      <li><strong>Plugins own:</strong> seed extraction, KB backends, planner policy, solver policy, validation policy.</li>
+      <li><strong>Payloads:</strong> the baseline uses Intent CNL and Context CNL, but the VM is agnostic beyond stage boundaries.</li>
+    </ul>
+  </aside>
+</section>
 
-<h2>1. What is a Plugin</h2>
-<p>A plugin is an external process that receives a resolved intent bundle on stdin (CNL Markdown) and returns a processing result on stdout. Plugins can be written in any language (Node.js, Python, Rust, etc.) as long as they follow the wrapper convention. They complement retrieval with specialized processing — they do not replace it.</p>
+<h2>Typical Built-In Layout</h2>
+<pre><code>src/
+  core/
+    boot/                    # core boot sequence
+    conversation/            # session lifecycle
+    engine/                  # request/frame execution kernel
+    ingest/                  # source ingest orchestration
+    kb/                      # repositories, persistence, workspaces
+  mrp-vm-sdk/
+    knowledge/               # KU/pragmatics helpers shared by plugins
+    retrieval/               # shared retrieval helpers/backends
+    strategies/              # shared NL/CNL strategy implementations
+    synthesis/               # shared answer composition helpers
+  plugins/
+    runtime/                 # plugin loader, registry, wrapper runtime
+    sd-plugin/sd-symbolic/
+    sd-plugin/sd-llm-fast/
+    kb-plugin/kb-fast/
+    kb-plugin/kb-balanced/
+    gs-plugin/gs-symbolic/
+    mrp-plan-plugin/planner-default/
+config/
+  plugins.json               # built-in plugin catalog + fallback orders
+  conversation.json          # session defaults
+  prompts/*.md               # LLM prompt templates</code></pre>
 
-<h2>2. Directory Structure</h2>
-<pre><code>wrappers/&lt;plugin-name&gt;/
-├── manifest.json       # Plugin metadata and dispatch config
-├── wrapper.js          # Entry point (or wrapper.py, etc.)
-└── README.md           # Plugin documentation</code></pre>
-<p>The engine auto-discovers plugins by scanning <code>wrappers/</code> at boot. Each subdirectory must contain a valid <code>manifest.json</code>.</p>
-
-<h2>3. manifest.json Reference</h2>
-
-<table>
-<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
-<tr><td><code>name</code></td><td>string</td><td>Yes</td><td>Unique plugin identifier</td></tr>
-<tr><td><code>version</code></td><td>string</td><td>Yes</td><td>Semver version</td></tr>
-<tr><td><code>protocolVersion</code></td><td>number</td><td>Yes</td><td>I/O protocol version (must be <code>1</code>)</td></tr>
-<tr><td><code>capabilities</code></td><td>string[]</td><td>Yes</td><td>Capabilities this plugin provides (e.g. <code>"logical-constraint"</code>, <code>"sat-check"</code>)</td></tr>
-<tr><td><code>keywords</code></td><td>string[]</td><td>Yes</td><td>Keywords for keyword-based dispatch matching</td></tr>
-<tr><td><code>command</code></td><td>string</td><td>Yes</td><td>Executable to run (e.g. <code>"node"</code>). No <code>..</code> or absolute paths allowed</td></tr>
-<tr><td><code>args</code></td><td>string[]</td><td>Yes</td><td>Arguments passed to the command (e.g. <code>["wrapper.js"]</code>)</td></tr>
-<tr><td><code>timeout</code></td><td>number</td><td>Yes</td><td>Max execution time in ms</td></tr>
-<tr><td><code>priority</code></td><td>number</td><td>Yes</td><td>Dispatch priority (higher = more preferred)</td></tr>
-<tr><td><code>exclusive</code></td><td>boolean</td><td>No</td><td>Reserved for future multi-plugin orchestration; ignored in v1</td></tr>
-<tr><td><code>maxInputSizeBytes</code></td><td>number</td><td>Yes</td><td>Max stdin payload size. Exceeding returns <code>PLUGIN_INPUT_TOO_LARGE</code></td></tr>
-<tr><td><code>description</code></td><td>string</td><td>No</td><td>Short human-readable description</td></tr>
-</table>
-
-<p>Example:</p>
-<pre><code>{
-  "name": "z3-solver",
-  "version": "0.1.0",
-  "protocolVersion": 1,
-  "capabilities": ["logical-constraint", "sat-check"],
-  "keywords": ["constraint", "satisfiable", "prove"],
-  "command": "node",
-  "args": ["wrapper.js"],
-  "timeout": 30000,
-  "priority": 10,
-  "exclusive": false,
-  "maxInputSizeBytes": 65536,
-  "description": "Z3 SMT solver wrapper"
-}</code></pre>
-
-<h2>4. Protocol I/O <span class="badge done">IMPLEMENTED</span></h2>
-
-<h3>Input (stdin)</h3>
-<p>The plugin receives <code>resolvedMarkdown</code> from DS012 — a Markdown document containing the normalized intent and all evidence layers. Encoding: UTF-8. Terminated with EOF (close stdin).</p>
-
-<pre><code>## Resolved Intent Group 1
-Act: verify
-Intent: Verify that constraint X is satisfiable.
-Output: Verification result.
-
-### Current-Turn Context
-#### sess-abc123::turn-003::unit-000
-Role: Constraint
-Claim: Variables are integers.
-
-### Session Context
-#### sess-abc123::turn-001::unit-000 (score: 0.74)
-Role: Condition
-Claim: All values must be positive.
-
-### Persistent KB Context
-#### src-001::chunk-000::unit-000 (score: 0.87)
-Role: Constraint
-Source: rules.md
-Claim: a + b must equal c.</code></pre>
-
-<h3>Output (stdout)</h3>
-<p>CNL Markdown with the processing result:</p>
-
-<pre><code>## Plugin Result
-Status: success
-Plugin: z3-solver
-Confidence: high
-Result: Constraint is satisfiable.
-Evidence: Z3 returned SAT in 12ms.</code></pre>
-
-<p>Output fields:</p>
-<ul>
-  <li><code>Status</code> — required: <code>success</code> | <code>error</code></li>
-  <li><code>Plugin</code> — required: plugin name</li>
-  <li><code>Confidence</code> — required on success: <code>high</code> | <code>medium</code> | <code>low</code></li>
-  <li><code>Result</code> — required on success</li>
-  <li><code>Evidence</code> — optional</li>
-</ul>
-
-<h3>Errors (stderr)</h3>
-<p>Structured JSON, one line:</p>
-<pre><code>{"code":"PARSE_ERROR","message":"...","details":{}}</code></pre>
-
-<h3>Exit Codes</h3>
-<table>
-<tr><th>Code</th><th>Meaning</th></tr>
-<tr><td>0</td><td>Success</td></tr>
-<tr><td>1</td><td>Processing error</td></tr>
-<tr><td>2</td><td>Invalid input</td></tr>
-<tr><td>3</td><td>Internal timeout</td></tr>
-</table>
-
-<h2>5. Plugin Selection <span class="badge done">IMPLEMENTED</span></h2>
-
-<p>The engine evaluates dispatch criteria in priority order for each resolved intent group:</p>
+<p>The usual workflow for a new built-in plugin is:</p>
 <ol>
-  <li><strong>Explicit field</strong> — If the Normalizer emits an <code>Interpreter: z3</code> field in the Intent CNL, that plugin is selected directly.</li>
-  <li><strong>Act → capability mapping</strong> — The pragmatic act from the intent is matched against <code>capabilities</code> declared in manifests, using the canonical act→capability taxonomy from DS004.</li>
-  <li><strong>Keyword matching</strong> — Keywords from the intent text are matched against <code>keywords</code> in the manifest.</li>
+  <li>Create <code>src/plugins/&lt;type&gt;/&lt;plugin-id&gt;/</code> with <code>index.mjs</code>, <code>plugin.json</code>, and <code>plugin.kus.md</code>.</li>
+  <li>Keep plugin-specific code inside that package; move any helper reused across multiple plugin families into <code>src/mrp-vm-sdk/</code>.</li>
+  <li>Expose a valid descriptor with the correct <code>type</code>, <code>id</code>, <code>plannerHints</code>, <code>maxLLMCalls</code>, and <code>modelRoles</code>.</li>
+  <li>Add the plugin module to <code>config/plugins.json</code> if it should be part of the shipped built-in catalog.</li>
+  <li>Add direct tests for the plugin package plus any needed deterministic integration coverage.</li>
 </ol>
 
-<h3>Conflict Resolution</h3>
-<p>When multiple plugins match the same intent:</p>
-<ol>
-  <li>Select the plugin with the higher <code>priority</code> value.</li>
-  <li>On tie: alphabetical order by <code>name</code> (deterministic tie-break).</li>
-  <li>The chosen plugin is final — no automatic fallback chain.</li>
-</ol>
+<h2>Plugin Family Tutorial</h2>
+<div class="grid">
+  <div class="card">
+    <h3><code>sd-plugin</code></h3>
+    <p>Extracts Intent CNL plus current-turn KUs in one pass. It should also classify KU phase relevance through <code>PhaseScopes</code> when possible.</p>
+  </div>
+  <div class="card">
+    <h3><code>kb-plugin</code></h3>
+    <p>Owns retrieval, indexing, backend fusion, and sufficiency checks. Any lexical, associative, or symbolic backend belongs here, not in the VM.</p>
+  </div>
+  <div class="card">
+    <h3><code>gs-plugin</code></h3>
+    <p>Consumes resolved intents and goal-solver guidance KUs to produce the final answer document and Markdown output.</p>
+  </div>
+  <div class="card">
+    <h3><code>mrp-plan-plugin</code></h3>
+    <p>Chooses KB and solver order, decides decomposition, and reacts to planner / decomposition / validation guidance.</p>
+  </div>
+  <div class="card">
+    <h3><code>val-plugin</code></h3>
+    <p>Runs after a successful answer. It may use validation guidance KUs to enforce domain-specific output or evidence rules.</p>
+  </div>
+</div>
 
-<h2>6. Testing <span class="badge done">IMPLEMENTED</span></h2>
-<p>Each wrapper must be independently testable via stdin/stdout:</p>
-<pre><code>cat test-input.cnl.md | node wrapper.js</code></pre>
-<p>Create a <code>test-input.cnl.md</code> file in your wrapper directory with a sample <code>resolvedMarkdown</code> payload and verify the output matches the expected format.</p>
+<h2>Required Descriptor Fields</h2>
+<table>
+<tr><th>Field</th><th>Required</th><th>Notes</th></tr>
+<tr><td><code>id</code></td><td>Yes</td><td>Stable unique plugin identifier.</td></tr>
+<tr><td><code>type</code></td><td>Yes</td><td>One of <code>sd-plugin</code>, <code>kb-plugin</code>, <code>gs-plugin</code>, <code>mrp-plan-plugin</code>, <code>val-plugin</code>.</td></tr>
+<tr><td><code>description</code></td><td>Yes</td><td>Planner-readable description of when the plugin is useful.</td></tr>
+<tr><td><code>maxLLMCalls</code></td><td>Yes</td><td>Conservative request-budget reservation.</td></tr>
+<tr><td><code>modelRoles</code></td><td>If LLM-backed</td><td>Roles from DS028.</td></tr>
+<tr><td><code>plannerHints</code></td><td>For planner-facing stages</td><td>Cost, latency, supported acts, topic tags, evidence style.</td></tr>
+<tr><td><code>provides</code></td><td>Yes</td><td>Operational capability tags used by docs and diagnostics.</td></tr>
+</table>
 
-<h2>7. Security <span class="badge done">IMPLEMENTED</span></h2>
+<h2>Per-Type Checklist</h2>
+
+<h3><code>sd-plugin</code></h3>
 <ul>
-  <li><strong>Allowlist</strong> — Only plugins listed in <code>config/engine.json → pluginAllowlist</code> can be executed.</li>
-  <li><strong>Timeout</strong> — Per-plugin timeout from manifest or engine config (default 30s).</li>
-  <li><strong>Memory limit</strong> — Configurable via <code>pluginMemoryLimitMB</code> (default 256 MB).</li>
-  <li><strong>Input size</strong> — Serialized <code>resolvedMarkdown</code> is checked against <code>maxInputSizeBytes</code> before spawning. Exceeding returns <code>PLUGIN_INPUT_TOO_LARGE</code>.</li>
-  <li><strong>Path sanitization</strong> — <code>command</code> cannot contain <code>..</code> or absolute paths.</li>
-  <li><strong>Output validation</strong> — Plugin stdout must parse under the DS016 contract; invalid stdout becomes <code>PLUGIN_INVALID_OUTPUT</code>.</li>
-  <li><strong>No OS-level sandboxing</strong> in v1 — plugins are trusted components.</li>
+  <li>Implement <code>detectSeeds(input, ctx)</code>.</li>
+  <li>If it participates in ingest, implement <code>normalizePersistentContext(...)</code> or expose an ingest strategy wrapper.</li>
+  <li>Emit both <code>intentCNL</code> and <code>currentTurnContextCNL</code>.</li>
+  <li>Use <code>PhaseScopes</code> for output instructions, planning hints, decomposition hints, and validation rules when detectable.</li>
 </ul>
 
-<h2>8. Limitations</h2>
+<h3><code>kb-plugin</code></h3>
 <ul>
-  <li>Single plugin per intent group — no chaining or multi-plugin orchestration in v1.</li>
-  <li>No continuation loops — a plugin runs once and returns.</li>
-  <li>See <a href="../future/agentic-loops.html">Agentic Loops</a> for planned multi-step plugin orchestration.</li>
+  <li>Implement <code>retrieve(input, ctx)</code>.</li>
+  <li>Optionally implement <code>onSourceText(...)</code> and <code>onSessionEvent(...)</code> for plugin-private artifacts.</li>
+  <li>Return <code>resolvedIntents</code> with evidence plus <code>guidanceUnits</code> buckets.</li>
+  <li>Keep indexing and scoring private to the plugin or its documented backends.</li>
+</ul>
+
+<h3><code>gs-plugin</code></h3>
+<ul>
+  <li>Implement <code>solve(input, ctx)</code>.</li>
+  <li>Consume <code>guidanceUnits</code> from retrieval, especially answer-shaping instructions.</li>
+  <li>Return <code>responseMarkdown</code> and <code>responseDocument</code>.</li>
+  <li>Use <code>status: "needs-decomposition"</code> only when a child frame is genuinely required.</li>
+</ul>
+
+<h3><code>mrp-plan-plugin</code></h3>
+<ul>
+  <li>Implement <code>buildPlan(input, ctx)</code> and optionally <code>recordOutcome(...)</code>.</li>
+  <li>Read the phase-specific guidance arrays instead of assuming one undifferentiated strategy blob.</li>
+  <li>Remember that request budgets are global across child frames.</li>
+</ul>
+
+<h3><code>val-plugin</code></h3>
+<ul>
+  <li>Implement <code>validate(input, ctx)</code>.</li>
+  <li>Reject only when the answer truly violates the contract; rejection triggers planner backtracking.</li>
+  <li>Use validation guidance KUs if the domain defines output rules or proof obligations.</li>
+</ul>
+
+<h2>Configuration Surfaces</h2>
+<table>
+<tr><th>File</th><th>What it controls</th></tr>
+<tr><td><code>config/plugins.json</code></td><td>Built-in plugin catalog, default planner, and shipped fallback order.</td></tr>
+<tr><td><code>config/conversation.json</code></td><td>Session defaults; use <code>null</code> for auto-routing rather than silently pinning a plugin.</td></tr>
+<tr><td><code>config/kb.json</code></td><td>Shared ingest chunking and repository/workspace settings, not plugin-private index policy.</td></tr>
+<tr><td><code>config/prompts/*.md</code></td><td>Prompt templates used by LLM-backed strategies.</td></tr>
+</table>
+
+<h2>External Wrapper Plugins</h2>
+<p>If a plugin should run out of process, use the wrapper convention from DS016. Wrapper metadata lives in a wrapper directory and describes how the typed plugin is spawned, but the typed plugin contract itself still comes from DS027.</p>
+
+<h2>Testing</h2>
+<ul>
+  <li>Add deterministic tests for planner ordering, retrieval sufficiency, guidance routing, and budget behavior.</li>
+  <li>For chat-visible plugins, verify both buffered and streamed chat responses.</li>
+  <li>When the plugin touches ingest, add a regression for medium-size sources near the normalizer ceiling.</li>
 </ul>
 
 </div>

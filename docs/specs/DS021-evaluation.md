@@ -15,6 +15,13 @@ test/evaluation/run.mjs
 It starts an isolated server and exercises the
 canonical conversational path by default.
 
+Question execution in the runner MUST use
+`POST /chat/completions` with `stream: true` and
+consume SSE events (`progress`, `response.meta`,
+`response.delta`, `response.completed`, `error`) so
+long-running turns expose actionable runtime feedback
+instead of blind polling.
+
 In default mode:
 
 - one session is created per suite

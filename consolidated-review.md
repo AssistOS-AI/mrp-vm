@@ -1,9 +1,216 @@
 # consolidated-review.md — Consolidated Implementation + Spec Review
 
-Date: 2026-03-31
+Date: 2026-03-31 (updated 2026-04-02)
 Scope: current `src/` implementation and DS001–DS030,
 with emphasis on the recent ingest / KU / child-frame
 changes.
+
+**Update 2026-04-02**: Merged findings from gemini.review.md.
+Marked fixed items with ✅.
+
+## 2026-04-01 Addendum — P0 Structural Refactor Program
+
+The branch now needs a **repository-structure refactor**
+before more local fixes are piled onto the current
+layout.
+
+The immediate priority is no longer just "fix one more
+bug". The priority is to make the runtime structure
+match the architectural boundary already claimed by
+the DS set:
+
+- the **VM core** should live under
+  `src/core/**` as a thin execution kernel
+- each concrete plugin should live under
+  `src/plugins/<plugin-type>/<plugin-id>/**`
+- plugin-shared code should live under
+  `src/mrp-vm-sdk/**`
+- plugin activation should be **config-driven**
+  instead of hard-coded in `src/server/index.mjs`
+- every shipped default plugin should ship with
+  one or more KU documents that describe:
+  - what it does
+  - when it is appropriate
+  - what evidence style or planning style it prefers
+  - what tradeoffs it makes
+
+### P0 Goals
+
+1. Make the implementation layout reflect the VM
+   contract:
+   - core runtime and orchestration code are clearly
+     separated from plugin implementations
+   - plugin-specific code no longer lives in shared
+     grab-bag files
+2. Make plugin loading declarative:
+   - config identifies which built-in plugins are
+     available and enabled
+   - boot code constructs plugins from descriptors /
+     manifests instead of a monolithic registration
+     block
+3. Make plugin packaging self-describing:
+   - each plugin directory includes KU metadata
+   - docs and DS files describe the expected files
+     and metadata
+4. Preserve functionality while migrating:
+   - use compatibility wrappers / re-exports where
+     necessary during the migration
+   - keep deterministic tests and eval green during
+     each step
+
+### Target Layout
+
+```text
+src/
+  core/
+    boot/
+    conversation/
+    engine/
+    ingest/
+    intent/
+    kb/
+    normalizer/
+    parser/
+    retrieval/
+    synthesis/
+  mrp-vm-sdk/
+    knowledge/
+    pragmatics/
+    plugins/
+    retrieval/
+  plugins/
+    runtime/
+    sd-plugin/
+      sd-symbolic/
+      sd-llm-fast/
+      sd-llm-deep/
+    kb-plugin/
+      kb-fast/
+      kb-balanced/
+      kb-thinkingdb/
+    gs-plugin/
+      gs-symbolic/
+      gs-llm-fast/
+      gs-llm-deep/
+    mrp-plan-plugin/
+      planner-default/
+      planner-depth/
+    val-plugin/
+      val-llm/
+```
+
+Each plugin directory should contain at minimum:
+
+```text
+index.mjs
+plugin.json
+plugin.kus.md
+```
+
+Optional plugin-local files may include:
+
+```text
+prompts/
+lib/
+tests/
+README.md
+```
+
+### P0 Execution Order
+
+#### Phase 1 — Structural bootstrap
+
+1. Introduce `src/mrp-vm-sdk/**` and move
+   plugin-shared helpers there.
+2. Introduce `src/plugins/runtime/**` with:
+   - config-driven built-in plugin catalog loading
+   - wrapper discovery integration
+   - plugin registration helpers
+3. Introduce per-plugin directories under
+   `src/plugins/<type>/<name>/**`.
+4. Keep legacy import paths as compatibility
+   re-exports until all call sites are migrated.
+
+#### Phase 2 — Core relocation
+
+1. Move all VM-kernel modules under `src/core/**`
+   subfolders.
+2. Keep only compatibility shims in the old
+   top-level `src/<area>/...` paths.
+3. Update boot code to import from the new core
+   layout.
+
+#### Phase 3 — Spec / docs alignment
+
+1. Update DS002 / DS003 / DS013 / DS014 / DS027 /
+   DS029 to make the new packaging model normative.
+2. Update HTML docs / landing pages / plugin guide
+   to teach the new structure and plugin authoring
+   workflow.
+3. Clarify that plugin KU metadata is part of the
+   shipped plugin package.
+
+#### Phase 4 — Test surface refactor
+
+1. Split tests by module surface:
+   - `test/core/**`
+   - `test/sdk/**`
+   - `test/plugins/<type>/<name>/**`
+   - `test/integration/**`
+   - `test/evaluation/**`
+2. Ensure each default plugin has at least one
+   direct test file that does not rely only on
+   end-to-end coverage.
+
+#### Phase 5 — Functional cleanup after migration
+
+1. Re-run deterministic tests.
+2. Re-run `npm run eval`.
+3. Re-run chat/server probes including streaming.
+4. Fix any regressions introduced by the move.
+
+### Open Functional Work To Preserve During Refactor
+
+The structural refactor must not discard the
+remaining runtime cleanup work still in flight.
+The following items remain active until fully
+re-verified:
+
+1. **Eval stability after KU/guidance cleanup**
+   - `suite01` identification quality still needs
+     explicit re-check after the latest ingest and
+     retrieval fixes
+   - `suite02` needs re-check that story question
+     appendices no longer contaminate evidence
+   - `suite03` needs re-check that multi-hop bridge
+     facts survive final evidence selection
+2. **Chat responsiveness**
+   - keep the auto-plugin selection fix
+   - keep streaming API / UI behavior working after
+     boot and plugin loader changes
+3. **Spec debt still open**
+   - wrapper visibility model
+   - canonical `Role -> UtilityActs`
+   - discriminated `kb-plugin.onSessionEvent(...)`
+   - retrieval `purpose` placement
+   - artifact invalidation ownership
+
+### Definition Of Done For The Refactor
+
+The refactor is only complete when all of the
+following are true:
+
+1. `src/server/index.mjs` no longer hard-codes the
+   built-in plugin registration block.
+2. Default plugins are loaded from config / manifests.
+3. Per-plugin code lives in per-plugin folders.
+4. Plugin-shared helpers used by multiple plugin
+   families live in `src/mrp-vm-sdk/**`.
+5. DS and HTML docs describe the same structure that
+   exists on disk.
+6. Deterministic tests pass.
+7. `npm run eval` passes.
+8. Chat replies and streaming still work.
 
 ## Executive Summary
 
@@ -22,9 +229,9 @@ There are two distinct categories of open issues:
 
 1. **[P1] Ingest regression for 8k–50k character
    sources**
-   `src/ingest/source-ingestor.mjs` now bypasses
+   `src/core/ingest/source-ingestor.mjs` now bypasses
    chunking for sources up to 50,000 characters,
-   while `src/normalizer/nl-normalizer.mjs` still
+   while `src/core/normalizer/nl-normalizer.mjs` still
    rejects any `toContextCNL()` input over 8,000
    characters. Medium-sized sources now fail
    deterministically instead of being chunked.
@@ -38,7 +245,7 @@ There are two distinct categories of open issues:
 
 3. **[P2] Current-turn strategy/guidance KUs are
    dropped by per-intent filtering**
-   `src/retrieval/context-matcher.mjs` filters
+   `src/mrp-vm-sdk/retrieval/context-matcher.mjs` filters
    current-turn KUs before collecting
    `strategyUnits`, so guidance extracted from the
    same user turn can disappear when it does not
@@ -84,11 +291,11 @@ main findings:
 
 **Evidence**
 
-- `src/ingest/source-ingestor.mjs`
+- `src/core/ingest/source-ingestor.mjs`
   uses a `singleChunkLimit` of `50000` and returns a
   single `whole-source` chunk whenever the source is
   below that limit.
-- `src/normalizer/nl-normalizer.mjs`
+- `src/core/normalizer/nl-normalizer.mjs`
   rejects `toContextCNL()` input above
   `MAX_INPUT_CHARS = 8000`.
 
@@ -140,7 +347,7 @@ path and then fails with
 
 **Evidence**
 
-- `src/retrieval/context-matcher.mjs`
+- `src/mrp-vm-sdk/retrieval/context-matcher.mjs`
   filters `currentTurnUnits` by lexical overlap
   before calling `_collectStrategyUnits(...)`.
 - `strategyUnits` are therefore computed from the
@@ -621,3 +828,225 @@ The code still contains four real functional issues,
 and the spec set still contains five contract-level
 issues that should be cleaned up before calling the
 new architecture stable.
+
+---
+
+## F. Gemini Review Findings (merged 2026-04-02)
+
+### F1. ✅ FIXED: Hardcoded prompt in val-llm plugin
+
+**Status**: Fixed
+
+The `LLMValidationPlugin` in `src/mrp-vm-sdk/plugins/builtin-adapters.mjs`
+previously hardcoded the validation prompt inline. This has been refactored
+to load from `config/prompts/validate.md` using the same `loadPrompt()`
+pattern used by `llm-assisted.mjs`.
+
+### F2. ✅ FIXED: Test-specific blocked words in symbolic strategy
+
+**Status**: Fixed
+
+The `_inferSingleWordIdentity()` function in `symbolic-only.mjs` previously
+contained blocked words specific to the test story (`quartz`, `abyss`,
+`lumina`, `aura-city`). These have been replaced with generic category-based
+blocked words (geographic terms, object words, organization terms) that work
+across any story domain.
+
+### F3. ✅ FIXED: SDK/Core decoupling for platform imports
+
+**Status**: Fixed (runtime-critical subset)
+
+SDK modules no longer import from `core/platform/` for errors/config.
+Changes applied:
+
+- Added SDK-local `SDKError` in `src/mrp-vm-sdk/platform/errors.mjs`
+- Replaced `MRPError` usage in SDK strategy/retrieval/synthesis registries
+- Removed `loadConfig()` from SDK tokenizer/context matcher
+- Switched to dependency injection from bootstrap for:
+  - tokenizer stemming flag
+  - retrieval strategy weights
+
+This removes direct `../../core/platform/*` coupling on critical SDK paths.
+
+### F4. MRPEngine size (Documented Debt)
+
+**Status**: Documented as architectural debt
+
+`src/core/engine/engine.mjs` is ~1500 lines with a large `processChatTurn`
+method. This violates Single Responsibility Principle.
+
+**Recommendation**: Extract `PlanExecutor` or similar. Not blocking
+functionality but adds maintenance burden.
+
+### F5. ✅ FIXED: SSE in Evaluation runner
+
+**Status**: Fixed
+
+`test/evaluation/run.mjs` now uses `stream: true` and consumes SSE events
+for question execution:
+
+- `progress` events are printed live
+- `response.meta`, `response.delta`, `response.completed` are consumed
+- legacy polling-based `...waiting` loop is no longer the only feedback path
+
+### F6. ✅ FIXED: Symbolic fail-fast behavior for constrained answers
+
+**Status**: Fixed
+
+The previous story-shaped heuristics were removed from
+`SymbolicOnlyStrategy` and replaced with fail-fast behavior:
+
+- for `Yes/No` or constrained `single word` answers, symbolic solver now
+  returns explicit `Insufficient context` unless confidence is high
+- removed pattern-specific reasoning helpers that encoded story-specific logic
+- response document now supports per-intent explicit status overrides so
+  symbolic fail-fast can mark intent as `no-context`
+
+### F7. ✅ FIXED: Eval test false positives
+
+**Status**: Fixed
+
+The `checkMention()` and `checkNotContain()` functions in
+`test/evaluation/run.mjs` now use word-boundary regex matching
+instead of simple substring search. This prevents false positives
+like "No" matching "techNOlogy".
+
+### F8. ✅ FIXED: LLM call timing and context logging
+
+**Status**: Fixed
+
+`src/core/llm/bridge.mjs` now logs:
+- Duration of each LLM call with emoji prefix (✅/⚠️)
+- Prompt and response character counts
+- Accumulated statistics via `getStats()`/`resetStats()`
+
+Example log: `✅ LLM call completed in 13.5s (prompt: 2500 chars, response: 150 chars)`
+
+---
+
+## G. Items Remaining from Original Review
+
+### From Section A (Implementation Defects):
+
+- **A1 [P1] Ingest size mismatch**: Fixed in code
+- **A2 [P2] Guidance KU filtering**: Fixed in code
+- **A3 [P1] Child frame budget bypass**: Fixed in code
+- **A4 [P2] Child frame re-planning**: Fixed in code
+
+### From Section B (Specification Issues):
+
+All five specification issues (B1-B5) remain open as they require
+DS document updates, not code changes.
+
+---
+
+## H. Updated Execution Order
+
+1. ✅ **Fix symbolic Yes/No reasoning** (done)
+2. ✅ **Fix eval test false positives** (done)
+3. ✅ **Externalize val-llm prompt** (done)
+4. ✅ **Generalize blocked words** (done)
+5. ✅ **Add LLM timing logging** (done)
+6. ✅ **Fix session auto-recovery** (done 2026-04-01)
+7. ✅ **Fix A3 child frame budget** (done)
+8. ✅ **Fix A2 guidance KU filtering** (done)
+9. ✅ **Fix A4 child frame re-planning** (done)
+10. ✅ **Decouple SDK/core platform imports** (done)
+11. **Complete remaining structural refactor** (optional)
+
+---
+
+## I. Gemini Proposal Review (2026-04-01)
+
+Analysis of `gemini.proposal.md` findings:
+
+### I1. SDK/Core Decoupling
+
+**Status**: Implemented for runtime-critical paths (see F3).
+
+### I2. MRPEngine Split
+
+**Status**: Partially improved in-place.
+
+Budget and child-frame correctness issues were fixed without delaying.
+A full class split remains optional future cleanup.
+
+### I3. Symbolic Strategy "Hardcoding"
+
+**Status**: Accepted and fixed.
+
+Story-shaped reasoning patterns were removed; symbolic now fails fast for
+constrained answer formats when confidence is low.
+
+### I4. SSE in Evaluation
+
+**Status**: Accepted and fixed.
+
+Runner now consumes SSE during question execution.
+
+---
+
+## J. Session Auto-Recovery Fix (2026-04-01)
+
+**Issue**: After server restart, UI showed "Session null expired or not found"
+for every command, even though it should create a new session.
+
+**Root Cause**: In `chat.js`, `ensureSession()` called `refreshSessionState()`
+which clears `sessionId` on SESSION_EXPIRED, but then returned the (now null)
+sessionId without creating a new session.
+
+**Fix**: Added check after `refreshSessionState()` to fall through to session
+creation if sessionId was cleared:
+
+```javascript
+async function ensureSession() {
+  if (sessionId) {
+    await refreshSessionState();
+    if (sessionId) return sessionId;  // Added this check
+  }
+  // Create new session...
+}
+```
+
+---
+
+## K. 2026-04-01 Remediation Pass (applied)
+
+The following items were fixed in code (not deferred):
+
+1. **Session null/stale flow hardened**
+   - UI now normalizes invalid session IDs (`null`,
+     `undefined`, empty) before requests.
+   - stale session errors (`SESSION_NOT_FOUND`,
+     `SESSION_EXPIRED`) now clear persisted session and
+     auto-create a new one.
+   - server normalizes `session_id: "null"` /
+     `"undefined"` to null in chat requests.
+
+2. **Symbolic hardcoding removed in constrained answers**
+   - story-shaped yes/no reasoning helpers were removed.
+   - symbolic solver now uses fail-fast policy for
+     constrained outputs (`yes/no`, `single word`) and
+     returns explicit insufficient context when
+     confidence is low.
+   - response document now supports explicit per-intent
+     status override so fail-fast outputs surface as
+     `no-context` instead of fake `answered`.
+
+3. **Evaluation runner switched to SSE consumption**
+   - question execution uses `stream: true`.
+   - runner consumes `progress`, `response.meta`,
+     `response.delta`, and `response.completed`.
+   - removes blind waiting-only behavior for long calls.
+
+4. **SDK decoupling from core/platform (critical paths)**
+   - added SDK-local `SDKError`.
+   - removed SDK imports of `core/platform/errors`.
+   - removed SDK direct config loading in tokenizer and
+     context matcher; now configured by boot injection.
+
+5. **DS sync updates**
+   - DS003/DS027: explicit SDK decoupling rule.
+   - DS021: eval runner SSE requirement.
+   - DS022: symbolic constrained-answer fail-fast rule.
+   - DS013: explicit stale session error signaling.

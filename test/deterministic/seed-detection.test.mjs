@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { NLNormalizer } from '../../src/normalizer/nl-normalizer.mjs';
-import { StrategyRegistry } from '../../src/strategies/registry.mjs';
-import { StrategySeedDetectorPlugin } from '../../src/plugins/builtin-plugins.mjs';
-import { LLMAssistedStrategy } from '../../src/strategies/llm-assisted.mjs';
+import { NLNormalizer } from '../../src/core/normalizer/nl-normalizer.mjs';
+import { StrategyRegistry } from '../../src/mrp-vm-sdk/strategies/registry.mjs';
+import { StrategySeedDetectorPlugin } from '../../src/mrp-vm-sdk/plugins/builtin-adapters.mjs';
+import { LLMAssistedStrategy } from '../../src/mrp-vm-sdk/strategies/llm-assisted.mjs';
 
 describe('seed detection bundle flow', () => {
   it('uses a single detectSeedBundle call for sd-plugin.detectSeeds', async () => {

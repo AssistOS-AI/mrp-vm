@@ -1,0 +1,23 @@
+{
+  "id": "sd-llm-deep",
+  "type": "sd-plugin",
+  "name": "Deep LLM Seed Detector",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Thorough LLM extraction of problem seeds and session knowledge units in one pass for ambiguous or multi-part requests.",
+  "costClass": "expensive",
+  "strategyId": "llm-assisted",
+  "modelRole": "seed-deep",
+  "ingestModelRole": "kb-ingest",
+  "plannerHints": {
+    "expectedLatencyMs": 1800,
+    "expectedLLMCalls": 1,
+    "relativeCost": 0.75,
+    "supportedActs": ["compare", "diagnose", "explain", "recommend", "verify"],
+    "topicTags": ["general", "technical", "legal", "literature"],
+    "preferredDepth": "deep",
+    "fallbackRole": "heavy-recovery",
+    "confidenceWhenMatched": 0.8
+  }
+}
+

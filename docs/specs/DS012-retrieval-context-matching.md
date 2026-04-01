@@ -67,6 +67,12 @@ class ContextMatcher {
   intentGroup,
   decomposed,
   strategyUnits,
+  guidanceUnits: {
+    planner,
+    goalSolver,
+    decomposition,
+    validation
+  },
   currentTurnContextUnits,
   sessionUnits,
   kbUnits,
@@ -88,6 +94,13 @@ Current-turn KUs SHOULD be filtered per intent when
 possible, rather than injected wholesale into every
 resolved intent. If intent-level filtering is not
 feasible, the full set may be included as a fallback.
+
+Evidence filtering MUST NOT discard current-turn KUs
+that encode planner guidance, decomposition guidance,
+validation rules, or output-shaping instructions for
+the goal solver. Those KUs remain available through
+`guidanceUnits` even when they do not share lexical
+overlap with the retrieval terms.
 
 ## Dependency
 

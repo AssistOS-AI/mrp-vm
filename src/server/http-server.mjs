@@ -3,8 +3,8 @@ import { createServer } from 'node:http';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { MRPError, httpStatusForCode } from '../lib/errors.mjs';
-import { logger } from '../lib/logger.mjs';
+import { MRPError, httpStatusForCode } from '../core/platform/errors.mjs';
+import { logger } from '../core/platform/logger.mjs';
 import {
   LEGACY_PROCESSING_MODE_ALIASES,
   LEGACY_RETRIEVAL_PROFILE_ALIASES,
@@ -12,10 +12,10 @@ import {
   mapLegacyRetrievalProfile,
   deriveLegacyProcessingMode,
   deriveLegacyRetrievalProfile
-} from '../plugins/aliases.mjs';
+} from '../plugins/runtime/aliases.mjs';
 
 const __dirname = import.meta.dirname || new URL('.', import.meta.url).pathname;
-const UI_DIR = resolve(__dirname, '../ui');
+const UI_DIR = resolve(__dirname, './ui');
 const MOD = 'server';
 
 const MIME = {
@@ -134,9 +134,7 @@ export class MRPServer {
 
   async _chatCompletions(req, res, reqId) {
     const body = JSON.parse(await this._readBody(req));
-    if (body.stream === true) {
-      return this._json(res, 400, { error: { code: 'STREAM_NOT_SUPPORTED', message: 'Streaming not supported in v1', type: 'invalid_request' } });
-    }
+    if (body.session_id === 'null' || body.session_id === 'undefined') body.session_id = null;
     for (const message of body.messages || []) {
       if (!['user', 'system'].includes(message.role)) {
         return this._json(res, 400, { error: { code: 'INVALID_ROLE', message: `Unsupported role: ${message.role}`, type: 'invalid_request' } });
@@ -160,9 +158,17 @@ export class MRPServer {
       return this._handleError(res, error, reqId);
     }
 
+    if (body.stream === true) {
+      return this._streamChatCompletions(body, res, reqId);
+    }
+
     const result = await this.engine.processChatTurn(body);
     const session = this.conversation.getSession(result.sessionId);
-    this._json(res, 200, {
+    this._json(res, 200, this._buildChatCompletionPayload(body, result, session, reqId));
+  }
+
+  _buildChatCompletionPayload(body, result, session, reqId) {
+    return {
       id: `mrp-${reqId}`,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
@@ -191,7 +197,84 @@ export class MRPServer {
       kb_id: session?.mountedKbId || body.kb_id || null,
       kb_name: session?.mountedKbName || null,
       workspace_dirty: !!session?.workspace?.dirty
+    };
+  }
+
+  _streamEvent(res, event, data) {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
+
+  _chunkResponseText(text, chunkSize = 160) {
+    if (!text) return [];
+    const chunks = [];
+    for (let index = 0; index < text.length; index += chunkSize) {
+      chunks.push(text.slice(index, index + chunkSize));
+    }
+    return chunks;
+  }
+
+  async _streamChatCompletions(body, res, reqId) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
     });
+    res.flushHeaders?.();
+
+    const send = (event, data) => {
+      if (res.writableEnded) return;
+      this._streamEvent(res, event, data);
+    };
+
+    send('response.started', {
+      id: `mrp-${reqId}`,
+      request_id: reqId
+    });
+
+    try {
+      const result = await this.engine.processChatTurn({
+        ...body,
+        onProgress: progress => send('progress', progress)
+      });
+      const session = this.conversation.getSession(result.sessionId);
+      const payload = this._buildChatCompletionPayload(body, result, session, reqId);
+      const content = payload.choices?.[0]?.message?.content || '';
+
+      send('response.meta', {
+        session_id: payload.session_id,
+        planner_plugin: payload.planner_plugin,
+        seed_detector_plugin: payload.seed_detector_plugin,
+        kb_plugin: payload.kb_plugin,
+        goal_solver_plugin: payload.goal_solver_plugin,
+        kb_id: payload.kb_id,
+        kb_name: payload.kb_name
+      });
+
+      for (const chunk of this._chunkResponseText(content)) {
+        send('response.delta', { delta: chunk });
+      }
+
+      send('response.completed', payload);
+      send('done', { request_id: reqId });
+      res.end();
+    } catch (error) {
+      logger.error(MOD, error.message, { code: error.code, reqId });
+      if (error instanceof MRPError) {
+        error.requestId = error.requestId || reqId;
+        send('error', { error: { ...error.toJSON(), type: 'processing_error' } });
+      } else {
+        send('error', {
+          error: {
+            code: 'SERVER_INTERNAL_ERROR',
+            message: error.message,
+            type: 'server_error'
+          }
+        });
+      }
+      res.end();
+    }
   }
 
   async _createSession(req, res) {
@@ -241,11 +324,13 @@ export class MRPServer {
 
   _getSession(path, res) {
     const id = path.split('/').pop();
-    const meta = this.conversation.getSessionMeta(id);
-    if (!meta) {
-      return this._json(res, 410, { error: { code: 'SESSION_EXPIRED', message: 'Session not found or expired', type: 'processing_error' } });
+    try {
+      const session = this.conversation._requireActiveSession(id);
+      const meta = this.conversation.getSessionMeta(session.sessionId);
+      this._json(res, 200, meta);
+    } catch (error) {
+      return this._handleError(res, error);
     }
-    this._json(res, 200, meta);
   }
 
   _deleteSession(path, res) {
@@ -333,19 +418,20 @@ export class MRPServer {
 
   _getWorkspace(path, res) {
     const sessionId = path.split('/')[2];
-    const session = this.conversation.getSession(sessionId);
-    if (!session) {
-      return this._json(res, 410, { error: { code: 'SESSION_EXPIRED', message: 'Session not found or expired', type: 'processing_error' } });
+    try {
+      const session = this.conversation._requireActiveSession(sessionId);
+      this._json(res, 200, {
+        session_id: session.sessionId,
+        kb_id: session.mountedKbId,
+        kb_name: session.mountedKbName,
+        workspace: {
+          ...session.workspace.getStats(),
+          sources: session.workspace.getSources()
+        }
+      });
+    } catch (error) {
+      return this._handleError(res, error);
     }
-    this._json(res, 200, {
-      session_id: session.sessionId,
-      kb_id: session.mountedKbId,
-      kb_name: session.mountedKbName,
-      workspace: {
-        ...session.workspace.getStats(),
-        sources: session.workspace.getSources()
-      }
-    });
   }
 
   async _mountKb(req, res, path) {
@@ -386,9 +472,11 @@ export class MRPServer {
     if (!body.name || !body.content) {
       return this._json(res, 400, { error: { code: 'INVALID_INPUT', message: 'name and content required', type: 'invalid_request' } });
     }
-    const session = this.conversation.getSession(sessionId);
-    if (!session) {
-      return this._json(res, 410, { error: { code: 'SESSION_EXPIRED', message: 'Session not found or expired', type: 'processing_error' } });
+    let session;
+    try {
+      session = this.conversation._requireActiveSession(sessionId);
+    } catch (error) {
+      return this._handleError(res, error, reqId);
     }
 
     const legacySeed = mapLegacyProcessingMode(body.processing_mode).seedDetectorPlugin;
@@ -501,9 +589,11 @@ export class MRPServer {
     if (!body.content) {
       return this._json(res, 400, { error: { code: 'INVALID_INPUT', message: 'content is required', type: 'invalid_request' } });
     }
-    const session = this.conversation.getSession(sessionId);
-    if (!session) {
-      return this._json(res, 410, { error: { code: 'SESSION_EXPIRED', message: 'Session not found or expired', type: 'processing_error' } });
+    let session;
+    try {
+      session = this.conversation._requireActiveSession(sessionId);
+    } catch (error) {
+      return this._handleError(res, error, reqId);
     }
 
     const legacySeed = mapLegacyProcessingMode(body.processing_mode).seedDetectorPlugin;

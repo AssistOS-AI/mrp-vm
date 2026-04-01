@@ -1,0 +1,22 @@
+{
+  "id": "gs-llm-deep",
+  "type": "gs-plugin",
+  "name": "Deep LLM Goal Solver",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Thorough LLM synthesis with richer reasoning. Best for complex, nuanced, or multi-faceted answers.",
+  "costClass": "expensive",
+  "strategyId": "llm-assisted",
+  "modelRole": "goal-deep",
+  "plannerHints": {
+    "expectedLatencyMs": 2200,
+    "expectedLLMCalls": 1,
+    "relativeCost": 0.78,
+    "supportedActs": ["compare", "diagnose", "explain", "recommend", "verify"],
+    "topicTags": ["general", "technical", "literature", "legal", "symbolic"],
+    "preferredDepth": "deep",
+    "fallbackRole": "heavy-recovery",
+    "confidenceWhenMatched": 0.82
+  }
+}
+

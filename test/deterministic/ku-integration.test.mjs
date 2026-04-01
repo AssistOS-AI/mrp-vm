@@ -2,9 +2,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CNLValidator, CNLParser } from '../../src/parser/cnl-validator-parser.mjs';
-import { SymbolicOnlyStrategy } from '../../src/strategies/symbolic-only.mjs';
-import { KBIndex } from '../../src/retrieval/kb-index.mjs';
+import { CNLValidator, CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
+import { SymbolicOnlyStrategy } from '../../src/mrp-vm-sdk/strategies/symbolic-only.mjs';
+import { KBIndex } from '../../src/mrp-vm-sdk/retrieval/kb-index.mjs';
 
 describe('KU fields in CNL parser', () => {
   const parser = new CNLParser();
@@ -103,6 +103,49 @@ describe('Symbolic ingest produces individual KUs per fact', () => {
     });
     assert.ok(result.contextCNL.includes('KUType:'), 'Should include KUType field');
   });
+
+  it('serializes multiline guidance safely for Context CNL validation', async () => {
+    const result = await strategy.normalizePersistentContext({
+      chunkText: 'Questions — answer each with a single word only:\n\nQ1: Is Alpha safe?\n\nQ2: Name the operator.',
+      provenance: { sourceId: 'src-test', chunkId: 'src-test::chunk-000' }
+    });
+    const validator = new CNLValidator();
+    const vr = validator.validateContextCNL(result.contextCNL);
+    assert.ok(vr.valid, `Validation errors: ${JSON.stringify(vr.errors)}`);
+  });
+
+  it('stores question appendices as guidance-only units instead of evidence KUs', async () => {
+    const result = await strategy.normalizePersistentContext({
+      chunkText: 'Alpha uses Beta.\n\nQuestions — answer each with a single word only:\n\nQ1: Is Alpha safe?\n\nQ2: Name the operator.',
+      provenance: { sourceId: 'src-test', chunkId: 'src-test::chunk-000' }
+    });
+    const parser = new CNLParser();
+    const units = parser.parseContextCNL(result.contextCNL);
+
+    assert.equal(units.length, 2, `Expected fact + guidance units, got ${units.length}`);
+    const factUnit = units.find(unit => unit.subject === 'Alpha');
+    const guidanceUnit = units.find(unit => (unit.claim || '').includes('Questions — answer each with a single word only:'));
+
+    assert.ok(factUnit, 'Should retain the fact-bearing unit');
+    assert.ok(guidanceUnit, 'Should keep the appendix header as a guidance unit');
+    assert.ok(guidanceUnit.phaseScopes.includes('gs-plugin'));
+    assert.ok(!guidanceUnit.phaseScopes.includes('kb-plugin'));
+    assert.ok(!(guidanceUnit.claim || '').includes('Q1:'), 'Question prompts should not be persisted as evidence text');
+  });
+
+  it('does not store plain task requests as session context facts', async () => {
+    const result = await strategy.extractSessionContext({
+      rawNL: 'Explain why AchillesIDE benefits from isolation for secure execution.'
+    });
+    assert.equal(result.contextCNL, '');
+  });
+
+  it('does not store direct task prompts even when they resemble symbolic facts', async () => {
+    const result = await strategy.extractSessionContext({
+      rawNL: 'Explain why AchillesIDE is relevant for secure execution.'
+    });
+    assert.equal(result.contextCNL, '');
+  });
 });
 
 describe('KBIndex change listeners', () => {
@@ -134,7 +177,7 @@ describe('Validation rejection is retryable', () => {
     // by importing and checking the engine source pattern
     const { readFileSync } = await import('node:fs');
     const { resolve } = await import('node:path');
-    const engineSrc = readFileSync(resolve(process.cwd(), 'src/core/engine.mjs'), 'utf-8');
+    const engineSrc = readFileSync(resolve(process.cwd(), 'src/core/engine/engine.mjs'), 'utf-8');
 
     assert.ok(engineSrc.includes("'VALIDATION_REJECTED'"), 'VALIDATION_REJECTED should be in retryable errors');
     assert.ok(engineSrc.includes("throw new MRPError(\n              'VALIDATION_REJECTED'") ||
@@ -158,7 +201,7 @@ describe('KU aggregate expansion in context matcher', () => {
     index.addUnit(aggregate);
 
     // Import ContextMatcher
-    const { ContextMatcher } = await import('../../src/retrieval/context-matcher.mjs');
+    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
     const matcher = new ContextMatcher({ get: () => null, getProfile: () => ({ primaryStrategies: [], secondaryStrategies: [] }) });
 
     // Test the expansion method directly
@@ -176,8 +219,8 @@ describe('KU aggregate expansion in context matcher', () => {
 
 describe('Planner description-based scoring', () => {
   it('scores higher when plugin description matches query terms', async () => {
-    const { DefaultPlannerPlugin } = await import('../../src/plugins/default-planner.mjs');
-    const { TypedPluginRegistry } = await import('../../src/plugins/typed-registry.mjs');
+    const { DefaultPlannerPlugin } = await import('../../src/plugins/runtime/default-planner-plugin.mjs');
+    const { TypedPluginRegistry } = await import('../../src/plugins/runtime/typed-registry.mjs');
 
     const registry = new TypedPluginRegistry();
     // Register two fake kb-plugins with different descriptions
@@ -217,7 +260,7 @@ describe('Planner description-based scoring', () => {
 
 describe('Retrieval trace includes KU-level metrics', () => {
   it('reports kuLevelsUsed and counts in retrievalTrace', async () => {
-    const { ContextMatcher } = await import('../../src/retrieval/context-matcher.mjs');
+    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
     const matcher = new ContextMatcher(
       { get: () => ({ retrieve: async () => ({ candidates: [] }) }), getProfile: () => ({ primaryStrategies: ['bm25-lexical'], secondaryStrategies: [] }) },
       {}
@@ -243,7 +286,7 @@ describe('Retrieval trace includes KU-level metrics', () => {
 
 describe('Current-turn context is filtered per intent', () => {
   it('filters current-turn KUs by intent query terms', async () => {
-    const { ContextMatcher } = await import('../../src/retrieval/context-matcher.mjs');
+    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
     const matcher = new ContextMatcher(
       { get: () => ({ retrieve: async () => ({ candidates: [] }) }), getProfile: () => ({ primaryStrategies: ['bm25-lexical'], secondaryStrategies: [] }) },
       {}
@@ -268,11 +311,100 @@ describe('Current-turn context is filtered per intent', () => {
     assert.ok(ctUnits.length === 1, `Expected 1 filtered unit, got ${ctUnits.length}`);
     assert.equal(ctUnits[0].id, 'ct-1');
   });
+
+  it('preserves current-turn goal-solver guidance even when it has no lexical overlap with the retrieval query', async () => {
+    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
+    const matcher = new ContextMatcher(
+      { get: () => ({ retrieve: async () => ({ candidates: [] }) }), getProfile: () => ({ primaryStrategies: ['bm25-lexical'], secondaryStrategies: [] }) },
+      {}
+    );
+
+    const currentTurnUnits = [
+      { id: 'ct-1', role: 'Explanation', topic: 'Alpha retrieval', claim: 'Alpha uses BM25', utilityActs: ['explain'] },
+      {
+        id: 'ct-2',
+        role: 'Constraint',
+        topic: 'Output style',
+        claim: 'Return the answer as JSON with fields answer and evidence.',
+        utilityActs: ['recommend'],
+        phaseScopes: ['gs-plugin']
+      }
+    ];
+
+    const results = await matcher.resolve(
+      [{ groupNumber: 1, act: 'explain', intent: 'How does Alpha retrieval work?', target: 'Alpha retrieval', criteria: [], evidence: [], explicitContext: null, outputType: 'answer' }],
+      [{ intentGroupNumber: 1, neededRoles: ['Explanation'], queryText: 'Alpha retrieval', queryTerms: ['alpha', 'retrieval'], actBoost: 'explain', maxResults: 5 }],
+      currentTurnUnits,
+      { sessionIndex: new KBIndex(), sessionContextUnits: [] },
+      'fast',
+      new KBIndex()
+    );
+
+    assert.equal(results[0].currentTurnContextUnits.length, 1);
+    assert.equal(results[0].currentTurnContextUnits[0].id, 'ct-1');
+    assert.equal(results[0].guidanceUnits.goalSolver.length, 1);
+    assert.equal(results[0].guidanceUnits.goalSolver[0].unit.id, 'ct-2');
+  });
+
+  it('does not let guidance-only candidates prune evidence candidates via confidence-gap filtering', async () => {
+    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
+    const { RetrievalStrategyRegistry, BM25LexicalStrategy } = await import('../../src/mrp-vm-sdk/retrieval/strategies/registry.mjs');
+
+    const registry = new RetrievalStrategyRegistry();
+    registry.register(new BM25LexicalStrategy());
+    registry.setProfiles({
+      fast: {
+        primaryStrategies: ['bm25-lexical'],
+        secondaryStrategies: [],
+        maxResults: 5,
+        minScore: 0.05,
+        confidenceGapThreshold: 0.4
+      }
+    });
+
+    const matcher = new ContextMatcher(registry, {
+      agreementBonus: 0,
+      roleBoostFactor: 1,
+      sessionBoostFactor: 1
+    });
+
+    const sessionIndex = new KBIndex();
+    sessionIndex.addUnit({
+      id: 'guide-1',
+      role: 'Constraint',
+      topic: 'Output rules',
+      claim: 'Return a single word about Quartz Desert Flux Core obelisk Frozen Abyss.',
+      utilityActs: ['identify'],
+      phaseScopes: ['gs-plugin']
+    });
+    sessionIndex.addUnit({
+      id: 'fact-1',
+      role: 'Narrative',
+      topic: 'Commander Vex extraction',
+      claim: 'Commander Vex extracted the Flux Core in the Quartz Desert.',
+      utilityActs: ['identify'],
+      phaseScopes: ['kb-plugin']
+    });
+
+    const results = await matcher.resolve(
+      [{ groupNumber: 1, act: 'identify', intent: 'Name the character tied to the Quartz Desert Flux Core.', target: 'Quartz Desert Flux Core', criteria: [], evidence: [], explicitContext: null, outputType: 'One word.' }],
+      [{ intentGroupNumber: 1, neededRoles: ['Narrative', 'Description', 'Definition'], queryText: 'Quartz Desert Flux Core', queryTerms: ['quartz', 'desert', 'flux', 'core'], actBoost: 'identify', maxResults: 5 }],
+      [],
+      { sessionIndex, sessionContextUnits: [...sessionIndex.units.values()] },
+      'fast',
+      new KBIndex()
+    );
+
+    assert.equal(results[0].sessionUnits.length, 1, 'Evidence unit should survive confidence-gap pruning');
+    assert.equal(results[0].sessionUnits[0].unitId, 'fact-1');
+    assert.equal(results[0].guidanceUnits.goalSolver.length, 1, 'Guidance unit should still be routed to the goal solver');
+    assert.equal(results[0].guidanceUnits.goalSolver[0].unitId, 'guide-1');
+  });
 });
 
 describe('Wrapper manifest requires protocolVersion', () => {
   it('rejects manifests without protocolVersion', async () => {
-    const { PluginManager } = await import('../../src/plugins/manager.mjs');
+    const { PluginManager } = await import('../../src/plugins/runtime/wrapper-manager.mjs');
     const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
     const { join } = await import('node:path');
     const tmpDir = join(process.cwd(), 'test/fixtures/tmp-wrappers');

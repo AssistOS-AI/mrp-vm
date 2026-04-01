@@ -99,6 +99,10 @@ after the turn commits successfully.
 - produce final grounded Markdown response
 - render deterministic `no-context` response when
   configured to do so
+- for constrained formats (`Yes/No`, `single word`)
+  a deterministic symbolic goal solver MUST prefer
+  explicit `no-context` over low-confidence lexical
+  guessing
 - return `needs-decomposition` when the task is too
   broad or complex for direct resolution (DS002)
 

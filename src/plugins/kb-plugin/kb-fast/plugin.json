@@ -1,0 +1,22 @@
+{
+  "id": "kb-fast",
+  "type": "kb-plugin",
+  "name": "Fast KB Retrieval",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Lexical-first retrieval with small result budget. Cheapest path, suitable for simple focused questions with clear keywords.",
+  "costClass": "cheap",
+  "profileId": "fast",
+  "plannerHints": {
+    "expectedLatencyMs": 50,
+    "expectedLLMCalls": 0,
+    "relativeCost": 0.08,
+    "supportedActs": ["define", "identify", "describe", "explain"],
+    "topicTags": ["technical", "procedural"],
+    "preferredDepth": "shallow",
+    "evidenceStyle": ["lexical"],
+    "fallbackRole": "cheap-probe",
+    "confidenceWhenMatched": 0.7
+  }
+}
+

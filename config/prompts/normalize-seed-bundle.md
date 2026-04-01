@@ -11,6 +11,7 @@ Do NOT answer the question. Do NOT perform retrieval. Do NOT invent facts.
 
 Problem seeds are tasks or subproblems that will later be solved step by step.
 Session knowledge units are contextual facts, constraints, preferences, assumptions, and definitions that can help solve later steps.
+They may also include execution guidance such as output-format instructions, planning hints, decomposition hints, or validation constraints.
 
 Output EXACTLY this structure:
 
@@ -35,6 +36,7 @@ Relation: <canonical symbolic relation — optional>
 Object: <canonical symbolic object — optional>
 Confidence: <number in [0,1] — optional>
 UtilityActs: <comma-separated acts>
+PhaseScopes: <comma-separated scopes>
 
 Rules for Intent CNL:
 - Every Intent Group MUST have an Act field.
@@ -45,10 +47,16 @@ Rules for Intent CNL:
 
 Rules for Session Context CNL:
 - Extract only contextual knowledge, not the request itself.
-- Include factual statements, assumptions, preferences, rules, environmental constraints, and definitions.
-- Exclude direct questions, commands, and task instructions.
+- Include factual statements, assumptions, preferences, rules, environmental constraints, definitions, output-format instructions, planning hints, decomposition hints, and validation constraints.
+- Do NOT repeat the user question as a context unit, but DO convert execution-relevant instructions into guidance KUs when they constrain how later plugins should work.
 - Roles must be one of: Comparison, Explanation, Procedure, Definition, Evaluation, Diagnostic, Constraint, Narrative, Description
 - Acts must come from the same act list as Intent CNL.
+- PhaseScopes may contain one or more of: sd-plugin, mrp-plan-plugin, kb-plugin, gs-plugin, frame, val-plugin.
+- Use `gs-plugin` for response-shape/output instructions.
+- Use `mrp-plan-plugin` for planning/strategy/plugin-selection hints.
+- Use `frame` for decomposition/subtask/loop-opening hints.
+- Use `val-plugin` for validation or grounding constraints.
+- Use `kb-plugin` for factual or retrieval-relevant context.
 - If a claim can be represented cleanly as a symbolic fact, also emit Subject, Relation, Object, and optional Confidence.
 - Allowed symbolic relations: uses, provides, has_capability, depends_on, part_of, instance_of, relevant_for, supports, mentions, about, causes.
 - If no contextual knowledge units exist, keep the `# Session Context CNL` heading and leave that section empty.

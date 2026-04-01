@@ -18,8 +18,34 @@ The core owns only:
 - shared utility injection
 - commit/rollback semantics
 
+The core does not own retrieval algorithms, indexing
+structures, solver heuristics, or KB sufficiency
+logic. Those remain plugin responsibilities even when
+the core passes shared parsers, LLM settings, or
+execution traces.
+
 The core does NOT own concrete retrieval profiles,
 processing modes, or reasoning algorithms.
+
+## Implementation Layout
+
+The reference implementation SHOULD keep VM-kernel
+code under `src/core/**`.
+
+Typical subfolders:
+
+- `src/core/boot/**`
+- `src/core/conversation/**`
+- `src/core/engine/**`
+- `src/core/ingest/**`
+- `src/core/intent/**`
+- `src/core/kb/**`
+- `src/core/normalizer/**`
+- `src/core/parser/**`
+
+Compatibility re-exports MAY exist temporarily while
+the tree is being migrated, but the authoritative
+kernel layout is `src/core/**`.
 
 ## Standard Execution Loop
 
@@ -97,6 +123,10 @@ Child frames inherit the remaining budget from the
 parent frame minus already consumed resources. The
 core enforces `maxDepth` (default: 3) to prevent
 unbounded recursion.
+
+`maxLLMCalls` is request-global across the entire
+frame stack. Child frames are not allowed to spend
+LLM budget that the root frame has already consumed.
 
 ### Frame Result Flow
 
@@ -186,6 +216,11 @@ class MRPEngine {
 13. Record planner outcome/trace.
 14. Commit the successful turn, including the plugin
     IDs actually used.
+
+When a child frame is opened, it MUST run the same
+planning loop on the child-frame state. The parent's
+KB/goal plugin order is only a prior, not a fixed
+order that bypasses child-frame replanning.
 
 ## Canonical Stage Outputs
 

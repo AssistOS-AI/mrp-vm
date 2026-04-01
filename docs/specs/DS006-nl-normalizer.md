@@ -24,6 +24,11 @@ Typical users:
   plugins
 - shared input-size enforcement
 
+The normalizer's input ceiling is the canonical
+limit for any upstream no-chunk optimization. Ingest
+code MUST not invent a larger "single source" fast
+path than the normalizer actually accepts.
+
 ## Main Interface
 
 ```javascript

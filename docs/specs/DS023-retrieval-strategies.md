@@ -43,7 +43,10 @@ authoring remain forward work.
 
 ## Core Retrieval Algorithm
 
-Every KB plugin SHOULD implement this generic shape:
+Every built-in KB plugin SHOULD implement this
+family-level shape. This is not a VM-owned algorithm;
+each plugin owns its concrete backends, scoring, and
+fusion details.
 
 1. receive normalized goal seeds, context profile,
    and retrieval purpose
@@ -75,6 +78,11 @@ If the mounted KB contains procedure, policy,
 evaluation, or solver-selection guidance, KB plugins
 MUST make that guidance retrievable to the planner,
 not only to the goal solver.
+
+When current-turn KUs contain output instructions or
+planning hints, KB plugins and retrieval helpers MUST
+preserve them as guidance even if those KUs do not
+survive evidence-oriented lexical filtering.
 
 ## Candidate Sources
 

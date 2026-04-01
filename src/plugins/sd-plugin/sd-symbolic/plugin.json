@@ -1,0 +1,21 @@
+{
+  "id": "sd-symbolic",
+  "type": "sd-plugin",
+  "name": "Symbolic Seed Detector",
+  "version": "1.0.0",
+  "knowledgeUnitsFile": "plugin.kus.md",
+  "description": "Rule-based extraction of problem seeds and session knowledge units in one pass. Fast, deterministic, no LLM cost.",
+  "costClass": "cheap",
+  "strategyId": "symbolic-only",
+  "plannerHints": {
+    "expectedLatencyMs": 30,
+    "expectedLLMCalls": 0,
+    "relativeCost": 0.05,
+    "supportedActs": ["verify", "define", "identify", "describe", "explain"],
+    "topicTags": ["symbolic", "technical"],
+    "preferredDepth": "shallow",
+    "fallbackRole": "cheap-probe",
+    "confidenceWhenMatched": 0.82
+  }
+}
+

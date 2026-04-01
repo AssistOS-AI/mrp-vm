@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { LLMBridge } from '../../src/llm/bridge.mjs';
+import { LLMBridge } from '../../src/core/llm/bridge.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '../..');
@@ -41,8 +41,21 @@ const C = {
 function arg(name) { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : null; }
 function hasFlag(name) { return process.argv.includes(name); }
 function lower(s) { return (s || '').toLowerCase(); }
-function checkMention(text, terms) { const l = lower(text); return terms.filter(t => !l.includes(lower(t))); }
-function checkNotContain(text, terms) { const l = lower(text); return terms.filter(t => l.includes(lower(t))); }
+// Word-boundary aware matching to avoid false positives (e.g., "No" matching "technology")
+function checkMention(text, terms) {
+  const l = lower(text);
+  return terms.filter(t => {
+    const pattern = new RegExp(`\\b${lower(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+    return !pattern.test(l);
+  });
+}
+function checkNotContain(text, terms) {
+  const l = lower(text);
+  return terms.filter(t => {
+    const pattern = new RegExp(`\\b${lower(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+    return pattern.test(l);
+  });
+}
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function preview(text, max = 140) {
   const normalized = (text || '').replace(/\s+/g, ' ').trim();
@@ -135,6 +148,71 @@ async function fetchJson(base, method, path, body) {
     throw new Error(`${method} ${path} failed with HTTP ${r.status}: ${preview(raw, 240)}`);
   }
   return parsed;
+}
+
+async function fetchChatCompletionStream(base, body, { onProgress } = {}) {
+  const r = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, stream: true })
+  });
+  const contentType = r.headers.get('content-type') || '';
+  if (!r.ok || !contentType.includes('text/event-stream')) {
+    const raw = await r.text();
+    let parsed = null;
+    try { parsed = JSON.parse(raw); } catch {}
+    if (parsed?.error) throw new Error(`${parsed.error.code || 'STREAM_ERROR'}: ${parsed.error.message}`);
+    throw new Error(`Streaming request failed with HTTP ${r.status}: ${preview(raw, 240)}`);
+  }
+
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let completedPayload = null;
+
+  const dispatch = (rawEvent) => {
+    const lines = rawEvent.split('\n');
+    let eventName = 'message';
+    const dataLines = [];
+    for (const line of lines) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+    }
+    if (!dataLines.length) return;
+    const rawData = dataLines.join('\n');
+    let payload;
+    try { payload = JSON.parse(rawData); } catch { payload = { raw: rawData }; }
+    if (eventName === 'progress') {
+      onProgress?.(payload);
+      return;
+    }
+    if (eventName === 'response.completed') {
+      completedPayload = payload;
+      return;
+    }
+    if (eventName === 'error') {
+      throw new Error(payload.error?.message || 'Streaming failed');
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    while (true) {
+      const boundary = buffer.indexOf('\n\n');
+      if (boundary < 0) break;
+      const rawEvent = buffer.slice(0, boundary).trim();
+      buffer = buffer.slice(boundary + 2);
+      if (!rawEvent) continue;
+      dispatch(rawEvent);
+    }
+  }
+
+  if (!completedPayload) {
+    throw new Error('Streaming completed without response.completed payload');
+  }
+  return completedPayload;
 }
 
 async function withTimeout(promise, ms) {
@@ -352,9 +430,17 @@ async function runQuestion(q, base, sessionId, options = {}) {
     session_id: sessionId,
     messages: options.messages || [{ role: 'user', content: messageContent }]
   };
+  let lastProgressMessage = '';
   const r = await withProgress(
     progressLabel,
-    () => withTimeout(fetchJson(base, 'POST', '/chat/completions', body), timeoutMs),
+    () => withTimeout(fetchChatCompletionStream(base, body, {
+      onProgress: (event) => {
+        const msg = event?.message || `${event?.stage || event?.type || 'progress'} ${event?.status || event?.event || ''}`.trim();
+        if (!msg || msg === lastProgressMessage) return;
+        lastProgressMessage = msg;
+        console.log(`    ${C.dim}[progress] ${msg}${C.reset}`);
+      }
+    }), timeoutMs),
     '    '
   );
   result.durationMs = Date.now() - start;

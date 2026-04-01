@@ -22,6 +22,7 @@ Relation: <canonical symbolic relation — optional>
 Object: <canonical symbolic object — optional>
 Confidence: <number in [0,1] — optional>
 UtilityActs: <comma-separated acts>
+PhaseScopes: <comma-separated scopes>
 UtilityNote: <optional explanation>
 
 ## Rules
@@ -35,6 +36,12 @@ UtilityNote: <optional explanation>
 - Extract multiple units if the chunk contains multiple distinct facts.
 - Do not invent information not present in the text.
 - Preserve the provenance IDs exactly as given.
+- PhaseScopes may contain one or more of: sd-plugin, mrp-plan-plugin, kb-plugin, gs-plugin, frame, val-plugin.
+- Use `kb-plugin` for normal factual/retrieval evidence.
+- Use `gs-plugin` when the chunk contains output-shape or response-policy instructions.
+- Use `mrp-plan-plugin` when the chunk contains planning, strategy, or plugin-selection guidance.
+- Use `frame` when the chunk contains decomposition/subtask/loop guidance.
+- Use `val-plugin` when the chunk contains validation or grounding constraints.
 - When a claim can be cleanly represented as a
   simple symbolic fact, also emit:
   `Subject`, `Relation`, `Object`, and optional

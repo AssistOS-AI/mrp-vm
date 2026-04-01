@@ -4,9 +4,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
-import { KBRepositoryManager } from '../../src/kb/repository-manager.mjs';
-import { ConversationHandler } from '../../src/conversation/handler.mjs';
-import { TypedPluginRegistry } from '../../src/plugins/typed-registry.mjs';
+import { KBRepositoryManager } from '../../src/core/kb/repository-manager.mjs';
+import { ConversationHandler } from '../../src/core/conversation/handler.mjs';
+import { TypedPluginRegistry } from '../../src/plugins/runtime/typed-registry.mjs';
 import { MRPServer } from '../../src/server/http-server.mjs';
 
 const tmpRoots = [];
@@ -39,9 +39,16 @@ function makeResCapture() {
     statusCode: null,
     headers: null,
     body: '',
+    setHeader(name, value) {
+      this.headers = this.headers || {};
+      this.headers[name] = value;
+    },
     writeHead(statusCode, headers = {}) {
       this.statusCode = statusCode;
-      this.headers = headers;
+      this.headers = { ...(this.headers || {}), ...headers };
+    },
+    write(chunk = '') {
+      this.body += chunk;
     },
     end(chunk = '') {
       this.body += chunk;
@@ -325,5 +332,78 @@ describe('HTTP KB session APIs', () => {
       event.units === 1 &&
       event.reason === 'session-context-api'
     ));
+  });
+
+  it('streams progress updates and response deltas over SSE for chat completions', async () => {
+    const res = makeResCapture();
+    const server = new MRPServer(
+      {
+        processChatTurn: async (body) => {
+          body.onProgress?.({
+            type: 'stage',
+            event: 'start',
+            stage: 'seed-detector',
+            pluginId: 'sd-symbolic',
+            message: 'Running seed detector sd-symbolic'
+          });
+          body.onProgress?.({
+            type: 'stage',
+            event: 'finish',
+            stage: 'goal-solver',
+            pluginId: 'gs-symbolic',
+            status: 'success',
+            message: 'goal-solver gs-symbolic finished with success'
+          });
+          return {
+            sessionId: 'sess-stream',
+            responseMarkdown: '# Streamed answer',
+            responseDocument: { sessionId: 'sess-stream', groups: [] },
+            executionTrace: { stages: [{ stage: 'goal-solver', pluginId: 'gs-symbolic', status: 'success' }] }
+          };
+        }
+      },
+      { listRepositories: () => [] },
+      {
+        getSession: () => ({
+          preferredPlannerPlugin: 'planner-default',
+          preferredSeedDetectorPlugin: 'sd-symbolic',
+          preferredKBPlugin: 'kb-fast',
+          preferredGoalSolverPlugin: 'gs-symbolic',
+          expiresAt: null,
+          mountedKbId: 'default',
+          mountedKbName: 'Default KB',
+          workspace: { dirty: false }
+        })
+      },
+      { getAvailableModels: () => [] },
+      {
+        get: () => null,
+        list: () => [],
+        listByType: () => []
+      },
+      {
+        getSnapshot: () => ({ roles: {}, availableModels: [] }),
+        update: body => body,
+        resolveModel: () => null
+      },
+      { port: 3000, host: '127.0.0.1', cors: { origin: '*' } }
+    );
+
+    await server._chatCompletions(
+      makeJsonReq({
+        stream: true,
+        messages: [{ role: 'user', content: 'Explain streaming.' }]
+      }),
+      res,
+      'req-stream'
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.headers['Content-Type'], 'text/event-stream; charset=utf-8');
+    assert.match(res.body, /event: progress/);
+    assert.match(res.body, /event: response\.delta/);
+    assert.match(res.body, /event: response\.completed/);
+    assert.match(res.body, /Running seed detector sd-symbolic/);
+    assert.match(res.body, /# Streamed answer/);
   });
 });

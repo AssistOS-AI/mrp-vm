@@ -4,6 +4,21 @@
   "defaultSeedDetectorPlan": ["sd-symbolic", "sd-llm-fast", "sd-llm-deep"],
   "defaultKBPlan": ["kb-fast", "kb-balanced", "kb-thinkingdb"],
   "defaultGoalSolverPlan": ["gs-symbolic", "gs-llm-fast", "gs-llm-deep"],
+  "wrappersDir": "wrappers",
+  "builtins": [
+    { "module": "src/plugins/sd-plugin/sd-symbolic/index.mjs", "enabled": true },
+    { "module": "src/plugins/sd-plugin/sd-llm-fast/index.mjs", "enabled": true },
+    { "module": "src/plugins/sd-plugin/sd-llm-deep/index.mjs", "enabled": true },
+    { "module": "src/plugins/kb-plugin/kb-fast/index.mjs", "enabled": true },
+    { "module": "src/plugins/kb-plugin/kb-balanced/index.mjs", "enabled": true },
+    { "module": "src/plugins/kb-plugin/kb-thinkingdb/index.mjs", "enabled": true },
+    { "module": "src/plugins/gs-plugin/gs-symbolic/index.mjs", "enabled": true },
+    { "module": "src/plugins/gs-plugin/gs-llm-fast/index.mjs", "enabled": true },
+    { "module": "src/plugins/gs-plugin/gs-llm-deep/index.mjs", "enabled": true },
+    { "module": "src/plugins/mrp-plan-plugin/planner-default/index.mjs", "enabled": true },
+    { "module": "src/plugins/mrp-plan-plugin/planner-depth/index.mjs", "enabled": true },
+    { "module": "src/plugins/val-plugin/val-llm/index.mjs", "enabled": true }
+  ],
   "statsFile": "data/settings/plugin-stats.json",
   "maxPluginsPerStage": 4
 }
