@@ -97,9 +97,7 @@ export class KBIndex {
     const {
       maxResults = 10,
       roleFilter = null,
-      actBoost = null,
-      focusTerms = [],
-      focusPhrases = []
+      actBoost = null
     } = options;
     const queryTokens = tokenize(query);
     if (queryTokens.length === 0) return [];
@@ -125,19 +123,6 @@ export class KBIndex {
       if (actBoost && unit) {
         const preferred = ACT_TO_ROLES[actBoost] || [];
         if (preferred.includes(unit.role)) total *= this.roleBoostFactor;
-      }
-      if (unit && (focusTerms.length > 0 || focusPhrases.length > 0)) {
-        const text = [
-          unit.topic || '',
-          unit.claim || '',
-          unit.procedure || '',
-          unit.subject || '',
-          unit.object || ''
-        ].join(' ').toLowerCase();
-        const focusTermMatches = focusTerms.filter(term => text.includes(term)).length;
-        const focusPhraseMatches = focusPhrases.filter(phrase => text.includes(phrase)).length;
-        if (focusTermMatches > 0) total *= 1 + Math.min(0.45, focusTermMatches * 0.12);
-        if (focusPhraseMatches > 0) total *= 1 + Math.min(0.4, focusPhraseMatches * 0.18);
       }
       if (roleFilter && unit?.role !== roleFilter) continue;
       scores.set(unitId, total);

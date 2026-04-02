@@ -25,6 +25,8 @@ All plugins MUST:
 - keep SDK/plugin code decoupled from
   `src/core/platform/**`; plugin-shared SDK modules
   must rely on injected config and SDK-local errors
+- keep specific algorithmic logic (like VSA/HDC retrieval or specific KB indexing) out of `src/mrp-vm-sdk/**`. The SDK is strictly for generic utilities, base classes, and LLM bridges.
+- accept input payloads as structured objects (`{ prompt: string, context: Array<{title, sourceLink, text}> }`) rather than concatenated Markdown strings.
 
 ## Packaging Rules
 
@@ -123,6 +125,8 @@ class KBPlugin {
     resolvedIntents: ResolvedIntent[] | null,
     sufficient: boolean,
     retrievalTrace: {
+      purpose: "task-evidence" | "strategy-guidance"
+             | "mixed",
       kuLevelsUsed: string[],
       totalKUsConsidered: number,
       selectedKUCount: number
@@ -184,6 +188,27 @@ The input SHOULD include:
 - `scope` such as `current-turn` or
   `committed-session` when the event concerns
   session KUs
+
+Canonical `onSessionEvent` envelope:
+
+```javascript
+{
+  eventType: "session-created" | "kb-loaded" | "kb-saved"
+           | "kb-forked" | "session-kus-added",
+  sessionId: string,
+  kbId: string | null,
+  kbName: string | null,
+  requestedKbId: string | null,
+  previousKbId: string | null,
+  previousKbName: string | null,
+  repositoryMeta: object | null,
+  workspaceStats: object,
+  snapshot: object | null,
+  units: object[],
+  scope: "current-turn" | "committed-session" | null,
+  reason: string | null
+}
+```
 
 When a session is created or a KB is loaded/saved/
 forked for a session, or when session KUs are staged

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { KBIndex } from '../../mrp-vm-sdk/retrieval/kb-index.mjs';
+import { KBIndex } from './index.mjs';
 
 function cloneUnit(unit) {
   return {

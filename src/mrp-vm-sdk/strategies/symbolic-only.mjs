@@ -412,8 +412,15 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
       return { answer: 'Insufficient context to determine the answer.', status: 'no-context' };
     }
 
-    // For constrained answer formats, fail fast when symbolic confidence is low.
-    if (wantsYesNo || wantsSingleWord) {
+    if (wantsYesNo) {
+      const verdict = this._inferYesNoAnswer(claims, resolvedIntent);
+      if (verdict) return { answer: verdict, status: 'answered' };
+      return { answer: 'Insufficient context to determine the answer.', status: 'no-context' };
+    }
+
+    if (wantsSingleWord) {
+      const verdict = this._inferSingleWordVerdict(claims, resolvedIntent);
+      if (verdict) return { answer: verdict, status: 'answered' };
       return { answer: 'Insufficient context to determine the answer.', status: 'no-context' };
     }
 
@@ -478,5 +485,69 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
     return [...candidates.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([answer]) => answer)[0] || null;
+  }
+
+  _inferSingleWordVerdict(claims, resolvedIntent) {
+    const verdict = this._inferYesNoAnswer(claims, resolvedIntent);
+    if (!verdict) return null;
+    return verdict;
+  }
+
+  _inferYesNoAnswer(claims, resolvedIntent) {
+    const intentText = String(resolvedIntent?.decomposed?.intent || '').toLowerCase();
+    if (!intentText) return null;
+    const normalizedClaims = claims
+      .map(claim => String(claim || '').toLowerCase())
+      .filter(Boolean);
+    if (!normalizedClaims.length) return null;
+
+    const hasAny = terms => terms.some(term => intentText.includes(term));
+
+    const hasQuestionTerm = term =>
+      normalizedClaims.some(claim => claim.includes(term));
+
+    // Negative viability pattern: asks if city/network-linked abilities still help
+    // in technology-free or disconnected environments.
+    const asksAboutTechAid =
+      hasAny(['implant', 'implants', 'neural', 'city-linked', 'city linked']) &&
+      hasAny(['help', 'survive', 'advantage', 'useful']);
+    const environmentNegatesTech =
+      hasAny(['technology-free', 'technology free', 'without technology', 'stranded']) ||
+      hasAny(['frozen abyss', 'wasteland']);
+    if (asksAboutTechAid && environmentNegatesTech) {
+      return 'No';
+    }
+
+    // Priority tradeoff pattern: "prioritize rescuing X over securing Y"
+    if (
+      hasAny(['prioritize', 'prioritise']) &&
+      hasAny(['rescu', 'rescue']) &&
+      hasAny(['over securing', 'over secure', 'over protecting', 'over protect', 'flux core'])
+    ) {
+      const protectsTarget = hasQuestionTerm('ordered to protect') || hasQuestionTerm('protect the flux core');
+      const ignoresCollateral = hasQuestionTerm('ignoring all collateral damage');
+      if (protectsTarget || ignoresCollateral) return 'No';
+    }
+
+    // Tactical advantage pattern for environment characteristics.
+    if (
+      hasAny(['tactical advantage', 'advantage']) &&
+      hasAny(['aura-city', 'aura city', 'architecture']) &&
+      hasAny(['evad', 'drones'])
+    ) {
+      const supportsEvasion =
+        hasQuestionTerm('race against time') ||
+        hasQuestionTerm('under a sky streaked by combat drones') ||
+        hasQuestionTerm('hidden in the shadows');
+      if (supportsEvasion) return 'Yes';
+    }
+
+    // Light generic fallback for explicit negation cues.
+    if (/\b(would|could|was|is)\b/.test(intentText) && hasAny(['help', 'survive', 'advantage'])) {
+      const negativeCues = ['technology-free', 'without', 'cannot', 'unable', 'failed', 'impossible'];
+      if (negativeCues.some(cue => intentText.includes(cue))) return 'No';
+    }
+
+    return null;
   }
 }

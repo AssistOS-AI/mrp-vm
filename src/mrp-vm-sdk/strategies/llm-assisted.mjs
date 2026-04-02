@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildResponseDocument, extractGroupAnswerBlocks } from '../synthesis/response-document.mjs';
+import { renderResolvedIntentPayloadMarkdown } from '../synthesis/resolved-intent-payload.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = resolve(__dirname, '../../../config/prompts');
@@ -92,7 +93,10 @@ export class LLMAssistedStrategy extends LanguageProcessingStrategy {
     let evidenceDoc = '';
     for (const ri of resolvedIntents) {
       // Normalize source/unit IDs for cache stability
-      evidenceDoc += ri.resolvedMarkdown.replace(/src-[a-f0-9]+/g, 'src-REF').replace(/sess-[a-f0-9-]+/g, 'sess-REF') + '\n\n';
+      const resolvedMarkdown = renderResolvedIntentPayloadMarkdown(ri);
+      evidenceDoc += resolvedMarkdown
+        .replace(/src-[a-f0-9]+/g, 'src-REF')
+        .replace(/sess-[a-f0-9-]+/g, 'sess-REF') + '\n\n';
       const po = (pluginOutputs || []).find(p => p.intentRef === ri.intentRef);
       if (po && po.status === 'success') {
         evidenceDoc += `### Plugin Evidence\nPlugin: ${po.pluginName}\nConfidence: ${po.confidence}\nResult: ${po.resultCNL}\n\n`;

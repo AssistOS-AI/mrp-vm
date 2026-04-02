@@ -405,5 +405,145 @@ describe('HTTP KB session APIs', () => {
     assert.match(res.body, /event: response\.completed/);
     assert.match(res.body, /Running seed detector sd-symbolic/);
     assert.match(res.body, /# Streamed answer/);
+    assert.match(res.body, /"request_id":"req-stream"/);
+  });
+
+  it('returns session explainability registry with execution trace and response document', async () => {
+    const kbConfig = makeKbConfig();
+    const manager = new KBRepositoryManager(null, {}, kbConfig);
+    await manager.boot();
+
+    const conversation = new ConversationHandler({
+      defaultSeedDetectorPlugin: 'sd-symbolic',
+      defaultKBPlugin: 'kb-fast',
+      defaultGoalSolverPlugin: 'gs-symbolic'
+    });
+    conversation.attachKBRepositoryManager(manager);
+    const session = await conversation.createSession(null, 'default', 'planner-default', 'sd-symbolic', 'kb-fast', 'gs-symbolic');
+    await conversation.commitSuccessfulTurn(
+      session,
+      'Explain Aurora.',
+      '# Aurora answer',
+      [],
+      null,
+      'planner-default',
+      'sd-symbolic',
+      'kb-fast',
+      'gs-symbolic',
+      {
+        requestId: 'req-explain',
+        createdAt: '2026-04-02T12:00:00.000Z',
+        answerStatus: 'answered',
+        responseDocument: {
+          sessionId: session.sessionId,
+          groups: [{ intent: 'Explain Aurora', answerMarkdown: 'Aurora details.' }]
+        },
+        executionTrace: {
+          requestId: 'req-explain',
+          stages: [{ stage: 'goal-solver', pluginId: 'gs-symbolic', status: 'success' }]
+        }
+      }
+    );
+
+    const server = new MRPServer(
+      {
+        processChatTurn: async () => {
+          throw new Error('not used in this test');
+        },
+        isReady: () => true
+      },
+      manager,
+      conversation,
+      { getAvailableModels: () => [] },
+      { get: () => null, list: () => [], listByType: () => [] },
+      {
+        getSnapshot: () => ({ roles: {}, availableModels: [] }),
+        update: body => body,
+        resolveModel: () => null
+      },
+      { port: 3000, host: '127.0.0.1', cors: { origin: '*' } }
+    );
+
+    const res = makeResCapture();
+    server._getExplainability(`/sessions/${session.sessionId}/explainability`, res);
+    const payload = res.json();
+    assert.equal(res.statusCode, 200);
+    assert.equal(payload.session_id, session.sessionId);
+    assert.equal(payload.turn_count, 1);
+    assert.equal(payload.turns[0].requestId, 'req-explain');
+    assert.equal(payload.turns[0].turnIndex, 1);
+    assert.equal(payload.turns[0].plannerPlugin, 'planner-default');
+    assert.equal(payload.turns[0].seedDetectorPlugin, 'sd-symbolic');
+    assert.equal(payload.turns[0].kbPlugin, 'kb-fast');
+    assert.equal(payload.turns[0].goalSolverPlugin, 'gs-symbolic');
+    assert.equal(payload.turns[0].executionTrace.stages[0].pluginId, 'gs-symbolic');
+    assert.equal(payload.turns[0].responseDocument.groups[0].answerMarkdown, 'Aurora details.');
+  });
+
+  it('stores failed turns in session explainability', async () => {
+    const kbConfig = makeKbConfig();
+    const manager = new KBRepositoryManager(null, {}, kbConfig);
+    await manager.boot();
+
+    const conversation = new ConversationHandler({
+      defaultSeedDetectorPlugin: 'sd-symbolic',
+      defaultKBPlugin: 'kb-fast',
+      defaultGoalSolverPlugin: 'gs-symbolic'
+    });
+    conversation.attachKBRepositoryManager(manager);
+    const session = await conversation.createSession(null, 'default', 'planner-default', 'sd-symbolic', 'kb-fast', 'gs-symbolic');
+    await conversation.commitFailedTurn(
+      session,
+      'What failed?',
+      null,
+      'planner-default',
+      'sd-symbolic',
+      'kb-fast',
+      'gs-symbolic',
+      {
+        requestId: 'req-failed',
+        createdAt: '2026-04-02T12:10:00.000Z',
+        answerStatus: 'failed',
+        assistantPreview: 'Validation rejected.',
+        executionTrace: {
+          requestId: 'req-failed',
+          finalStatus: 'failed',
+          stages: [{ stage: 'validation', pluginId: 'val-symbolic', status: 'rejected' }]
+        },
+        error: {
+          code: 'VALIDATION_REJECTED',
+          message: 'Validation rejected: fabricated claim'
+        }
+      }
+    );
+
+    const server = new MRPServer(
+      {
+        processChatTurn: async () => {
+          throw new Error('not used in this test');
+        },
+        isReady: () => true
+      },
+      manager,
+      conversation,
+      { getAvailableModels: () => [] },
+      { get: () => null, list: () => [], listByType: () => [] },
+      {
+        getSnapshot: () => ({ roles: {}, availableModels: [] }),
+        update: body => body,
+        resolveModel: () => null
+      },
+      { port: 3000, host: '127.0.0.1', cors: { origin: '*' } }
+    );
+
+    const res = makeResCapture();
+    server._getExplainability(`/sessions/${session.sessionId}/explainability`, res);
+    const payload = res.json();
+    assert.equal(res.statusCode, 200);
+    assert.equal(payload.turn_count, 1);
+    assert.equal(payload.turns[0].requestId, 'req-failed');
+    assert.equal(payload.turns[0].answerStatus, 'failed');
+    assert.equal(payload.turns[0].executionTrace.finalStatus, 'failed');
+    assert.equal(payload.turns[0].error.code, 'VALIDATION_REJECTED');
   });
 });

@@ -78,7 +78,8 @@ SectionTitle: <optional enclosing section title>
 | Object      | No**     | Canonical symbolic fact object     |
 | Confidence  | No***    | Numeric confidence in `[0, 1]`     |
 | UtilityActs | No       | Pragmatic acts served (CSV).       |
-|             |          | Inferred from Role if absent.      |
+|             |          | Defaulted from Role using          |
+|             |          | canonical Role→UtilityActs map.    |
 | PhaseScopes | No       | Which plugin phases should consume |
 |             |          | this KU (`sd-plugin`,              |
 |             |          | `mrp-plan-plugin`, `kb-plugin`,    |
@@ -156,8 +157,8 @@ PhaseScopes: mrp-plan-plugin, gs-plugin
 
 Rules:
 
-- when omitted, consumers MAY infer phase relevance
-  heuristically from role and content
+- when omitted, consumers MUST default to `kb-plugin`
+  only (no heuristic promotion)
 - a KU may still be factual evidence for `kb-plugin`
   retrieval even if it also carries guidance scopes
 - output-format instructions SHOULD typically include

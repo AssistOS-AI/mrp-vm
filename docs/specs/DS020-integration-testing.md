@@ -103,10 +103,10 @@ In the current baseline, this means:
 
 ## Compatibility Rule
 
-Legacy aliases such as `processing_mode` and
-`retrieval_profile` may still appear in tests during
-migration, but typed plugin IDs are the preferred
-assertion surface.
+Typed plugin IDs are the assertion surface for active
+runtime tests. Legacy `processing_mode` and
+`retrieval_profile` aliases should not be required in
+new integration tests.
 
 ## Minimum Assertions
 
@@ -119,6 +119,8 @@ Integration tests SHOULD assert:
   `no-context`, cross-planner escalation)
 - workspace dirty/save/fork semantics
 - plugin-private artifact side effects when relevant
+- explainability session endpoint shape and per-turn
+  execution payload availability
 
 The current deterministic suite includes regression
 coverage for:
@@ -128,8 +130,8 @@ coverage for:
   goal solver
 - fallback from weak `no-context` plans to a heavier
   planner
-- derivation of legacy compatibility fields from the
-  selected plugin IDs
+- session-level explainability registry exposure from
+  committed chat turns
 
 ## Dependencies
 

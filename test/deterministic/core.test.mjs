@@ -3,8 +3,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CNLValidator, CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
 import { IntentDecomposer } from '../../src/core/intent/decomposer.mjs';
-import { tokenize } from '../../src/mrp-vm-sdk/retrieval/tokenizer.mjs';
-import { KBIndex } from '../../src/mrp-vm-sdk/retrieval/kb-index.mjs';
+import { tokenize } from '../../src/core/kb/tokenizer.mjs';
+import { KBIndex } from '../../src/core/kb/index.mjs';
 import { TypedPluginRegistry } from '../../src/plugins/runtime/typed-registry.mjs';
 import { DefaultPlannerPlugin } from '../../src/plugins/runtime/default-planner-plugin.mjs';
 import { MRPEngine } from '../../src/core/engine/engine.mjs';
@@ -184,7 +184,22 @@ describe('IntentDecomposer', () => {
     assert.equal(profile.maxResults, 4);
   });
 
-  it('adds capability and dependency expansion terms for explanatory retrieval', () => {
+  it('uses tighter maxResults for constrained one-word outputs', () => {
+    const decomposed = {
+      groupNumber: 1,
+      act: 'explain',
+      intent: 'Was Aura-City useful for Kaelen during the quakes?',
+      target: 'Aura-City useful for Kaelen during the quakes',
+      criteria: [],
+      evidence: [],
+      explicitContext: null,
+      outputType: 'One word only.'
+    };
+    const profile = d.deriveContextProfile(decomposed);
+    assert.equal(profile.maxResults, 5);
+  });
+
+  it('keeps explanatory retrieval terms grounded in the original intent text', () => {
     const decomposed = {
       groupNumber: 1,
       act: 'explain',
@@ -196,8 +211,10 @@ describe('IntentDecomposer', () => {
       outputType: 'Structured response.'
     };
     const profile = d.deriveContextProfile(decomposed);
-    assert.ok(profile.queryTerms.includes('interface'));
-    assert.ok(profile.queryTerms.includes('depends'));
+    assert.ok(profile.queryTerms.includes('qualified'));
+    assert.ok(profile.queryTerms.includes('benefits'));
+    assert.ok(!profile.queryTerms.includes('interface'));
+    assert.ok(!profile.queryTerms.includes('depends'));
     assert.ok(profile.focusTerms.includes('kaelen'));
   });
 });
@@ -502,8 +519,7 @@ describe('MRPEngine', () => {
                     score: 1,
                     unit: { sourceId: 'src-1', role: 'Explanation', claim: 'X is caused by Y.' }
                   }],
-                  retrievalTrace: {},
-                  resolvedMarkdown: '## Resolved Intent Group 1'
+                  retrievalTrace: {}
                 }],
                 retrievalTrace: {},
                 error: null
@@ -672,8 +688,7 @@ describe('MRPEngine', () => {
                     score: 1,
                     unit: { sourceId: 'src-1', role: 'Explanation', claim: 'X is caused by Y.' }
                   }],
-                  retrievalTrace: { purpose: 'mixed' },
-                  resolvedMarkdown: '## Resolved Intent Group 1'
+                  retrievalTrace: { purpose: 'mixed' }
                 }],
                 retrievalTrace: { purpose: 'mixed' },
                 error: null
@@ -844,8 +859,7 @@ describe('MRPEngine', () => {
                     score: 1,
                     unit: { sourceId: 'src-1', role: 'Explanation', claim: 'X is caused by Y.' }
                   }],
-                  retrievalTrace: { purpose: 'task-evidence' },
-                  resolvedMarkdown: '## Resolved Intent Group 1'
+                  retrievalTrace: { purpose: 'task-evidence' }
                 }],
                 retrievalTrace: { purpose: 'task-evidence' },
                 error: null
@@ -1004,8 +1018,7 @@ describe('MRPEngine', () => {
                     score: 1,
                     unit: { sourceId: 'src-1', role: 'Explanation', claim: 'X is caused by Y.' }
                   }],
-                  retrievalTrace: { purpose: 'task-evidence' },
-                  resolvedMarkdown: '## Resolved Intent Group 1'
+                  retrievalTrace: { purpose: 'task-evidence' }
                 }],
                 retrievalTrace: { purpose: 'task-evidence' },
                 error: null
@@ -1164,8 +1177,7 @@ describe('MRPEngine', () => {
                     score: 1,
                     unit: { sourceId: 'src-1', role: 'Explanation', claim: 'X is caused by Y.' }
                   }],
-                  retrievalTrace: {},
-                  resolvedMarkdown: '## Resolved Intent Group 1'
+                  retrievalTrace: {}
                 }],
                 retrievalTrace: {},
                 error: null
@@ -1318,8 +1330,7 @@ describe('MRPEngine', () => {
                   currentTurnContextUnits: [],
                   sessionUnits: [],
                   kbUnits: [],
-                  retrievalTrace: {},
-                  resolvedMarkdown: '## Resolved Intent Group 1'
+                  retrievalTrace: {}
                 }],
                 retrievalTrace: {},
                 error: null
@@ -1502,8 +1513,7 @@ describe('MRPEngine', () => {
                   currentTurnContextUnits: [],
                   sessionUnits: [],
                   kbUnits: [],
-                  retrievalTrace: {},
-                  resolvedMarkdown: '## Resolved Intent Group 1'
+                  retrievalTrace: {}
                 }],
                 retrievalTrace: {},
                 error: null
@@ -1531,8 +1541,7 @@ describe('MRPEngine', () => {
                     score: 1,
                     unit: { sourceId: 'src-1', role: 'Explanation', claim: 'X is caused by Y.' }
                   }],
-                  retrievalTrace: {},
-                  resolvedMarkdown: '## Resolved Intent Group 1'
+                  retrievalTrace: {}
                 }],
                 retrievalTrace: {},
                 error: null

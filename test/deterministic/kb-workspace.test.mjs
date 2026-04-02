@@ -82,12 +82,13 @@ describe('KB repositories and session workspaces', () => {
     });
 
     const conversation = new ConversationHandler({
-      defaultProcessingMode: 'symbolic-only',
-      defaultRetrievalProfile: 'thinkingdb'
+      defaultSeedDetectorPlugin: 'sd-symbolic',
+      defaultKBPlugin: 'kb-thinkingdb',
+      defaultGoalSolverPlugin: 'gs-symbolic'
     });
     conversation.attachKBRepositoryManager(manager);
 
-    const session = await conversation.createSession(null, 'symbolic-only', 'thinkingdb', 'default');
+    const session = await conversation.createSession(null, 'default');
     assert.equal(session.mountedKbId, 'default');
     assert.equal(session.workspace.getSources().length, 1);
     assert.equal(manager.listRepositories().length, 1);
@@ -135,12 +136,13 @@ describe('KB repositories and session workspaces', () => {
     await manager.boot();
 
     const conversation = new ConversationHandler({
-      defaultProcessingMode: 'symbolic-only',
-      defaultRetrievalProfile: 'thinkingdb'
+      defaultSeedDetectorPlugin: 'sd-symbolic',
+      defaultKBPlugin: 'kb-thinkingdb',
+      defaultGoalSolverPlugin: 'gs-symbolic'
     });
     conversation.attachKBRepositoryManager(manager);
 
-    const session = await conversation.createSession(null, 'symbolic-only', 'thinkingdb', 'default');
+    const session = await conversation.createSession(null, 'default');
     await conversation.commitSuccessfulTurn(
       session,
       'AchillesIDE uses Ploinky.',
@@ -186,16 +188,15 @@ describe('KB repositories and session workspaces', () => {
     await manager.boot();
 
     const conversation = new ConversationHandler({
-      defaultProcessingMode: 'llm-assisted',
-      defaultRetrievalProfile: 'balanced'
+      defaultSeedDetectorPlugin: 'sd-llm-fast',
+      defaultKBPlugin: 'kb-balanced',
+      defaultGoalSolverPlugin: 'gs-llm-fast'
     });
     conversation.attachKBRepositoryManager(manager);
 
     const preparedNew = await conversation.prepareTurn(
       null,
       [{ role: 'user', content: 'Verify the current plugin selection.' }],
-      null,
-      null,
       null,
       'default',
       'planner-default',
@@ -220,8 +221,6 @@ describe('KB repositories and session workspaces', () => {
       null,
       null,
       null,
-      null,
-      null,
       null
     );
 
@@ -240,8 +239,6 @@ describe('KB repositories and session workspaces', () => {
     await manager.boot();
 
     const conversation = new ConversationHandler({
-      defaultProcessingMode: null,
-      defaultRetrievalProfile: null,
       defaultSeedDetectorPlugin: null,
       defaultKBPlugin: null,
       defaultGoalSolverPlugin: null
@@ -251,8 +248,6 @@ describe('KB repositories and session workspaces', () => {
     const prepared = await conversation.prepareTurn(
       null,
       [{ role: 'user', content: 'Diagnose the server issue.' }],
-      null,
-      null,
       null,
       'default',
       null,
@@ -267,22 +262,21 @@ describe('KB repositories and session workspaces', () => {
     assert.equal(prepared.requestedSeedDetectorPlugin, null);
     assert.equal(prepared.requestedKBPlugin, null);
     assert.equal(prepared.requestedGoalSolverPlugin, null);
-    assert.equal(prepared.requestedProcessingMode, null);
-    assert.equal(prepared.requestedRetrievalProfile, null);
   });
 
-  it('derives legacy compatibility fields from current plugin selections instead of stale aliases', async () => {
+  it('stores only typed plugin selections in session metadata', async () => {
     const kbConfig = makeKbConfig();
     const manager = new KBRepositoryManager(null, {}, kbConfig);
     await manager.boot();
 
     const conversation = new ConversationHandler({
-      defaultProcessingMode: 'llm-assisted',
-      defaultRetrievalProfile: 'balanced'
+      defaultSeedDetectorPlugin: 'sd-llm-fast',
+      defaultKBPlugin: 'kb-balanced',
+      defaultGoalSolverPlugin: 'gs-llm-fast'
     });
     conversation.attachKBRepositoryManager(manager);
 
-    const session = await conversation.createSession(null, 'llm-assisted', 'balanced', 'default');
+    const session = await conversation.createSession(null, 'default');
     await conversation.commitSuccessfulTurn(
       session,
       'Verify this relation.',
@@ -296,8 +290,10 @@ describe('KB repositories and session workspaces', () => {
     );
 
     const meta = conversation.getSessionMeta(session.sessionId);
-    assert.equal(meta.processing_mode, 'symbolic-only');
-    assert.equal(meta.retrieval_profile, 'thinkingdb');
+    assert.equal(meta.seed_detector_plugin, 'sd-symbolic');
+    assert.equal(meta.kb_plugin, 'kb-thinkingdb');
+    assert.equal(meta.goal_solver_plugin, 'gs-symbolic');
+    assert.equal(meta.explainability_turn_count, 1);
   });
 
   it('promotes workspace plugin artifacts into the repository and rehydrates them on mount', async () => {
@@ -312,7 +308,7 @@ describe('KB repositories and session workspaces', () => {
     });
     conversation.attachKBRepositoryManager(manager);
 
-    const session = await conversation.createSession(null, null, null, 'default');
+    const session = await conversation.createSession(null, 'default');
     const workspaceArtifactPath = await manager.saveWorkspacePluginArtifact(
       session.sessionId,
       'kb-thinkingdb',
@@ -379,7 +375,7 @@ describe('KB repositories and session workspaces', () => {
     });
     conversation.attachPluginRegistry(registry);
 
-    const session = await conversation.createSession(null, null, null, 'default');
+    const session = await conversation.createSession(null, 'default');
     const detectedUnits = makeSourceEntry(
       'src-turn',
       'turn.txt',
@@ -478,7 +474,7 @@ describe('KB repositories and session workspaces', () => {
     });
     conversation.attachPluginRegistry(registry);
 
-    const session = await conversation.createSession(null, null, null, 'default');
+    const session = await conversation.createSession(null, 'default');
     assert.equal(events[0].eventType, 'session-created');
     assert.equal(events[1].eventType, 'kb-loaded');
     assert.equal(events[1].kbId, 'default');

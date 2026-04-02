@@ -450,8 +450,8 @@ async function runQuestion(q, base, sessionId, options = {}) {
     kbPlugin: r.kb_plugin || null,
     goalSolverPlugin: r.goal_solver_plugin || null
   };
-  result.processingMode = r.processing_mode || null;
-  result.retrievalProfile = r.retrieval_profile || null;
+  result.processingMode = null;
+  result.retrievalProfile = null;
   result.assistantMessage = r.choices?.[0]?.message?.content || '';
   result.responseDocument = r.response_document || null;
   result.executionTrace = r.execution_trace || null;

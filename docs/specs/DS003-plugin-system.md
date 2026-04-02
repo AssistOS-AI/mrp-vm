@@ -127,6 +127,8 @@ Where:
 Plugin-shared helpers used across multiple plugin
 families SHOULD live under `src/mrp-vm-sdk/**`.
 
+The SDK (`src/mrp-vm-sdk/**`) MUST STRICTLY contain generic glue code, common LLM adapters, standard error classes, and generic utilities. It MUST NOT contain domain-specific logic, specific retrieval algorithms (like VSA/HDC), or specific Knowledge Base index management. All algorithm-specific and state-specific logic belongs entirely within the individual plugin implementations.
+
 `src/mrp-vm-sdk/**` MUST NOT import runtime platform
 helpers from `src/core/platform/**` directly.
 Configuration and platform concerns must be injected
@@ -160,13 +162,27 @@ Additional fields MAY be added later, but plugins
 must treat the context as read-only except for
 explicit callback surfaces.
 
-The VM remains agnostic to the internal syntax of
-payloads exchanged between plugins. In the baseline,
-those payloads are natural-language CNL blocks; a
-future deployment may substitute a more formal IR for
-specific domains without changing the core contract
-that the VM only manages boundaries, not payload
-semantics.
+Communication payloads to plugins MUST NOT be passed
+as compacted Markdown strings. The VM enforces a
+structured object format to cleanly separate the core
+request from background evidence:
+
+```javascript
+{
+  prompt: "The intent or core requirement",
+  context: [
+    {
+      title: "Short KU title",
+      sourceLink: "Bibliographic source or URI",
+      text: "The actual KU text"
+    }
+  ]
+}
+```
+
+This ensures plugins can programmatically distinguish
+the current task from surrounding context without
+fragile text parsing.
 
 The source-text ingest hook currently receives a
 documented subset plus ingest-specific additions:

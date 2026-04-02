@@ -27,7 +27,3 @@ export function loadConfig(name) {
   cache[name] = raw;
   return raw;
 }
-
-export function clearConfigCache() {
-  for (const k of Object.keys(cache)) delete cache[k];
-}

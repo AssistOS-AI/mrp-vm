@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { KnowledgeBase } from './knowledge-base.mjs';
 import { FileMemoryPersistence } from './persistence.mjs';
-import { KBIndex } from '../../mrp-vm-sdk/retrieval/kb-index.mjs';
+import { KBIndex } from './index.mjs';
 import { MRPError } from '../platform/errors.mjs';
 
 function ensureDir(dir) {

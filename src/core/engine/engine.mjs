@@ -600,9 +600,10 @@ export class MRPEngine {
     const requestId = `req-${randomUUID().substring(0, 12)}`;
     const startTime = Date.now();
     const budgetState = this._createBudgetState(0);
-    let planner = null;
-    let pluginCtx = null;
-    const executionTrace = {
+        let planner = null;
+        let pluginCtx = null;
+        let prepared = null;
+        const executionTrace = {
       requestId,
       sessionId: null,
       plannerPluginId: null,
@@ -686,12 +687,10 @@ export class MRPEngine {
     const processPromise = (async () => {
       let activeSession = null;
       try {
-        const prepared = await this.conversationHandler.prepareTurn(
+        prepared = await this.conversationHandler.prepareTurn(
           request.session_id,
           request.messages,
           request.model,
-          request.processing_mode,
-          request.retrieval_profile,
           request.kb_id || null,
           request.planner_plugin || null,
           request.seed_detector_plugin || null,
@@ -753,7 +752,14 @@ export class MRPEngine {
             plannerId,
             executed.selectedSeedDetectorPlugin,
             executed.selectedKBPlugin,
-            executed.selectedGoalSolverPlugin
+            executed.selectedGoalSolverPlugin,
+            {
+              requestId,
+              createdAt: new Date().toISOString(),
+              answerStatus: executed.goalResult.status === 'no-context' ? 'no-context' : 'answered',
+              responseDocument: executed.goalResult.responseDocument || null,
+              executionTrace: executionTrace || null
+            }
           );
 
           executionTrace.plannerPluginId = plannerId;
@@ -984,7 +990,7 @@ export class MRPEngine {
               currentTurnClaims: (ri.currentTurnContextUnits || []).slice(0, 3).map(u => `[${u.role}] ${u.claim || u.procedure || ''}`).filter(Boolean),
               sessionClaims: (ri.sessionUnits || []).slice(0, 3).map(u => `[${u.unit?.role}] ${u.unit?.claim || u.unit?.procedure || ''} (${u.score?.toFixed(2)})`).filter(Boolean),
               kbClaims: (ri.kbUnits || []).slice(0, 5).map(u => `[${u.unit?.role}] ${u.unit?.claim || u.unit?.procedure || ''} (${u.score?.toFixed(2)})`).filter(Boolean),
-              resolvedMarkdown: ri.resolvedMarkdown || null
+              resolvedPayload: ri.resolvedPayload || null
             }));
             kbNode.children.push({
               type: 'plugin', pluginId, status: result.status,
@@ -1425,11 +1431,57 @@ export class MRPEngine {
           'No planner plugin could produce an executable plan'
         );
       } catch (error) {
+        executionTrace.finalStatus = 'failed';
+        executionTrace.finalAnswerStatus = 'failed';
+        executionTrace.error = {
+          code: error?.code || 'ENGINE_ERROR',
+          message: error?.message || String(error)
+        };
         if (planner) {
           try {
             await planner.recordOutcome(executionTrace, pluginCtx);
           } catch (plannerError) {
             logger.warn(MOD, `Planner outcome recording failed: ${plannerError.message}`);
+          }
+        }
+        if (activeSession && prepared?.currentMessage && this.conversationHandler.commitFailedTurn) {
+          try {
+            await this.conversationHandler.commitFailedTurn(
+              activeSession,
+              prepared.currentMessage,
+              prepared.requestedModel,
+              executionTrace.plannerPluginId ||
+                prepared.explicitPlannerPlugin ||
+                prepared.requestedPlannerPlugin ||
+                activeSession.preferredPlannerPlugin ||
+                null,
+              prepared.explicitSeedDetectorPlugin ||
+                prepared.requestedSeedDetectorPlugin ||
+                activeSession.preferredSeedDetectorPlugin ||
+                null,
+              prepared.explicitKBPlugin ||
+                prepared.requestedKBPlugin ||
+                activeSession.preferredKBPlugin ||
+                null,
+              prepared.explicitGoalSolverPlugin ||
+                prepared.requestedGoalSolverPlugin ||
+                activeSession.preferredGoalSolverPlugin ||
+                null,
+              {
+                requestId,
+                createdAt: new Date().toISOString(),
+                answerStatus: 'failed',
+                responseDocument: null,
+                executionTrace,
+                assistantPreview: error?.message || 'Execution failed',
+                error: {
+                  code: error?.code || 'ENGINE_ERROR',
+                  message: error?.message || String(error)
+                }
+              }
+            );
+          } catch (commitError) {
+            logger.warn(MOD, `Failed explainability commit failed: ${commitError.message}`);
           }
         }
         if (error instanceof MRPError) {

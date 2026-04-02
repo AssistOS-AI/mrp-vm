@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 
 import { CNLValidator, CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
 import { SymbolicOnlyStrategy } from '../../src/mrp-vm-sdk/strategies/symbolic-only.mjs';
-import { KBIndex } from '../../src/mrp-vm-sdk/retrieval/kb-index.mjs';
+import { KBIndex } from '../../src/core/kb/index.mjs';
 
 describe('KU fields in CNL parser', () => {
   const parser = new CNLParser();
@@ -189,34 +189,6 @@ describe('Validation rejection is retryable', () => {
   });
 });
 
-describe('KU aggregate expansion in context matcher', () => {
-  it('expands aggregate KUs to children during retrieval', async () => {
-    // Simulate a KBIndex with an aggregate and its children
-    const index = new KBIndex();
-    const child1 = { id: 'src::chunk-000::unit-000', role: 'Explanation', topic: 'Alpha', claim: 'Alpha is fast', utilityActs: ['explain'], kuType: 'atomic' };
-    const child2 = { id: 'src::chunk-000::unit-001', role: 'Explanation', topic: 'Beta', claim: 'Beta is reliable', utilityActs: ['explain'], kuType: 'atomic' };
-    const aggregate = { id: 'src::section-000', role: 'Explanation', topic: 'Overview', claim: 'Overview of Alpha and Beta', utilityActs: ['explain'], kuType: 'composite', childUnitIds: ['src::chunk-000::unit-000', 'src::chunk-000::unit-001'] };
-    index.addUnit(child1);
-    index.addUnit(child2);
-    index.addUnit(aggregate);
-
-    // Import ContextMatcher
-    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
-    const matcher = new ContextMatcher({ get: () => null, getProfile: () => ({ primaryStrategies: [], secondaryStrategies: [] }) });
-
-    // Test the expansion method directly
-    const scored = [
-      { unitId: 'src::section-000', score: 2.0, unit: aggregate, store: 'kb', notes: [] }
-    ];
-    const expanded = matcher._expandAggregateKUs(scored, index, 10);
-
-    assert.ok(expanded.length >= 2, `Expected at least 2 expanded KUs, got ${expanded.length}`);
-    assert.ok(expanded.some(e => e.unitId === 'src::chunk-000::unit-000'), 'Should include child1');
-    assert.ok(expanded.some(e => e.unitId === 'src::chunk-000::unit-001'), 'Should include child2');
-    assert.ok(expanded.every(e => e.notes.includes('ku-expanded')), 'Expanded KUs should be tagged');
-  });
-});
-
 describe('Planner description-based scoring', () => {
   it('scores higher when plugin description matches query terms', async () => {
     const { DefaultPlannerPlugin } = await import('../../src/plugins/runtime/default-planner-plugin.mjs');
@@ -260,7 +232,7 @@ describe('Planner description-based scoring', () => {
 
 describe('Retrieval trace includes KU-level metrics', () => {
   it('reports kuLevelsUsed and counts in retrievalTrace', async () => {
-    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
+    const { ContextMatcher } = await import('../../src/plugins/kb-plugin/kb-fast/retrieval/context-matcher.mjs');
     const matcher = new ContextMatcher(
       { get: () => ({ retrieve: async () => ({ candidates: [] }) }), getProfile: () => ({ primaryStrategies: ['bm25-lexical'], secondaryStrategies: [] }) },
       {}
@@ -286,7 +258,7 @@ describe('Retrieval trace includes KU-level metrics', () => {
 
 describe('Current-turn context is filtered per intent', () => {
   it('filters current-turn KUs by intent query terms', async () => {
-    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
+    const { ContextMatcher } = await import('../../src/plugins/kb-plugin/kb-fast/retrieval/context-matcher.mjs');
     const matcher = new ContextMatcher(
       { get: () => ({ retrieve: async () => ({ candidates: [] }) }), getProfile: () => ({ primaryStrategies: ['bm25-lexical'], secondaryStrategies: [] }) },
       {}
@@ -312,8 +284,8 @@ describe('Current-turn context is filtered per intent', () => {
     assert.equal(ctUnits[0].id, 'ct-1');
   });
 
-  it('preserves current-turn goal-solver guidance even when it has no lexical overlap with the retrieval query', async () => {
-    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
+  it('keeps explicit guidance units routed by phase scopes', async () => {
+    const { ContextMatcher } = await import('../../src/plugins/kb-plugin/kb-fast/retrieval/context-matcher.mjs');
     const matcher = new ContextMatcher(
       { get: () => ({ retrieve: async () => ({ candidates: [] }) }), getProfile: () => ({ primaryStrategies: ['bm25-lexical'], secondaryStrategies: [] }) },
       {}
@@ -344,11 +316,14 @@ describe('Current-turn context is filtered per intent', () => {
     assert.equal(results[0].currentTurnContextUnits[0].id, 'ct-1');
     assert.equal(results[0].guidanceUnits.goalSolver.length, 1);
     assert.equal(results[0].guidanceUnits.goalSolver[0].unit.id, 'ct-2');
+    assert.equal(results[0].guidanceUnits.planner.length, 0);
+    assert.equal(results[0].guidanceUnits.seedDetector.length, 0);
+    assert.equal(results[0].guidanceUnits.validation.length, 0);
   });
 
-  it('does not let guidance-only candidates prune evidence candidates via confidence-gap filtering', async () => {
-    const { ContextMatcher } = await import('../../src/mrp-vm-sdk/retrieval/context-matcher.mjs');
-    const { RetrievalStrategyRegistry, BM25LexicalStrategy } = await import('../../src/mrp-vm-sdk/retrieval/strategies/registry.mjs');
+  it('does not let non-evidence guidance units displace evidence units', async () => {
+    const { ContextMatcher } = await import('../../src/plugins/kb-plugin/kb-fast/retrieval/context-matcher.mjs');
+    const { RetrievalStrategyRegistry, BM25LexicalStrategy } = await import('../../src/plugins/kb-plugin/kb-fast/retrieval/strategies/registry.mjs');
 
     const registry = new RetrievalStrategyRegistry();
     registry.register(new BM25LexicalStrategy());
@@ -357,8 +332,7 @@ describe('Current-turn context is filtered per intent', () => {
         primaryStrategies: ['bm25-lexical'],
         secondaryStrategies: [],
         maxResults: 5,
-        minScore: 0.05,
-        confidenceGapThreshold: 0.4
+        minScore: 0.05
       }
     });
 
@@ -399,6 +373,17 @@ describe('Current-turn context is filtered per intent', () => {
     assert.equal(results[0].sessionUnits[0].unitId, 'fact-1');
     assert.equal(results[0].guidanceUnits.goalSolver.length, 1, 'Guidance unit should still be routed to the goal solver');
     assert.equal(results[0].guidanceUnits.goalSolver[0].unitId, 'guide-1');
+  });
+
+  it('defaults to kb-plugin scope when no explicit phase scopes are provided', async () => {
+    const { inferPhaseScopes } = await import('../../src/mrp-vm-sdk/knowledge/pragmatics.mjs');
+    const scopes = inferPhaseScopes({
+      role: 'Constraint',
+      claim: 'Return JSON output.',
+      utilityActs: ['recommend'],
+      phaseScopes: []
+    });
+    assert.deepEqual(scopes, ['kb-plugin']);
   });
 });
 

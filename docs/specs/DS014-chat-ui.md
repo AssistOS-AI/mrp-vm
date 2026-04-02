@@ -84,6 +84,28 @@ show:
 Intermediate progress text is not the final answer
 and SHOULD be replaced as new stage updates arrive.
 
+## Explainability Surface
+
+The chat UI MUST expose a session-level
+**Explainability** entry point that opens a registry
+of user turns for the active session.
+
+Minimum behavior:
+
+- list executed turns for the current session
+- allow selecting a turn to inspect execution details
+- show request metadata and selected plugin IDs
+- show captured execution trace and response document
+  for the selected turn
+- provide per-response deep navigation so each
+  assistant answer can jump directly to its matching
+  explainability turn
+
+The per-response execution button MAY still open a
+focused execution-graph view; however, the
+session-level explainability registry is the primary
+navigation surface for multi-turn debugging.
+
 ## Dependencies
 
 - DS013 — API

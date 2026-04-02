@@ -82,12 +82,6 @@ Preferred combo shape for matrix mode:
 }
 ```
 
-When matrix mode is enabled, the runner MAY derive
-compatibility aliases from those plugin IDs for
-reporting. If `pluginCombos` are absent, it may still
-expand legacy `modes × profiles` into compatibility
-combos.
-
 ## Recorded Runtime Surface
 
 Suites SHOULD record or preserve:
@@ -99,11 +93,6 @@ Suites SHOULD record or preserve:
 - goal solver plugin used
 - LLM role assignments used
 - response document returned by the API
-
-The runner MAY still accept legacy compatibility
-aliases such as `processing_mode` and
-`retrieval_profile` during migration, but plugin IDs
-remain the preferred reporting and filtering surface.
 
 ## Metrics
 

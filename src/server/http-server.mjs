@@ -5,14 +5,6 @@ import { join, resolve, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MRPError, httpStatusForCode } from '../core/platform/errors.mjs';
 import { logger } from '../core/platform/logger.mjs';
-import {
-  LEGACY_PROCESSING_MODE_ALIASES,
-  LEGACY_RETRIEVAL_PROFILE_ALIASES,
-  mapLegacyProcessingMode,
-  mapLegacyRetrievalProfile,
-  deriveLegacyProcessingMode,
-  deriveLegacyRetrievalProfile
-} from '../plugins/runtime/aliases.mjs';
 
 const __dirname = import.meta.dirname || new URL('.', import.meta.url).pathname;
 const UI_DIR = resolve(__dirname, './ui');
@@ -69,12 +61,11 @@ export class MRPServer {
       if (path === '/sessions' && req.method === 'POST') return await this._createSession(req, res);
       if (path.match(/^\/sessions\/[^/]+$/) && req.method === 'GET') return this._getSession(path, res);
       if (path.match(/^\/sessions\/[^/]+$/) && req.method === 'DELETE') return this._deleteSession(path, res);
+      if (path.match(/^\/sessions\/[^/]+\/explainability$/) && req.method === 'GET') return this._getExplainability(path, res);
       if (path === '/models' && req.method === 'GET') return this._getModels(res);
       if (path === '/plugins' && req.method === 'GET') return this._getPlugins(url, res);
       if (path === '/settings/llm-roles' && req.method === 'GET') return this._getLLMRoleSettings(res);
       if (path === '/settings/llm-roles' && req.method === 'PUT') return await this._updateLLMRoleSettings(req, res);
-      if (path === '/processing-strategies' && req.method === 'GET') return this._getStrategies(res);
-      if (path === '/retrieval-profiles' && req.method === 'GET') return this._getRetrievalProfiles(res);
       if (path === '/kbs' && req.method === 'GET') return this._listKbs(res);
       if (path === '/kbs' && req.method === 'POST') return await this._createKb(req, res);
       if (path.match(/^\/sessions\/[^/]+\/kb\/load$/) && req.method === 'POST') return await this._mountKb(req, res, path);
@@ -121,17 +112,6 @@ export class MRPServer {
     return plugin;
   }
 
-  _isValidLegacyProcessingMode(mode) {
-    if (!mode) return true;
-    const mapping = mapLegacyProcessingMode(mode);
-    return !!(mapping.seedDetectorPlugin || mapping.goalSolverPlugin);
-  }
-
-  _isValidLegacyRetrievalProfile(profile) {
-    if (!profile) return true;
-    return !!mapLegacyRetrievalProfile(profile);
-  }
-
   async _chatCompletions(req, res, reqId) {
     const body = JSON.parse(await this._readBody(req));
     if (body.session_id === 'null' || body.session_id === 'undefined') body.session_id = null;
@@ -142,12 +122,6 @@ export class MRPServer {
     }
     if (!(body.messages || []).some(message => message.role === 'user')) {
       return this._json(res, 400, { error: { code: 'NO_USER_MESSAGE', message: 'At least one user message required', type: 'invalid_request' } });
-    }
-    if (!this._isValidLegacyProcessingMode(body.processing_mode)) {
-      return this._json(res, 400, { error: { code: 'INVALID_PROCESSING_MODE', message: `Unknown processing mode: ${body.processing_mode}`, type: 'invalid_request' } });
-    }
-    if (!this._isValidLegacyRetrievalProfile(body.retrieval_profile)) {
-      return this._json(res, 400, { error: { code: 'INVALID_RETRIEVAL_PROFILE', message: `Unknown retrieval profile: ${body.retrieval_profile}`, type: 'invalid_request' } });
     }
     try {
       this._validatePlugin('mrp-plan-plugin', body.planner_plugin, 'INVALID_PLANNER_PLUGIN');
@@ -172,15 +146,8 @@ export class MRPServer {
       id: `mrp-${reqId}`,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
+      request_id: result.requestId || null,
       session_id: result.sessionId,
-      processing_mode:
-        deriveLegacyProcessingMode(session?.preferredSeedDetectorPlugin, session?.preferredGoalSolverPlugin) ||
-        body.processing_mode ||
-        null,
-      retrieval_profile:
-        deriveLegacyRetrievalProfile(session?.preferredKBPlugin) ||
-        body.retrieval_profile ||
-        null,
       planner_plugin: session?.preferredPlannerPlugin || body.planner_plugin || result.executionTrace?.plannerPluginId || null,
       seed_detector_plugin: session?.preferredSeedDetectorPlugin || body.seed_detector_plugin || null,
       kb_plugin: session?.preferredKBPlugin || body.kb_plugin || null,
@@ -279,12 +246,6 @@ export class MRPServer {
 
   async _createSession(req, res) {
     const body = JSON.parse(await this._readBody(req));
-    if (!this._isValidLegacyProcessingMode(body.processing_mode)) {
-      return this._json(res, 400, { error: { code: 'INVALID_PROCESSING_MODE', message: `Unknown processing mode: ${body.processing_mode}`, type: 'invalid_request' } });
-    }
-    if (!this._isValidLegacyRetrievalProfile(body.retrieval_profile)) {
-      return this._json(res, 400, { error: { code: 'INVALID_RETRIEVAL_PROFILE', message: `Unknown retrieval profile: ${body.retrieval_profile}`, type: 'invalid_request' } });
-    }
     try {
       this._validatePlugin('mrp-plan-plugin', body.planner_plugin, 'INVALID_PLANNER_PLUGIN');
       this._validatePlugin('sd-plugin', body.seed_detector_plugin, 'INVALID_SEED_DETECTOR_PLUGIN');
@@ -296,8 +257,6 @@ export class MRPServer {
     }
     const session = await this.conversation.createSession(
       body.model,
-      body.processing_mode,
-      body.retrieval_profile,
       body.kb_id || null,
       body.planner_plugin || null,
       body.seed_detector_plugin || null,
@@ -309,8 +268,6 @@ export class MRPServer {
       session_id: session.sessionId,
       created_at: session.createdAt,
       expires_at: session.expiresAt,
-      processing_mode: deriveLegacyProcessingMode(session.preferredSeedDetectorPlugin, session.preferredGoalSolverPlugin),
-      retrieval_profile: deriveLegacyRetrievalProfile(session.preferredKBPlugin),
       planner_plugin: session.preferredPlannerPlugin,
       seed_detector_plugin: session.preferredSeedDetectorPlugin,
       kb_plugin: session.preferredKBPlugin,
@@ -340,6 +297,20 @@ export class MRPServer {
     res.end();
   }
 
+  _getExplainability(path, res) {
+    const sessionId = path.split('/')[2];
+    try {
+      const turns = this.conversation.getExplainability(sessionId);
+      this._json(res, 200, {
+        session_id: sessionId,
+        turn_count: turns.length,
+        turns
+      });
+    } catch (error) {
+      return this._handleError(res, error);
+    }
+  }
+
   _getModels(res) {
     const models = this.llmBridge?.getAvailableModels() || [];
     this._json(res, 200, { models });
@@ -359,33 +330,6 @@ export class MRPServer {
     const body = JSON.parse(await this._readBody(req));
     const snapshot = this.llmRoleSettings.update(body || {});
     this._json(res, 200, snapshot);
-  }
-
-  _getStrategies(res) {
-    const strategies = Object.entries(LEGACY_PROCESSING_MODE_ALIASES).map(([id, mapping]) => {
-      const seedDescriptor = this.pluginRegistry.get('sd-plugin', mapping.seedDetectorPlugin)?.getDescriptor?.() || {};
-      const goalDescriptor = this.pluginRegistry.get('gs-plugin', mapping.goalSolverPlugin)?.getDescriptor?.() || {};
-      return {
-        id,
-        seed_detector_plugin: mapping.seedDetectorPlugin,
-        goal_solver_plugin: mapping.goalSolverPlugin,
-        uses_llm: !!(seedDescriptor.usesLLM || goalDescriptor.usesLLM),
-        supports_model_override: !!(seedDescriptor.usesLLM || goalDescriptor.usesLLM),
-        capabilities: [...new Set([
-          ...(seedDescriptor.provides || []),
-          ...(goalDescriptor.provides || [])
-        ])]
-      };
-    });
-    this._json(res, 200, { strategies });
-  }
-
-  _getRetrievalProfiles(res) {
-    const profiles = Object.entries(LEGACY_RETRIEVAL_PROFILE_ALIASES).map(([id, pluginId]) => ({
-      id,
-      kb_plugin: pluginId
-    }));
-    this._json(res, 200, { profiles });
   }
 
   _listKbs(res) {
@@ -479,8 +423,7 @@ export class MRPServer {
       return this._handleError(res, error, reqId);
     }
 
-    const legacySeed = mapLegacyProcessingMode(body.processing_mode).seedDetectorPlugin;
-    const seedDetectorPluginId = body.seed_detector_plugin || session.preferredSeedDetectorPlugin || legacySeed || 'sd-symbolic';
+    const seedDetectorPluginId = body.seed_detector_plugin || session.preferredSeedDetectorPlugin || 'sd-symbolic';
     const seedPlugin = this.pluginRegistry.get('sd-plugin', seedDetectorPluginId);
     if (!seedPlugin) {
       return this._json(res, 400, { error: { code: 'INVALID_SEED_DETECTOR_PLUGIN', message: `Unknown seed detector plugin: ${seedDetectorPluginId}`, type: 'invalid_request' } });
@@ -596,8 +539,7 @@ export class MRPServer {
       return this._handleError(res, error, reqId);
     }
 
-    const legacySeed = mapLegacyProcessingMode(body.processing_mode).seedDetectorPlugin;
-    const seedDetectorPluginId = body.seed_detector_plugin || session.preferredSeedDetectorPlugin || legacySeed || 'sd-symbolic';
+    const seedDetectorPluginId = body.seed_detector_plugin || session.preferredSeedDetectorPlugin || 'sd-symbolic';
     const seedPlugin = this.pluginRegistry.get('sd-plugin', seedDetectorPluginId);
     if (!seedPlugin) {
       return this._json(res, 400, { error: { code: 'INVALID_SEED_DETECTOR_PLUGIN', message: `Unknown seed detector plugin: ${seedDetectorPluginId}`, type: 'invalid_request' } });
@@ -677,7 +619,7 @@ export class MRPServer {
       sessions: true,
       plugins: true
     };
-    const ready = this.engine.isReady();
+    const ready = this.engine?.isReady ? this.engine.isReady() : true;
     this._json(res, ready ? 200 : 503, { ready, checks });
   }
 

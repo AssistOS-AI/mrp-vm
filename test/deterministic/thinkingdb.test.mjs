@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ThinkingDB } from '../../src/mrp-vm-sdk/retrieval/thinkingdb.mjs';
-import { KBIndex } from '../../src/mrp-vm-sdk/retrieval/kb-index.mjs';
-import { ContextMatcher } from '../../src/mrp-vm-sdk/retrieval/context-matcher.mjs';
-import { RetrievalStrategyRegistry, BM25LexicalStrategy } from '../../src/mrp-vm-sdk/retrieval/strategies/registry.mjs';
-import { ThinkingDBSymbolicStrategy } from '../../src/mrp-vm-sdk/retrieval/strategies/thinkingdb.mjs';
+import { ThinkingDB } from '../../src/plugins/kb-plugin/kb-thinkingdb/retrieval/thinkingdb.mjs';
+import { KBIndex } from '../../src/core/kb/index.mjs';
+import { ContextMatcher } from '../../src/plugins/kb-plugin/kb-thinkingdb/retrieval/context-matcher.mjs';
+import { RetrievalStrategyRegistry, BM25LexicalStrategy } from '../../src/plugins/kb-plugin/kb-thinkingdb/retrieval/strategies/registry.mjs';
+import { ThinkingDBSymbolicStrategy } from '../../src/plugins/kb-plugin/kb-thinkingdb/retrieval/strategies/thinkingdb.mjs';
 import { SymbolicOnlyStrategy } from '../../src/mrp-vm-sdk/strategies/symbolic-only.mjs';
 import { CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
 

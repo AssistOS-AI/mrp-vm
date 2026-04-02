@@ -18,6 +18,7 @@
   const goalSelect = $('#goal-select');
   const settingsPanel = $('#settings-panel');
   const settingsToggle = $('#settings-toggle');
+  const explainabilityBtn = $('#explainability-btn');
   const saveSettingsBtn = $('#save-settings-btn');
   const roleSelects = $$('#settings-panel select[data-role]');
   const kbSelect = $('#kb-select');
@@ -35,6 +36,7 @@
 
   let sessionId = normalizeSessionId(sessionStorage.getItem('mrp_sessionId'));
   let workspaceState = null;
+  let explainabilityCache = { sessionId: null, turns: [] };
 
   function persistSessionId() {
     sessionId = normalizeSessionId(sessionId);
@@ -164,249 +166,228 @@
       .replace(/\n/g, '<br>');
   }
 
-  function buildContextHtml(group) {
-    const items = [];
-    for (const unit of group.currentTurnContext || []) items.push(esc(unit.claim || unit.procedure || unit.id));
-    for (const source of group.sessionSources || []) items.push(esc(source.unit?.claim || source.unit?.procedure || source.unitId));
-    for (const source of group.kbSources || []) items.push(esc(source.unit?.claim || source.unit?.procedure || source.unitId));
-    if (!items.length) return '<em>none</em>';
-    return '<ul>' + items.map(item => `<li>${item}</li>`).join('') + '</ul>';
+  function stageLabel(stage) {
+    const labels = {
+      planner: 'Planner',
+      'seed-detector': 'Seed',
+      decompose: 'Decompose',
+      kb: 'KB',
+      'goal-solver': 'Goal',
+      validation: 'Validation'
+    };
+    return labels[stage] || stage || 'stage';
   }
 
-  function renderResponseTable(doc) {
-    const statusClass = status => `status-badge status-${status}`;
-    let html = '<table class="modal-table"><colgroup><col class="col-act"><col class="col-intent"><col class="col-context"><col class="col-answer"></colgroup>';
-    html += '<thead><tr><th>Act</th><th>Intent</th><th>Context</th><th>Answer</th></tr></thead><tbody>';
-    for (const group of doc.groups) {
-      const answer = group.answerMarkdown ? renderMarkdown(group.answerMarkdown) : '<em>-</em>';
-      html += '<tr>';
-      html += `<td class="cell-act">${esc(group.act)}<br><span class="${statusClass(group.status)}">${group.status}</span></td>`;
-      html += `<td>${esc(group.intent)}</td>`;
-      html += `<td class="cell-context">${buildContextHtml(group)}</td>`;
-      html += `<td class="cell-answer">${answer}</td>`;
-      html += '</tr>';
+  function statusClass(status) {
+    const normalized = String(status || '').toLowerCase();
+    if (normalized === 'success' || normalized === 'accepted' || normalized === 'answered') return 'success';
+    if (normalized === 'insufficient' || normalized === 'no-context') return 'warning';
+    if (normalized === 'skipped-budget' || normalized === 'retry') return 'neutral';
+    return 'error';
+  }
+
+  function statusIcon(status) {
+    const normalized = String(status || '').toLowerCase();
+    if (normalized === 'success' || normalized === 'accepted' || normalized === 'answered') return '✅';
+    if (normalized === 'insufficient') return '⚠️';
+    if (normalized === 'no-context') return '🔸';
+    if (normalized === 'retry') return '🔄';
+    if (normalized === 'skipped-budget') return '⏭️';
+    return '❌';
+  }
+
+  function safeJson(value) {
+    if (value == null) return '';
+    if (typeof value === 'string') return value;
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
     }
-    html += '</tbody></table>';
-    return html;
   }
 
-  function renderTraceStages(trace) {
-    const trees = trace.trees || [];
-    if (!trees.length && !trace.stages?.length) return '<em>No execution data</em>';
-    if (!trees.length) return renderFlatStages(trace);
-    let html = '';
-    if (trace.inputMessage) {
-      html += `<div class="tree-root"><span class="tree-icon">💬</span> <strong>Input</strong> <span class="tree-ellipsis" data-full="${esc(trace.inputMessage)}">${esc(trace.inputMessage)}</span></div>`;
-    }
-    for (let ti = 0; ti < trees.length; ti++) {
-      const isRetry = ti > 0;
-      const statusIcon = (ti === trees.length - 1 && trace.finalStatus === 'success') ? '✅' : isRetry ? '🔄' : (trace.finalStatus === 'success' ? '✅' : '❌');
-      html += `<div class="tree-node tree-execution ${isRetry ? 'tree-retry' : ''}">`;
-      html += `<span class="tree-icon">${statusIcon}</span> <strong>Execution ${ti + 1}</strong>`;
-      if (isRetry) html += ' <span class="tree-notes">(backtrack)</span>';
-      html += '<div class="tree-children">';
-      html += renderPlanTree(trees[ti]);
-      html += '</div></div>';
-    }
-    if (trace.finalAnswerStatus) {
-      html += `<div class="tree-final"><span class="tree-icon">${trace.finalAnswerStatus === 'answered' ? '✅' : '🔸'}</span> <strong>Result: ${esc(trace.finalAnswerStatus)}</strong></div>`;
-    }
-    return html;
-  }
+  function buildTraceGraphNodes(trace) {
+    const nodes = [];
+    const pushNode = node => {
+      nodes.push({
+        id: `node-${nodes.length}`,
+        stage: node.stage || 'stage',
+        pluginId: node.pluginId || null,
+        status: node.status || 'unknown',
+        durationMs: node.durationMs ?? null,
+        llmCalls: node.llmCalls ?? null,
+        model: node.model || null,
+        evidenceCount: node.evidenceCount ?? null,
+        plannerAttempt: node.plannerAttempt || null,
+        kbPluginId: node.kbPluginId || null,
+        input: node.input || null,
+        output: node.output || null,
+        contextCNL: node.contextCNL || null,
+        error: node.error || null
+      });
+    };
 
-  function snipUI(text, max) {
-    // No longer used for tree rendering — kept for non-tree contexts
-    if (!text) return '';
-    if (!text.includes('\n') && text.length <= max) return text;
-    if (text.includes('\n')) {
-      const first = text.split('\n')[0];
-      return first.length <= max ? first + ' …' : first.slice(0, max) + '…';
-    }
-    return text.slice(0, max) + '…';
-  }
+    if (Array.isArray(trace?.trees) && trace.trees.length) {
+      const lastAttempt = trace.trees.length - 1;
+      for (let attemptIndex = 0; attemptIndex < trace.trees.length; attemptIndex += 1) {
+        const plan = trace.trees[attemptIndex];
+        const plannerStatus =
+          attemptIndex < lastAttempt
+            ? 'retry'
+            : (trace?.finalStatus === 'success' ? 'success' : (trace?.finalStatus || 'failed'));
+        pushNode({
+          stage: 'planner',
+          pluginId: plan?.plannerPluginId || trace?.plannerPluginId || 'planner',
+          status: plannerStatus,
+          plannerAttempt: attemptIndex + 1,
+          input: trace?.inputMessage || null,
+          output: [
+            `SD: ${(plan?.seedDetectorOrder || []).join(' -> ') || 'auto'}`,
+            `KB: ${(plan?.kbPluginOrder || []).join(' -> ') || 'auto'}`,
+            `GS: ${(plan?.goalSolverOrder || []).join(' -> ') || 'auto'}`,
+            plan?.notes?.length ? `Notes: ${plan.notes.join(', ')}` : null
+          ].filter(Boolean).join('\n')
+        });
 
-  function ellipsis(text, tag) {
-    // Renders a CSS-truncated span; click expands to full text
-    if (!text) return '';
-    var label = tag ? '<em>' + tag + '</em> ' : '';
-    return '<span class="tree-ellipsis" data-full="' + esc(text) + '">' + label + esc(text) + '</span>';
-  }
-
-  function renderPlanTree(plan) {
-    let html = '<div class="tree-node tree-plan">';
-    html += '<span class="tree-icon">📋</span> ';
-    html += '<strong>Plan</strong> <code>' + esc(plan.plannerPluginId || '') + '</code>';
-    if (plan.notes?.length) html += ' <span class="tree-notes">' + esc(plan.notes.join(', ')) + '</span>';
-    html += '<div class="tree-order">';
-    html += 'SD: ' + (plan.seedDetectorOrder || []).map(function(id){return '<code>'+esc(id)+'</code>';}).join(' → ');
-    html += ' · KB: ' + (plan.kbPluginOrder || []).map(function(id){return '<code>'+esc(id)+'</code>';}).join(' → ');
-    html += ' · GS: ' + (plan.goalSolverOrder || []).map(function(id){return '<code>'+esc(id)+'</code>';}).join(' → ');
-    html += '</div><div class="tree-children">';
-    for (const child of plan.children || []) html += renderTreeNode(child);
-    html += '</div></div>';
-    return html;
-  }
-
-  function renderTreeNode(node) {
-    if (node.type === 'stage') return renderStageNode(node);
-    if (node.type === 'decompose') return renderDecomposeNode(node);
-    if (node.type === 'plugin') return renderPluginNode(node);
-    return '';
-  }
-
-  function renderStageNode(node) {
-    const icons = { 'seed-detector': '🌱', 'kb': '📚', 'goal-solver': '🎯', 'validation': '✔️' };
-    const labels = { 'seed-detector': 'Seed Detection (sd-plugin)', 'kb': 'Context Retrieval (kb-plugin)', 'goal-solver': 'Goal Solving (gs-plugin)', 'validation': 'Validation (val-plugin)' };
-    let html = `<div class="tree-node tree-stage">`;
-    html += `<span class="tree-icon">${icons[node.stage] || '⚙️'}</span> <strong>${labels[node.stage] || node.stage}</strong>`;
-    html += '<div class="tree-children">';
-    for (const child of node.children || []) {
-      html += renderPluginNode(child);
-    }
-    html += '</div></div>';
-    return html;
-  }
-
-  function renderDecomposeNode(node) {
-    let html = '<div class="tree-node tree-decompose">';
-    html += '<span class="tree-icon">🔬</span> <strong>Parse &amp; Decompose</strong>';
-    html += ' <span class="tree-meta">' + (node.intentGroups?.length || 0) + ' intent seeds, ' + (node.currentTurnUnitCount || 0) + ' context units from turn</span>';
-    html += '<div class="tree-children">';
-    for (const ig of node.intentGroups || []) {
-      html += '<div class="tree-leaf tree-intent">';
-      html += '<span class="tree-icon">🎯</span> <strong>Intent Seed ' + ig.groupNumber + '</strong> ';
-      html += '<span class="tree-badge">' + esc(ig.act) + '</span> ';
-      html += ellipsis(ig.intent + (ig.output ? '\nExpected output: ' + ig.output : ''));
-      html += '</div>';
-    }
-    for (const cp of node.contextProfiles || []) {
-      html += '<div class="tree-leaf tree-profile">';
-      html += '<span class="tree-icon">🔎</span> <strong>Context Profile ' + cp.intentGroupNumber + '</strong> ';
-      html += 'needed roles: <em>' + ((cp.neededRoles || []).join(', ') || 'any') + '</em> · query: ';
-      html += ellipsis((cp.queryTerms || []).join(', '));
-      html += '</div>';
-    }
-    html += '</div></div>';
-    return html;
-  }
-
-  function renderPluginNode(node) {
-    var si = function(s){return s==='success'?'✅':s==='insufficient'?'⚠️':s==='no-context'?'🔸':s==='skipped-budget'?'⏭️':s==='unsupported'?'🚫':s==='accepted'?'✅':s==='rejected'?'🚫':'❌';};
-    var cls = node.status==='success'||node.status==='accepted'?'tree-ok':node.status==='insufficient'?'tree-warn':node.status==='no-context'?'tree-weak':'tree-fail';
-    var html = '<div class="tree-node tree-plugin '+cls+'">';
-    html += '<span class="tree-icon">'+si(node.status)+'</span> ';
-    html += '<code>'+esc(node.pluginId)+'</code> ';
-    html += '<span class="tree-status">'+esc(node.status)+'</span>';
-    if(node.durationMs!=null) html+=' <span class="tree-dur">'+node.durationMs+'ms</span>';
-    if(node.llmCalls) html+=' <span class="tree-llm">'+node.llmCalls+' LLM</span>';
-    if(node.model) html+=' <span class="tree-model">'+esc(node.model)+'</span>';
-    if(node.evidenceCount!=null) html+=' <span class="tree-evidence">'+node.evidenceCount+' evidence</span>';
-    if(node.input) html+='<div class="tree-io">'+ellipsis(node.input,'Input:')+'</div>';
-    if(node.output) html+='<div class="tree-io">'+ellipsis(node.output,'Output:')+'</div>';
-    if(node.contextCNL) html+='<div class="tree-io">'+ellipsis(node.contextCNL,'Context CNL:')+'</div>';
-    if(node.resolvedIntents?.length){
-      html+='<div class="tree-children">';
-      for(var ri of node.resolvedIntents){
-        html+='<div class="tree-node tree-ri">';
-        html+='<span class="tree-icon">📎</span> <strong>Resolved Intent '+ri.intentRef+'</strong> ';
-        html+='<span class="tree-badge">'+esc(ri.act||'')+'</span> ';
-        html+=ellipsis(ri.intent||'');
-        html+='<div class="tree-meta">'+ri.kbCount+' KB + '+ri.sessionCount+' session + '+ri.currentTurnCount+' turn</div>';
-        if(ri.kbClaims?.length){html+='<div class="tree-children">';for(var c of ri.kbClaims)html+='<div class="tree-leaf"><span class="tree-icon">📄</span> '+ellipsis(c)+'</div>';html+='</div>';}
-        if(ri.sessionClaims?.length){html+='<div class="tree-children">';for(var c2 of ri.sessionClaims)html+='<div class="tree-leaf"><span class="tree-icon">💬</span> '+ellipsis(c2)+'</div>';html+='</div>';}
-        if(ri.currentTurnClaims?.length){html+='<div class="tree-children">';for(var c3 of ri.currentTurnClaims)html+='<div class="tree-leaf"><span class="tree-icon">🔄</span> '+ellipsis(c3)+'</div>';html+='</div>';}
-        if(ri.resolvedMarkdown) html+='<div class="tree-io">'+ellipsis(ri.resolvedMarkdown,'Resolved frame:')+'</div>';
-        html+='</div>';
+        for (const child of plan?.children || []) {
+          if (child?.type === 'decompose') {
+            pushNode({
+              stage: 'decompose',
+              pluginId: 'decomposer',
+              status: 'success',
+              plannerAttempt: attemptIndex + 1,
+              output: safeJson({
+                intents: child.intentGroups || [],
+                contextProfiles: child.contextProfiles || [],
+                currentTurnUnitCount: child.currentTurnUnitCount || 0
+              })
+            });
+            continue;
+          }
+          if (child?.type !== 'stage') continue;
+          for (const pluginNode of child.children || []) {
+            pushNode({
+              stage: child.stage || 'stage',
+              pluginId: pluginNode.pluginId || null,
+              status: pluginNode.status || 'unknown',
+              durationMs: pluginNode.durationMs ?? null,
+              llmCalls: pluginNode.llmCalls ?? null,
+              model: pluginNode.model || null,
+              evidenceCount: pluginNode.evidenceCount ?? null,
+              plannerAttempt: attemptIndex + 1,
+              kbPluginId: pluginNode.kbPluginId || null,
+              input: pluginNode.input || null,
+              output: pluginNode.output ||
+                (pluginNode.resolvedIntents?.length ? safeJson(pluginNode.resolvedIntents) : null),
+              contextCNL: pluginNode.contextCNL || null,
+              error: pluginNode.error || null
+            });
+          }
+        }
       }
-      html+='</div>';
-    }
-    if(node.gsInputIntents?.length){
-      html+='<div class="tree-children">';
-      for(var gi of node.gsInputIntents){
-        html+='<div class="tree-node tree-ri">';
-        html+='<span class="tree-icon">📎</span> <strong>Resolved Intent '+gi.intentRef+'</strong> ';
-        html+='<span class="tree-badge">'+esc(gi.act||'')+'</span> '+esc(gi.intent||'')+' — '+gi.evidenceCount+' evidence';
-        if(gi.resolvedMarkdown) html+='<div class="tree-io">'+ellipsis(gi.resolvedMarkdown,'Full frame:')+'</div>';
-        html+='</div>';
+    } else {
+      for (const stageNode of trace?.stages || []) {
+        pushNode({
+          stage: stageNode.stage || 'stage',
+          pluginId: stageNode.pluginId || null,
+          status: stageNode.status || 'unknown',
+          durationMs: stageNode.durationMs ?? null,
+          llmCalls: stageNode.llmCalls ?? null,
+          model: stageNode.model || null,
+          plannerAttempt: stageNode.plannerPluginId || null,
+          input: stageNode.inputSnippet || null,
+          output: stageNode.outputSnippet || null,
+          error: stageNode.error || null
+        });
       }
-      html+='</div>';
     }
-    if(node.error) html+='<div class="tree-err">'+esc(node.error.code||'')+': '+esc(node.error.message||'')+'</div>';
-    html+='</div>';
-    return html;
+
+    return nodes;
   }
 
-  function renderFlatStages(trace) {
-    let html = '<div class="tree-children">';
-    for (const s of trace.stages || []) {
-      html += renderPluginNode({ ...s, pluginId: s.pluginId, input: s.inputSnippet, output: s.outputSnippet });
+  function normalizeNodeIndex(nodes, selectedNodeIndex) {
+    if (!nodes.length) return -1;
+    if (selectedNodeIndex == null || selectedNodeIndex < 0 || selectedNodeIndex >= nodes.length) {
+      return nodes.length - 1;
     }
-    html += '</div>';
-    return html;
+    return selectedNodeIndex;
   }
 
-  function showTraceModal(responseDoc, trace) {
-    const existing = document.querySelector('.trace-overlay');
-    if (existing) existing.remove();
-    const overlay = document.createElement('div');
-    overlay.className = 'trace-overlay';
-    const hasTable = responseDoc?.groups?.length;
-    const hasTrace = trace?.trees?.length || trace?.stages?.length;
-    let activeTab = hasTrace ? 'tree' : 'detail';
-    let isFullscreen = false;
-    let modalW = Math.min(900, window.innerWidth * 0.9);
-    let modalH = Math.min(700, window.innerHeight * 0.85);
+  function renderGraphNodeDetail(node) {
+    if (!node) return '<div class="explainability-empty">Select a graph node to inspect input/output.</div>';
+    const metaParts = [];
+    if (node.durationMs != null) metaParts.push(`duration: ${node.durationMs}ms`);
+    if (node.llmCalls != null) metaParts.push(`llm: ${node.llmCalls}`);
+    if (node.model) metaParts.push(`model: ${node.model}`);
+    if (node.evidenceCount != null) metaParts.push(`evidence: ${node.evidenceCount}`);
+    if (node.kbPluginId) metaParts.push(`kb-source: ${node.kbPluginId}`);
 
-    function render() {
-      const style = isFullscreen
-        ? 'width:100vw;max-width:100vw;height:100vh;max-height:100vh;border-radius:0'
-        : `width:${modalW}px;height:${modalH}px`;
-      let html = `<div class="trace-modal" style="${style}">`;
-      html += '<div class="trace-modal-header"><h2>🌳 Execution Tree</h2><div>';
-      html += `<button class="trace-modal-fs-btn">${isFullscreen ? '⊡' : '⊞'}</button>`;
-      html += '<button class="trace-modal-close">&times;</button></div></div>';
-      if (hasTable && hasTrace) {
-        html += '<div class="trace-modal-tabs">';
-        html += `<button class="trace-tab ${activeTab === 'tree' ? 'active' : ''}" data-tab="tree">🌳 Execution Tree</button>`;
-        html += `<button class="trace-tab ${activeTab === 'detail' ? 'active' : ''}" data-tab="detail">📋 Response Detail</button>`;
-        html += '</div>';
-      }
-      html += '<div class="trace-modal-body">';
-      if (activeTab === 'detail' && hasTable) html += renderResponseTable(responseDoc);
-      else if (hasTrace) html += renderTraceStages(trace);
-      html += '</div>';
-      if (!isFullscreen) html += '<div class="trace-resize-handle"></div>';
-      html += '</div>';
-      overlay.innerHTML = html;
-    }
-    render();
-    // Drag resize from corner handle
-    overlay.addEventListener('mousedown', e => {
-      if (!e.target.classList.contains('trace-resize-handle')) return;
-      e.preventDefault();
-      const startX = e.clientX, startY = e.clientY, startW = modalW, startH = modalH;
-      const onMove = ev => {
-        modalW = Math.max(400, startW + (ev.clientX - startX));
-        modalH = Math.max(300, startH + (ev.clientY - startY));
-        const m = overlay.querySelector('.trace-modal');
-        if (m) { m.style.width = modalW + 'px'; m.style.height = modalH + 'px'; }
+    const errorText = node.error
+      ? `${node.error.code || 'ERROR'}: ${node.error.message || ''}`.trim()
+      : '';
+
+    return `
+      <div class="graph-node-detail-head">
+        <div>
+          <strong>${esc(node.pluginId || stageLabel(node.stage))}</strong>
+          <span class="graph-node-stage">${esc(stageLabel(node.stage))}</span>
+        </div>
+        <span class="graph-node-status graph-node-status-${statusClass(node.status)}">${statusIcon(node.status)} ${esc(node.status || 'unknown')}</span>
+      </div>
+      <div class="graph-node-meta">${esc(metaParts.join(' · ') || 'No extra metadata')}</div>
+      <div class="graph-node-io">
+        <h5>Input</h5>
+        <pre>${esc(node.input || '(none)')}</pre>
+      </div>
+      <div class="graph-node-io">
+        <h5>Output</h5>
+        <pre>${esc(node.output || node.contextCNL || '(none)')}</pre>
+      </div>
+      ${errorText ? `
+      <div class="graph-node-io graph-node-error">
+        <h5>Error</h5>
+        <pre>${esc(errorText)}</pre>
+      </div>` : ''}
+    `;
+  }
+
+  function renderExplainabilityGraph(trace, selectedNodeIndex) {
+    const nodes = buildTraceGraphNodes(trace || {});
+    const normalizedIndex = normalizeNodeIndex(nodes, selectedNodeIndex);
+    if (!nodes.length) {
+      return {
+        nodes,
+        selectedNodeIndex: -1,
+        html: '<div class="explainability-empty">No execution trace captured.</div>'
       };
-      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-    overlay.addEventListener('click', e => {
-      if (e.target === overlay || e.target.closest('.trace-modal-close')) { overlay.remove(); return; }
-      if (e.target.closest('.trace-modal-fs-btn')) { isFullscreen = !isFullscreen; render(); return; }
-      const tab = e.target.closest('.trace-tab');
-      if (tab) { activeTab = tab.dataset.tab; render(); return; }
-      const el = e.target.closest('.tree-ellipsis[data-full]');
-      if (el) el.classList.toggle('tree-expanded');
-    });
-    document.addEventListener('keydown', function esc(e) {
-      if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); }
-    });
-    document.body.appendChild(overlay);
+    }
+
+    const trackHtml = nodes.map((node, index) => {
+      const isActive = index === normalizedIndex ? ' active' : '';
+      const attempt = node.plannerAttempt ? ` · try ${esc(String(node.plannerAttempt))}` : '';
+      const nodeHtml = `
+        <button type="button" class="graph-node graph-node-${statusClass(node.status)}${isActive}" data-node-index="${index}">
+          <div class="graph-node-title">${statusIcon(node.status)} <code>${esc(node.pluginId || stageLabel(node.stage))}</code></div>
+          <div class="graph-node-subtitle">${esc(stageLabel(node.stage))}${attempt}</div>
+          <div class="graph-node-status-text">${esc(node.status || 'unknown')}</div>
+        </button>
+      `;
+      if (index >= nodes.length - 1) return nodeHtml;
+      return `${nodeHtml}<span class="graph-arrow">→</span>`;
+    }).join('');
+
+    return {
+      nodes,
+      selectedNodeIndex: normalizedIndex,
+      html: `
+        <div class="explainability-graph-wrap">
+          <div class="explainability-graph-track">${trackHtml}</div>
+          <div class="explainability-node-detail">
+            ${renderGraphNodeDetail(nodes[normalizedIndex])}
+          </div>
+        </div>
+      `
+    };
   }
 
   function extractAnswerText(responseDoc) {
@@ -418,19 +399,240 @@
     return parts.length ? parts.join('\n\n') : null;
   }
 
-  function renderAssistantMessage(div, content, responseDoc, executionTrace) {
+  function snipText(value, max = 220) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    return text.length <= max ? text : `${text.slice(0, max)}…`;
+  }
+
+  async function fetchExplainabilityTurns(force = false) {
+    const activeSessionId = normalizeSessionId(sessionId);
+    if (!activeSessionId) return [];
+    if (!force && explainabilityCache.sessionId === activeSessionId) {
+      return explainabilityCache.turns;
+    }
+    const payload = await fetchJson(`/sessions/${activeSessionId}/explainability`);
+    if (payload.error) throw new Error(payload.error.message || 'Failed to load explainability');
+    explainabilityCache = {
+      sessionId: activeSessionId,
+      turns: Array.isArray(payload.turns) ? payload.turns : []
+    };
+    return explainabilityCache.turns;
+  }
+
+  function showExplainabilityPanel(options = {}) {
+    const activeSessionId = normalizeSessionId(sessionId);
+    if (!activeSessionId) {
+      showError('No active session for explainability yet.');
+      return;
+    }
+    const existing = document.querySelector('.explainability-overlay');
+    if (existing) existing.remove();
+
+    const requestId = options.requestId || null;
+    const overlay = document.createElement('div');
+    overlay.className = 'explainability-overlay';
+    let isFullscreen = false;
+    let turns = [];
+    let selectedIndex = -1;
+    let selectedNodeIndex = -1;
+    let loading = true;
+    let errorMessage = '';
+
+    const selectTurn = (nextIndex) => {
+      if (!turns.length) {
+        selectedIndex = -1;
+        selectedNodeIndex = -1;
+        return;
+      }
+      const bounded = Math.max(0, Math.min(nextIndex, turns.length - 1));
+      selectedIndex = bounded;
+      selectedNodeIndex = -1;
+    };
+
+    const selectByRequestId = (targetRequestId = null) => {
+      if (!turns.length) {
+        selectedIndex = -1;
+        selectedNodeIndex = -1;
+        return;
+      }
+      if (!targetRequestId) {
+        selectedIndex = Math.max(0, turns.length - 1);
+        selectedNodeIndex = -1;
+        return;
+      }
+      const idx = turns.findIndex(turn => turn.requestId === targetRequestId);
+      selectedIndex = idx >= 0 ? idx : Math.max(0, turns.length - 1);
+      selectedNodeIndex = -1;
+    };
+
+    const render = () => {
+      const listHtml = loading
+        ? '<div class="explainability-empty">Loading explainability…</div>'
+        : errorMessage
+          ? `<div class="explainability-empty">${esc(errorMessage)}</div>`
+          : turns.length === 0
+            ? '<div class="explainability-empty">No requests recorded for this session yet.</div>'
+            : turns.map((turn, index) => {
+              const active = index === selectedIndex ? ' active' : '';
+              const when = turn.createdAt ? new Date(turn.createdAt).toLocaleString() : '';
+              const summary = snipText(turn.userMessage || turn.assistantPreview || '(empty turn)', 88);
+              const statusClassName = statusClass(turn.answerStatus || 'unknown');
+              return `
+                <button type="button" class="explainability-turn explainability-turn-${statusClassName}${active}" data-index="${index}">
+                  <div class="explainability-turn-index">Turn ${turn.turnIndex || index + 1}${turn.requestId ? ` · ${esc(turn.requestId)}` : ''}</div>
+                  <div class="explainability-turn-text">${esc(summary)}</div>
+                  <div class="explainability-turn-meta">${esc(when)} · ${statusIcon(turn.answerStatus)} ${esc(turn.answerStatus || 'unknown')}</div>
+                </button>
+              `;
+            }).join('');
+
+      let detailHtml = '<div class="explainability-empty">Select a turn to inspect.</div>';
+      const selectedTurn = selectedIndex >= 0 ? turns[selectedIndex] : null;
+      if (selectedTurn) {
+        const when = selectedTurn.createdAt ? new Date(selectedTurn.createdAt).toLocaleString() : 'n/a';
+        const hasTrace = selectedTurn.executionTrace?.trees?.length || selectedTurn.executionTrace?.stages?.length;
+        const statusBadge = selectedTurn.answerStatus
+          ? `<span class="status-badge status-${selectedTurn.answerStatus}">${esc(selectedTurn.answerStatus)}</span>`
+          : '';
+        const graph = renderExplainabilityGraph(selectedTurn.executionTrace || null, selectedNodeIndex);
+        selectedNodeIndex = graph.selectedNodeIndex;
+        const outputPreview = selectedTurn.assistantPreview || selectedTurn.error?.message || '(empty)';
+        const errorSection = selectedTurn.error
+          ? `
+            <div class="explainability-detail-section">
+              <h4>Error</h4>
+              <div class="explainability-detail-msg explainability-error-msg">${esc(`${selectedTurn.error.code || 'ERROR'}: ${selectedTurn.error.message || ''}`.trim())}</div>
+            </div>
+          `
+          : '';
+
+        detailHtml = `
+          <div class="explainability-detail-head">
+            <div>
+              <h3>Turn ${selectedTurn.turnIndex || selectedIndex + 1} ${statusBadge}</h3>
+              <div class="explainability-detail-meta">
+                ${selectedTurn.requestId ? `request: <code>${esc(selectedTurn.requestId)}</code> · ` : ''}
+                ${esc(when)}
+              </div>
+            </div>
+            <div class="explainability-detail-meta">
+              planner: <code>${esc(selectedTurn.plannerPlugin || 'auto')}</code><br>
+              sd: <code>${esc(selectedTurn.seedDetectorPlugin || 'auto')}</code> ·
+              kb: <code>${esc(selectedTurn.kbPlugin || 'auto')}</code> ·
+              gs: <code>${esc(selectedTurn.goalSolverPlugin || 'auto')}</code>
+            </div>
+          </div>
+          <div class="explainability-detail-section">
+            <h4>User input</h4>
+            <div class="explainability-detail-msg">${esc(selectedTurn.userMessage || '(empty)')}</div>
+          </div>
+          <div class="explainability-detail-section">
+            <h4>Assistant output</h4>
+            <div class="explainability-detail-msg">${esc(snipText(outputPreview, 600))}</div>
+          </div>
+          ${errorSection}
+          <div class="explainability-detail-section">
+            <h4>Execution graph</h4>
+            ${graph.html}
+          </div>
+        `;
+      }
+
+      overlay.className = `explainability-overlay${isFullscreen ? ' explainability-fs' : ''}`;
+      overlay.innerHTML = `
+        <div class="explainability-modal">
+          <div class="explainability-header">
+            <h2>Explainability — Session ${esc(activeSessionId)}</h2>
+            <div class="explainability-header-actions">
+              <button type="button" class="explainability-refresh" aria-label="Refresh explainability">↻</button>
+              <button type="button" class="explainability-fullscreen" aria-label="Toggle fullscreen">${isFullscreen ? '⊡' : '⊞'}</button>
+              <button type="button" class="explainability-close" aria-label="Close explainability">&times;</button>
+            </div>
+          </div>
+          <div class="explainability-body">
+            <div class="explainability-list">${listHtml}</div>
+            <div class="explainability-detail">${detailHtml}</div>
+          </div>
+        </div>
+      `;
+    };
+
+    const loadTurns = async (force = false) => {
+      loading = true;
+      errorMessage = '';
+      render();
+      try {
+        turns = await fetchExplainabilityTurns(force);
+        loading = false;
+        if (selectedIndex < 0 || selectedIndex >= turns.length) selectByRequestId(requestId);
+        render();
+        if (selectedIndex >= 0) {
+          const activeTurn = overlay.querySelector(`.explainability-turn[data-index="${selectedIndex}"]`);
+          activeTurn?.scrollIntoView({ block: 'nearest' });
+        }
+      } catch (error) {
+        loading = false;
+        errorMessage = error.message || 'Failed to load explainability';
+        render();
+      }
+    };
+
+    const closeOverlay = () => {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      document.removeEventListener('keydown', onEscKey);
+    };
+
+    const onEscKey = event => {
+      if (event.key === 'Escape') closeOverlay();
+    };
+
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay || event.target.closest('.explainability-close')) {
+        closeOverlay();
+        return;
+      }
+      if (event.target.closest('.explainability-fullscreen')) {
+        isFullscreen = !isFullscreen;
+        render();
+        return;
+      }
+      if (event.target.closest('.explainability-refresh')) {
+        void loadTurns(true);
+        return;
+      }
+      const turnButton = event.target.closest('.explainability-turn[data-index]');
+      if (turnButton) {
+        selectTurn(Number(turnButton.dataset.index));
+        render();
+        return;
+      }
+      const graphNode = event.target.closest('.graph-node[data-node-index]');
+      if (graphNode) {
+        selectedNodeIndex = Number(graphNode.dataset.nodeIndex);
+        render();
+        return;
+      }
+    });
+
+    document.body.appendChild(overlay);
+    document.addEventListener('keydown', onEscKey);
+    void loadTurns(false);
+  }
+
+  function renderAssistantMessage(div, content, responseDoc, executionTrace, requestId = null) {
     const answerText = extractAnswerText(responseDoc);
     const displayHtml = answerText
       ? `<div class="answer-text">${renderMarkdown(answerText)}</div>`
       : `<div class="answer-text">${renderMarkdown(content)}</div>`;
-    const hasDetails = responseDoc?.groups?.length || executionTrace?.stages?.length;
-    const traceBtn = hasDetails
-      ? '<span class="msg-trace-btn">🌳 Execution Tree</span>'
-      : '';
-    div.innerHTML = displayHtml + traceBtn;
-    if (hasDetails) {
-      div.querySelector('.msg-trace-btn').addEventListener('click', () => {
-        showTraceModal(responseDoc, executionTrace);
+    const hasDetails = executionTrace?.stages?.length || executionTrace?.trees?.length;
+    const controls = [];
+    const shouldShowExplainabilityJump = requestId || hasDetails;
+    if (shouldShowExplainabilityJump) controls.push('<span class="msg-explainability-btn">🧭 Explainability</span>');
+    div.innerHTML = displayHtml + (controls.length ? `<div>${controls.join('')}</div>` : '');
+    if (shouldShowExplainabilityJump) {
+      div.querySelector('.msg-explainability-btn').addEventListener('click', () => {
+        showExplainabilityPanel({ requestId: requestId || null });
       });
     }
   }
@@ -451,18 +653,18 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  function finalizeAssistantDraft(div, content, responseDoc, executionTrace) {
+  function finalizeAssistantDraft(div, content, responseDoc, executionTrace, requestId = null) {
     if (!div) return;
     div.classList.remove('streaming');
-    renderAssistantMessage(div, content, responseDoc, executionTrace);
+    renderAssistantMessage(div, content, responseDoc, executionTrace, requestId);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  function addMessage(role, content, responseDoc, executionTrace) {
+  function addMessage(role, content, responseDoc, executionTrace, requestId = null) {
     const div = document.createElement('div');
     div.className = `msg ${role}`;
     if (role === 'assistant') {
-      renderAssistantMessage(div, content, responseDoc, executionTrace);
+      renderAssistantMessage(div, content, responseDoc, executionTrace, requestId);
     } else {
       div.textContent = content;
     }
@@ -508,8 +710,10 @@
 
   function applySessionMeta(meta) {
     if (!meta) return;
+    const previousSessionId = normalizeSessionId(sessionId);
     sessionId = normalizeSessionId(meta.session_id) || sessionId;
     persistSessionId();
+    if (sessionId !== previousSessionId) resetExplainabilityCache();
     workspaceState = workspaceState || {};
     workspaceState.kbId = meta.kb_id || workspaceState.kbId || kbSelect.value;
     workspaceState.kbName = meta.kb_name || workspaceState.kbName || workspaceState.kbId;
@@ -535,6 +739,10 @@
     buildPluginRequestConfig(body);
     if (kbSelect.value) body.kb_id = kbSelect.value;
     return body;
+  }
+
+  function resetExplainabilityCache() {
+    explainabilityCache = { sessionId: null, turns: [] };
   }
 
   async function loadKbList(selectedKbId = null) {
@@ -727,11 +935,13 @@
       sessionId = normalizeSessionId(completedPayload.session_id) || sessionId;
       persistSessionId();
       await refreshSessionState();
+      resetExplainabilityCache();
       finalizeAssistantDraft(
         draft,
         completedPayload.choices?.[0]?.message?.content || streamedText || '(empty response)',
         completedPayload.response_document,
-        completedPayload.execution_trace
+        completedPayload.execution_trace,
+        completedPayload.request_id || null
       );
     } catch (error) {
       hideLoading();
@@ -942,6 +1152,7 @@
     sessionId = null;
     persistSessionId();
     workspaceState = null;
+    resetExplainabilityCache();
     messagesEl.innerHTML = '';
     updateBadges();
   });
@@ -957,6 +1168,9 @@
 
   settingsToggle.addEventListener('click', () => {
     settingsPanel.classList.toggle('hidden');
+  });
+  explainabilityBtn.addEventListener('click', () => {
+    showExplainabilityPanel();
   });
   saveSettingsBtn.addEventListener('click', () => saveRoleSettings());
   newKbBtn.addEventListener('click', () => createNewKb());

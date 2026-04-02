@@ -13,12 +13,7 @@ import { loadBuiltInPlugins } from '../../plugins/runtime/builtin-loader.mjs';
 import { StrategyRegistry } from '../../mrp-vm-sdk/strategies/registry.mjs';
 import { LLMAssistedStrategy } from '../../mrp-vm-sdk/strategies/llm-assisted.mjs';
 import { SymbolicOnlyStrategy } from '../../mrp-vm-sdk/strategies/symbolic-only.mjs';
-import { ContextMatcher } from '../../mrp-vm-sdk/retrieval/context-matcher.mjs';
 import { AnswerSynthesizer } from '../../mrp-vm-sdk/synthesis/answer-synthesizer.mjs';
-import { BM25LexicalStrategy, RetrievalStrategyRegistry } from '../../mrp-vm-sdk/retrieval/strategies/registry.mjs';
-import { HDCVSAStrategy } from '../../mrp-vm-sdk/retrieval/strategies/hdc-vsa.mjs';
-import { ThinkingDBSymbolicStrategy } from '../../mrp-vm-sdk/retrieval/strategies/thinkingdb.mjs';
-import { configureTokenizer } from '../../mrp-vm-sdk/retrieval/tokenizer.mjs';
 import { LLMBridge } from '../llm/bridge.mjs';
 import { SourceIngestor } from '../ingest/source-ingestor.mjs';
 import { KBRepositoryManager } from '../kb/repository-manager.mjs';
@@ -34,8 +29,6 @@ export async function boot() {
   const llmConfig = loadConfig('llm');
   const strategiesConfig = loadConfig('strategies');
   const retrievalConfig = loadConfig('retrieval');
-  const retrievalStrategiesConfig = loadConfig('retrieval-strategies');
-  const thinkingdbConfig = loadConfig('thinkingdb');
   const pluginsConfig = loadConfig('plugins');
   const llmRoleSettingsConfig = loadConfig('llm-role-settings');
   const kbConfig = loadConfig('kb');
@@ -71,25 +64,8 @@ export async function boot() {
   const defaultKb = kbRepositoryManager.getDefaultRepository().kb;
   const kbIndex = defaultKb.getIndex();
 
-  const retrievalStrategyRegistry = new RetrievalStrategyRegistry();
-  retrievalStrategyRegistry.register(new BM25LexicalStrategy(retrievalConfig));
-  const hdcStrategy = new HDCVSAStrategy();
-  retrievalStrategyRegistry.register(hdcStrategy);
-  retrievalStrategyRegistry.register(new ThinkingDBSymbolicStrategy(thinkingdbConfig));
-  retrievalStrategyRegistry.setProfiles(retrievalStrategiesConfig.profiles);
-
-  kbIndex.onChange((event, unitId) => {
-    if (event === 'rebuild') hdcStrategy.invalidate(null);
-    else if (unitId) hdcStrategy.invalidate(unitId);
-  });
-
   const parser = new CNLParser();
   const decomposer = new IntentDecomposer();
-  configureTokenizer({ stemming: retrievalConfig.stemming !== false });
-  const retrieval = new ContextMatcher(retrievalStrategyRegistry, {
-    ...retrievalConfig,
-    strategyWeights: retrievalStrategiesConfig.strategyWeights || {}
-  });
   const synthesizer = new AnswerSynthesizer(strategyRegistry, engineConfig);
   const typedPluginRegistry = new TypedPluginRegistry();
   const llmRoleSettings = new LLMRoleSettingsStore(llmRoleSettingsConfig, llmBridge);
@@ -99,7 +75,6 @@ export async function boot() {
   await loadBuiltInPlugins(typedPluginRegistry, pluginsConfig, {
     strategyRegistry,
     normalizer,
-    retrieval,
     synthesizer,
     llmBridge,
     plannerStats,

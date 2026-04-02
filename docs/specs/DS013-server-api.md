@@ -1,8 +1,9 @@
 # DS013 — Server & API
 
 ## Purpose
-Defines the API after replacing modes/profiles with
-typed plugin selections and shared settings.
+Defines the HTTP API for session-scoped chat,
+typed plugin selection, KB lifecycle, and execution
+explainability.
 
 ## Chat Request
 
@@ -27,69 +28,50 @@ Rules:
 
 - explicit plugin IDs are optional
 - if omitted, session plugin preference is used
-- only if no explicit or session plugin preference
-  exists may the server/conversation layer fall back
-  to a legacy alias such as `processing_mode` or
-  `retrieval_profile`
-- if no session preference exists, the default
-  planner decides
+- if no preference exists, engine defaults/planner
+  fallback order apply
 - `model` is a generic override only; plugins SHOULD
   prefer DS028 role-based settings
-- legacy `processing_mode` and `retrieval_profile`
-  MAY be accepted temporarily as compatibility aliases
-- the current server still validates those legacy
-  aliases through explicit compatibility mappings
-  from typed plugin IDs while migration endpoints
-  remain available
-- legacy discovery endpoints MAY remain temporarily:
-  `GET /processing-strategies` and
-  `GET /retrieval-profiles`
+- legacy request aliases (`processing_mode`,
+  `retrieval_profile`) are not part of active runtime
+  contract and must not be required by clients
 
-If `stream: true`, the server MUST return an SSE
-stream rather than a buffered JSON response.
+If `stream: true`, the server returns an SSE stream.
 
-Minimum SSE events:
+## SSE Events
 
-- `progress` — overwrite-friendly execution status
+Minimum events:
+
+- `progress` — overwrite-friendly execution updates
 - `response.meta` — session/plugin metadata
-- `response.delta` — response text deltas
+- `response.delta` — incremental answer text
 - `response.completed` — final completion payload
 - `error` — terminal structured error
 
-If a stale or missing `session_id` is supplied, the
-API SHOULD return a structured `SESSION_NOT_FOUND` or
-`SESSION_EXPIRED` error instead of a generic combined
-message so clients can auto-recover safely.
-
-During a normal chat turn, the selected `sd-plugin`
-SHOULD emit both problem seeds and current-turn KUs
-in one detection pass. The server/core layer MUST
-stage those KUs into the current session before KB
-retrieval and MUST notify enabled `kb-plugin`s.
-
 ## Response
 
-Success response additionally returns:
+Success payload includes:
 
 ```json
 {
+  "request_id": "req-abc123",
+  "session_id": "sess-abc123",
   "planner_plugin": "planner-default",
   "seed_detector_plugin": "sd-symbolic",
   "kb_plugin": "kb-fast",
-  "goal_solver_plugin": "gs-llm-fast",
+  "goal_solver_plugin": "gs-symbolic",
+  "response_document": {},
   "execution_trace": {}
 }
 ```
 
-The response MAY still echo deprecated compatibility
-fields such as `processing_mode` and
-`retrieval_profile` during migration. When echoed,
-they may be derived from the selected plugin IDs
-rather than stored as first-class session state.
+Structured errors expose `MRPError.toJSON()` fields
+when available (including `requestId`, `sessionId`,
+and `timestamp`).
 
-Structured error payloads SHOULD expose the full
-`MRPError.toJSON()` surface when available, including
-`requestId`, `sessionId`, and `timestamp`.
+If a stale/missing `session_id` is supplied, the API
+returns structured `SESSION_NOT_FOUND` or
+`SESSION_EXPIRED`.
 
 ## Discovery Endpoints
 
@@ -99,19 +81,8 @@ Structured error payloads SHOULD expose the full
 - `GET /plugins?type=gs-plugin`
 - `GET /plugins?type=mrp-plan-plugin`
 
-These discovery surfaces SHOULD reflect the
-config-driven built-in plugin catalog plus any
-validated external wrappers that are registered into
-the typed plugin runtime. The reference server
-should not require a monolithic hard-coded
-registration block in the boot module.
-
-Legacy discovery endpoints remain compatibility-only
-surfaces derived from alias mappings plus the typed
-plugin registry:
-
-- `GET /processing-strategies`
-- `GET /retrieval-profiles`
+Legacy discovery endpoints for processing/retrieval
+aliases are removed from active runtime API.
 
 ## Settings Endpoints
 
@@ -120,158 +91,93 @@ plugin registry:
 
 ## Session Endpoints
 
-`POST /sessions` MAY accept:
+- `POST /sessions`
+- `GET /sessions/:id`
+- `DELETE /sessions/:id`
+- `GET /sessions/:id/explainability`
 
-```json
-{
-  "planner_plugin": "planner-default",
-  "seed_detector_plugin": "sd-symbolic",
-  "kb_plugin": "kb-fast",
-  "goal_solver_plugin": "gs-symbolic",
-  "kb_id": "default"
-}
-```
+`POST /sessions` may accept typed plugin selections
+and `kb_id`.
 
-The session metadata response SHOULD also include the
-selected plugin IDs alongside any deprecated
-compatibility fields still carried for migration.
+Session metadata includes selected plugin IDs and
+workspace metadata (dirty state, source/unit counts,
+save timestamp), plus `explainability_turn_count`.
 
-Creating a session MUST also create the session-local
-workspace state and notify all enabled `kb-plugin`s
-that a new session exists. If the session is created
-with an initial `kb_id`, or if the default KB is
-mounted, the server MUST then issue the normal
-session-scoped KB load notification for that mounted
-repository.
+## Explainability Endpoint
+
+`GET /sessions/:id/explainability` returns a
+session-level execution registry for completed chat
+turns.
+
+Each entry includes:
+
+- `requestId`
+- `turnIndex`
+- `createdAt`
+- `userMessage`
+- `assistantPreview`
+- selected planner/sd/kb/gs plugin IDs
+- `responseDocument`
+- `executionTrace`
+
+This is the canonical API used by the UI
+Explainability panel and per-response deep links.
 
 ## Session Context Endpoint
 
 `POST /sessions/:id/context`
 
-This is the canonical API for loading reusable source
-content into an existing session without pretending
-that the source load is an ordinary user question.
-
-Example:
-
-```json
-{
-  "name": "story.nl",
-  "content": "Long reusable source text...",
-  "seed_detector_plugin": "sd-llm-fast"
-}
-```
+Canonical API for loading reusable context into an
+existing session without appending synthetic user/
+assistant messages.
 
 Rules:
 
-- the server MUST resolve the effective
-  `seed_detector_plugin` using the same precedence as
-  other session-scoped operations
-- the selected `sd-plugin` MUST provide an ingest
-  strategy for persistent/context normalization
-- the server MUST turn the uploaded content into
-  KUs through the normal ingest helpers
-- the resulting KUs MUST be committed directly into
-  `sessionContextUnits`
-- the operation MUST NOT append synthetic user or
-  assistant messages to the conversation log
-- the operation MUST NOT dirty the mounted workspace
-  merely because reusable session context was loaded
-- all enabled `kb-plugin`s MUST be notified that
-  session KUs were added so they can update any
-  session-local caches they own
-
-For multi-turn evaluation or conversational source
-reuse, the canonical path is therefore:
-
-1. `POST /sessions`
-2. `POST /sessions/:id/context`
-3. repeated `POST /chat/completions` with the same
-   `session_id`
+- resolves effective `seed_detector_plugin` by normal
+  session precedence
+- uses selected seed detector ingest strategy
+- converts content to KUs through standard ingest
+  helpers
+- commits resulting KUs into `sessionContextUnits`
+- does not dirty mounted workspace for context load
+- notifies all enabled `kb-plugin`s
 
 ## KB Catalog Endpoints
 
 - `GET /kbs`
 - `POST /kbs`
 
-KB repositories are first-class named objects.
-
 Rules:
 
-- each KB MUST have a human-readable `name`
-- each KB MUST have a unique, cryptographically
-  random stable ID
-- `GET /kbs` MUST list both the display `name` and
-  the stable ID
-- `POST /kbs` creates a new empty KB repository; it
-  does not automatically change any existing session
-  unless a session-scoped load endpoint is called
-
-The canonical list payload SHOULD include:
-
-```json
-{
-  "kbs": [
-    {
-      "id": "kb-a1b2c3d4e5f60708",
-      "kbId": "kb-a1b2c3d4e5f60708",
-      "name": "Research Notes"
-    }
-  ]
-}
-```
-
-## Workspace Source Staging
-
-`POST /sessions/:id/workspace/sources` is a secondary
-API for explicit source staging into the mounted
-workspace / KB draft.
-
-It SHOULD be used when the caller needs:
-
-- workspace-backed source persistence
-- KB-style source ingestion
-- save / fork flows
-- plugin source-text hooks and derived artifacts
-
-It is not the default conversational path for
-multi-turn question answering when a normal
-session-backed chat flow is sufficient.
+- each KB has human-readable `name`
+- each KB has cryptographically random stable ID
+- list payload includes both name and ID
 
 ## Session-Scoped KB Endpoints
 
-The canonical KB operations for an interactive chat
-client are session-scoped:
-
 - `POST /sessions/:id/kb/load`
+- `POST /sessions/:id/kb/mount` (compatibility alias
+  of `.../kb/load`)
 - `POST /sessions/:id/kb/save`
 - `POST /sessions/:id/kb/fork`
 
-`POST /sessions/:id/kb/mount` MAY remain as a
-compatibility alias for `.../kb/load`, but the
-session-scoped load terminology is preferred because
-the operation means "make this KB active inside this
-session".
+## Workspace Source Staging
 
-Rules:
+`POST /sessions/:id/workspace/sources` stages source
+text into the mounted workspace draft and triggers
+plugin source-text hooks.
 
-- chat clients SHOULD use these endpoints instead of
-  trying to switch KBs implicitly through ordinary
-  `/chat/completions` traffic
-- loading a KB into a session means the server may
-  hydrate workspace/plugin-private state for that
-  session and MUST notify all enabled `kb-plugin`s
-- saving or forking a KB from a session MUST preserve
-  the session/workspace semantics from DS019 and
-  MUST notify all enabled `kb-plugin`s after the
-  repository target is materialized
-- source staging through `/workspace/sources` remains
-  a draft operation until an explicit session-scoped
-  save or fork occurs
+This is a draft operation until explicit save/fork.
+
+## Other Endpoints
+
+- `GET /eval-sources`
+- `GET /health`
+- `GET /ready`
 
 ## Dependencies
 
 - DS014 — UI
-- DS019 — session preferences
+- DS019 — session state
 - DS026 — repositories/workspaces
-- DS028 — settings payloads
+- DS028 — role settings

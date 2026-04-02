@@ -31,7 +31,7 @@ Deprecated compatibility fields such as
 `preferredRetrievalProfile` are no longer canonical
 session fields. Selection authority belongs to the
 typed plugin preferences, and compatibility values
-are derived from those plugin IDs when needed.
+are not part of active runtime session metadata.
 
 ## Turn Preparation
 
@@ -39,16 +39,14 @@ The conversation layer resolves:
 
 - explicit request plugin selections
 - session plugin preferences
-- deprecated legacy aliases only as a fallback after
-  explicit and session plugin preferences
 - current mounted KB/workspace
 - current system prompt and history
 
 The current implementation uses one shared
 plugin-selection resolver for both session creation
 and turn preparation so that explicit plugin IDs,
-session preferences, legacy aliases, and defaults are
-applied in the same order.
+session preferences, and defaults are applied in the
+same order.
 
 Request-level explicit plugin selections are exposed
 separately from resolved session/default preferences
@@ -147,11 +145,22 @@ After success, the session persists:
 - selected seed detector plugin
 - selected KB plugin
 - selected goal solver plugin
+- explainability turn entry (request id, user message,
+  assistant preview, selected plugin IDs,
+  `responseDocument`, and `executionTrace`)
 
-Legacy `processing_mode` and `retrieval_profile`
-values returned by the API are derived from those
-selected plugin IDs instead of being persisted as a
-separate source of truth.
+## Explainability Log
+
+Each session owns an in-memory explainability log used
+for session debugging and UI drill-down.
+
+The log stores one entry per committed turn and is
+exposed through DS013:
+
+- `GET /sessions/:id/explainability`
+
+This log is session-scoped and not a separate global
+artifact.
 
 ## Dependencies
 

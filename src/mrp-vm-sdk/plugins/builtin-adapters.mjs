@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { renderResolvedIntentPayloadMarkdown } from '../synthesis/resolved-intent-payload.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = resolve(__dirname, '../../../config/prompts');
@@ -428,7 +429,10 @@ export class LLMValidationPlugin {
     const userMsg = [
       '## Original Question', input.originalMessage || '',
       '## System Answer', (input.responseMarkdown || '').replace(/sess-[a-f0-9-]+/g, 'sess-REF').replace(/src-[a-f0-9]+/g, 'src-REF'),
-      '## Evidence Used', (input.resolvedIntents || []).map(ri => (ri.resolvedMarkdown || '').replace(/sess-[a-f0-9-]+/g, 'sess-REF').replace(/src-[a-f0-9]+/g, 'src-REF')).join('\n---\n')
+      '## Evidence Used',
+      (input.resolvedIntents || [])
+        .map(ri => renderResolvedIntentPayloadMarkdown(ri).replace(/sess-[a-f0-9-]+/g, 'sess-REF').replace(/src-[a-f0-9]+/g, 'src-REF'))
+        .join('\n---\n')
     ].join('\n\n');
     try {
       const raw = await this.llmBridge.call(prompt, userMsg, {

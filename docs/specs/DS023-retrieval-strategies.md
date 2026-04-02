@@ -49,7 +49,8 @@ each plugin owns its concrete backends, scoring, and
 fusion details.
 
 1. receive normalized goal seeds, context profile,
-   and retrieval purpose
+   and retrieval purpose (`task-evidence`,
+   `strategy-guidance`, or `mixed`)
 2. generate candidates from multiple memory views,
    considering KUs at all hierarchy levels
 3. distinguish strategy-guidance KUs from task-

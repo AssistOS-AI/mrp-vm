@@ -166,9 +166,17 @@ Validator error codes:
 - Role must be from the DS005 enum.
 - UtilityActs, when present, is a CSV of acts from
   the DS004 enum.
-- If UtilityActs is absent, the parser MAY infer a
-  default list from Role using the canonical role→act
-  fallback table in the implementation.
+- If UtilityActs is absent, the parser MUST derive a
+  default list from Role using the canonical mapping:
+  - Comparison -> compare
+  - Explanation -> explain
+  - Procedure -> implement
+  - Definition -> define
+  - Evaluation -> evaluate
+  - Diagnostic -> diagnose
+  - Constraint -> verify
+  - Narrative -> explain, describe
+  - Description -> describe
 - `Subject`, `Relation`, and `Object` are optional
   as a single block. Partial symbolic facts are
   rejected with `INCOMPLETE_SYMBOLIC_FACT`.

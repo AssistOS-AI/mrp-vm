@@ -1,6 +1,6 @@
 // DS012 — Retrieval & Context Matching
-import { renderResolvedIntentMarkdown } from './resolved-markdown.mjs';
 import { ACT_TO_ROLES, inferPhaseScopes } from '../knowledge/pragmatics.mjs';
+import { buildResolvedIntentPayload } from '../../../../mrp-vm-sdk/synthesis/resolved-intent-payload.mjs';
 
 export class ContextMatcher {
   constructor(retrievalStrategyRegistry, config = {}) {
@@ -36,7 +36,7 @@ export class ContextMatcher {
     const allCandidates = new Map(); // unitId → { best candidate }
     const strategiesRun = [];
     let escalated = false;
-    const profileMaxResults = profileConfig?.maxResults || this.maxResultsPerIntent;
+    const profileMaxResults = contextProfile?.maxResults || profileConfig?.maxResults || this.maxResultsPerIntent;
     const profileMinScore = profileConfig?.minScore ?? this.minScore;
 
     // Run primary strategies
@@ -117,21 +117,7 @@ export class ContextMatcher {
     );
     const guidanceCandidates = deduped.filter(entry => this._isGuidanceUnit(entry.unit));
 
-    // Confidence gap pruning applies to evidence candidates only.
-    const gapThreshold = profileConfig?.confidenceGapThreshold || 0;
-    let prunedEvidence = evidenceCandidates;
-    if (gapThreshold > 0 && evidenceCandidates.length > 0) {
-      const topScore = evidenceCandidates[0].score;
-      prunedEvidence = evidenceCandidates.filter(s =>
-        this._isProofBackedEvidence(s) || s.score >= topScore * gapThreshold
-      );
-    }
-
-    const topEvidence = this._expandAggregateKUs(
-      prunedEvidence.slice(0, profileMaxResults),
-      kbIndex,
-      profileMaxResults
-    );
+    const topEvidence = evidenceCandidates.slice(0, profileMaxResults);
     const topGuidance = guidanceCandidates.slice(0, profileMaxResults);
 
     // DS012/DS030: compute KU-level metrics
@@ -187,16 +173,7 @@ export class ContextMatcher {
       strategyUnits.length >= evidenceUnitCount ? 'strategy-guidance' :
       'mixed';
 
-    // Build resolved markdown
-    const resolvedMarkdown = renderResolvedIntentMarkdown(
-      decomposed,
-      filteredCurrentTurn,
-      sessionUnits,
-      kbUnits,
-      guidanceUnits
-    );
-
-    return {
+    const resolvedIntent = {
       intentGroup: { groupNumber: decomposed.groupNumber, act: decomposed.act, intent: decomposed.intent, output: decomposed.outputType },
       decomposed,
       intentRef,
@@ -213,9 +190,10 @@ export class ContextMatcher {
         kuLevelsUsed,
         totalKUsConsidered,
         selectedKUCount
-      },
-      resolvedMarkdown
+      }
     };
+    resolvedIntent.resolvedPayload = buildResolvedIntentPayload(resolvedIntent);
+    return resolvedIntent;
   }
 
   _mergeCandidate(map, candidate, strategyId) {
@@ -233,36 +211,6 @@ export class ContextMatcher {
       );
       existing.notes = [...new Set([...(existing.notes || []), ...(candidate.notes || [])])];
     }
-  }
-
-  /**
-   * DS030/DS012: Expand aggregate/composite KUs to their children when the
-   * aggregate itself is too broad for the query. Returns the original list
-   * with aggregates replaced by their children when beneficial.
-   */
-  _expandAggregateKUs(scored, kbIndex, maxResults) {
-    if (!kbIndex) return scored;
-    const expanded = [];
-    for (const entry of scored) {
-      const unit = entry.unit;
-      const kuType = unit?.kuType || unit?.unitType || '';
-      const childIds = unit?.childUnitIds || [];
-      if ((kuType === 'aggregate' || kuType === 'composite' || kuType === 'section-aggregate' || kuType === 'source-aggregate') && childIds.length > 0) {
-        // Replace aggregate with its children, inheriting the parent score with a small penalty
-        for (const childId of childIds) {
-          const childUnit = kbIndex.units?.get(childId);
-          if (childUnit) {
-            expanded.push({ ...entry, unitId: childId, unit: childUnit, score: entry.score * 0.95, notes: [...entry.notes, 'ku-expanded'] });
-          }
-        }
-      } else {
-        expanded.push(entry);
-      }
-    }
-    // Re-sort and deduplicate
-    expanded.sort((a, b) => b.score - a.score || a.unitId.localeCompare(b.unitId));
-    const seen = new Set();
-    return expanded.filter(e => { if (seen.has(e.unitId)) return false; seen.add(e.unitId); return true; }).slice(0, maxResults);
   }
 
   _collectStrategyUnits(currentTurnUnits = [], sessionUnits = [], kbUnits = []) {
@@ -306,14 +254,6 @@ export class ContextMatcher {
   _isGuidanceUnit(unit) {
     if (!unit) return false;
     return inferPhaseScopes(unit).some(scope => scope !== 'kb-plugin');
-  }
-
-  _isProofBackedEvidence(entry) {
-    const notes = entry?.notes || [];
-    return notes.some(note => {
-      const text = String(note || '').toLowerCase();
-      return text === 'thinkingdb' || text.startsWith('derived:') || text.startsWith('base:');
-    });
   }
 
   _entryFromUnit(unit, store, score = 1, notes = []) {

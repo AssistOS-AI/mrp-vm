@@ -51,6 +51,27 @@ state. The core does not prescribe what each plugin
 must cache; it only guarantees the notification and
 the mounted repository/workspace context.
 
+The notification payload is a discriminated envelope:
+
+```javascript
+{
+  eventType: "session-created" | "kb-loaded" | "kb-saved"
+           | "kb-forked" | "session-kus-added",
+  sessionId: string,
+  kbId: string | null,
+  kbName: string | null,
+  requestedKbId: string | null,
+  previousKbId: string | null,
+  previousKbName: string | null,
+  repositoryMeta: object | null,
+  workspaceStats: object,
+  snapshot: object | null,
+  units: object[],
+  scope: "current-turn" | "committed-session" | null,
+  reason: string | null
+}
+```
+
 ## Dependencies
 
 - DS008 — KB substrate

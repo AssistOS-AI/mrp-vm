@@ -306,6 +306,14 @@ Every request MUST emit a plugin execution trace with:
 - fallback/escalation path
 - frame depth and frame transitions
 
+Session-level explainability is exposed via the server
+API (DS013) and UI (DS014) as a per-request execution
+registry for the current session.
+
+External wrappers are helper subprocesses behind the
+wrapper manager path. They are not planner-visible
+typed stage plugins in the typed registry.
+
 ## Configuration Surface
 
 The config surface centers on:

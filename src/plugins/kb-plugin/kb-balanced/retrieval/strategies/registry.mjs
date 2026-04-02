@@ -31,9 +31,7 @@ export class BM25LexicalStrategy extends RetrievalStrategy {
     const query = contextProfile.queryTerms.join(' ');
     const opts = {
       maxResults: budget?.maxCandidates || contextProfile.maxResults || 10,
-      actBoost: contextProfile.actBoost,
-      focusTerms: contextProfile.focusTerms || [],
-      focusPhrases: contextProfile.focusPhrases || []
+      actBoost: contextProfile.actBoost
     };
     const candidates = [];
     // Search session index

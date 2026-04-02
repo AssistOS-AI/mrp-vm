@@ -46,6 +46,12 @@ export class IntentDecomposer {
         .map(term => term.trim().toLowerCase())
         .filter(Boolean)
     )];
+    const constrainedOutput = /\b(one|single)\s+word\b|\byes\s*(?:\/|or)\s*no\b/.test(
+      `${String(decomposed.outputType || '')} ${String(decomposed.intent || '')}`.toLowerCase()
+    );
+    const maxResults = decomposed.act === 'identify'
+      ? 4
+      : (constrainedOutput ? 5 : 10);
     return {
       intentGroupNumber: decomposed.groupNumber,
       neededRoles,
@@ -54,29 +60,15 @@ export class IntentDecomposer {
       focusTerms,
       focusPhrases,
       actBoost: decomposed.act,
-      maxResults: decomposed.act === 'identify' ? 4 : 10
+      maxResults
     };
   }
 
   _deriveQueryTerms(decomposed, textParts) {
-    const baseTerms = textParts.join(' ')
+    return textParts.join(' ')
       .split(/\s+/)
       .map(word => word.replace(/[^\w-]/g, '').toLowerCase())
       .filter(word => word && !isStopword(word) && !GENERIC_QUERY_TERMS.has(word));
-    const text = [decomposed.intent, decomposed.target, ...decomposed.criteria].filter(Boolean).join(' ').toLowerCase();
-    const expandedTerms = [];
-
-    if (/\b(qualified|qualification|capable|capability|abilities|ability|viable candidate)\b/.test(text)) {
-      expandedTerms.push('capable', 'ability', 'abilities', 'skill', 'skills', 'interface', 'technology');
-    }
-    if (/\b(benefit|benefits|beneficial|why)\b/.test(text)) {
-      expandedTerms.push('depends', 'dependency', 'provides', 'relevant');
-    }
-    if (decomposed.act === 'identify') {
-      expandedTerms.push('commander');
-    }
-
-    return [...baseTerms, ...expandedTerms];
   }
 
   _extractFocusPhrases(text) {

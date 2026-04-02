@@ -3,7 +3,6 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { statSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { loadConfig } from '../platform/config.mjs';
 import { logger } from '../platform/logger.mjs';
 import { MRPError } from '../platform/errors.mjs';
 

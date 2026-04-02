@@ -38,5 +38,3 @@ export function tokenize(text) {
   if (!isStemming()) return tokens;
   return tokens.map(t => stem(t));
 }
-
-export function resetTokenizerCache() { stemmingEnabled = true; }

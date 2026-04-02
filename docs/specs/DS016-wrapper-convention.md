@@ -8,7 +8,12 @@ Defines the convention that any external interpreter
 
 External interpreters are separate processes. They
 can be written in any language. Communication is via
-stdin/stdout in CNL Markdown format.
+stdin/stdout using structured JSON input and CNL
+Markdown output.
+
+Wrappers are external helper subprocesses managed by
+the wrapper manager path. They are not first-class
+typed stage plugins in the planner-visible registry.
 
 ## Protocol Version
 
@@ -63,31 +68,24 @@ Rules:
 Encoding: UTF-8.
 Max size: `maxInputSizeBytes` from manifest.
 
-The format is `resolvedMarkdown` from DS012 — a
-Markdown document with the normalized intent and all
-available evidence layers:
+The input format MUST NOT be compacted Markdown. Instead, it is passed as a structured JSON object containing the explicit intent and the associated Knowledge Units:
 
-```markdown
-## Resolved Intent Group 1
-Act: verify
-Intent: Verify that constraint X is satisfiable.
-Output: Verification result.
-
-### Current-Turn Context
-#### sess-abc123::turn-003::unit-000
-Role: Constraint
-Claim: Variables are integers.
-
-### Session Context
-#### sess-abc123::turn-001::unit-000 (score: 0.74)
-Role: Condition
-Claim: All values must be positive.
-
-### Persistent KB Context
-#### src-001::chunk-000::unit-000 (score: 0.87)
-Role: Constraint
-Source: rules.md
-Claim: a + b must equal c.
+```json
+{
+  "prompt": "Verify that constraint X is satisfiable.",
+  "context": [
+    {
+      "title": "sess-abc123::turn-003::unit-000",
+      "sourceLink": "Current-Turn Context",
+      "text": "Role: Constraint\nClaim: Variables are integers."
+    },
+    {
+      "title": "src-001::chunk-000::unit-000",
+      "sourceLink": "rules.md",
+      "text": "Role: Constraint\nClaim: a + b must equal c."
+    }
+  ]
+}
 ```
 
 Terminated with EOF (close stdin).
@@ -127,7 +125,7 @@ Structured JSON, one line:
 
 Each wrapper must be independently testable:
 ```bash
-cat test-input.cnl.md | node wrapper.js
+cat test-input.json | node wrapper.js
 ```
 
 ## Dependencies

@@ -84,7 +84,14 @@ class ContextMatcher {
     kuLevelsUsed: string[],
     totalKUsConsidered: number
   },
-  resolvedMarkdown
+  resolvedPayload: {
+    prompt: string,
+    context: Array<{
+      title: string,
+      sourceLink: string,
+      text: string
+    }>
+  }
 }
 ```
 

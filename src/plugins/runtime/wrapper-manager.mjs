@@ -2,8 +2,8 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { MRPError } from '../../core/platform/errors.mjs';
 import { logger } from '../../core/platform/logger.mjs';
+import { buildResolvedIntentPayload } from '../../mrp-vm-sdk/synthesis/resolved-intent-payload.mjs';
 
 const MOD = 'plugins';
 
@@ -86,9 +86,14 @@ export class PluginManager {
     return capMap[capability]?.includes(intentGroup.act);
   }
 
-  async invoke(manifest, resolvedMarkdown) {
+  async invoke(manifest, payload) {
+    const inputPayload = {
+      prompt: payload?.prompt || '',
+      context: Array.isArray(payload?.context) ? payload.context : []
+    };
+    const input = JSON.stringify(inputPayload);
     // Check input size
-    const inputBytes = Buffer.byteLength(resolvedMarkdown, 'utf-8');
+    const inputBytes = Buffer.byteLength(input, 'utf-8');
     if (inputBytes > (manifest.maxInputSizeBytes || 65536)) {
       return {
         intentRef: 0, pluginName: manifest.name, capabilityUsed: manifest.capabilities?.[0] || '',
@@ -125,7 +130,7 @@ export class PluginManager {
           error: { code: 'PLUGIN_SPAWN_ERROR', message: e.message }
         });
       });
-      proc.stdin.write(resolvedMarkdown);
+      proc.stdin.write(input);
       proc.stdin.end();
     });
   }
@@ -135,8 +140,10 @@ export class PluginManager {
     for (const resolvedIntent of resolvedIntents) {
       const manifest = this.selectPlugin(resolvedIntent.intentGroup);
       if (!manifest) continue;
-      const output = await this.invoke(manifest, resolvedIntent.resolvedMarkdown);
+      const resolvedPayload = resolvedIntent.resolvedPayload || buildResolvedIntentPayload(resolvedIntent);
+      const output = await this.invoke(manifest, resolvedPayload);
       output.intentRef = resolvedIntent.intentRef;
+      output.resolvedPayload = resolvedPayload;
       outputs.push(output);
     }
     return outputs;

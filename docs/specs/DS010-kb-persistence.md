@@ -53,6 +53,15 @@ from that source MUST either:
 - be atomically refreshed, or
 - be marked stale and excluded from ranking
 
+Ownership and propagation rule:
+
+- invalidation detection is owned by each `kb-plugin`
+  that produced the artifact
+- session lifecycle events and source hooks are the
+  canonical propagation channel for invalidation
+- stale status MUST be persisted in plugin-private
+  artifact state and respected during retrieval
+
 ## Dependencies
 
 - DS008 — KB substrate
