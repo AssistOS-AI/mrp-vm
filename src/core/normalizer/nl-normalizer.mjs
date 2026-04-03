@@ -1,5 +1,5 @@
 // DS006 — NL Normalizer
-import { CNLValidator } from '../parser/cnl-validator-parser.mjs';
+import { CNLParser, CNLValidator, looksLikeSOPDocument } from '../parser/cnl-validator-parser.mjs';
 import { MRPError } from '../platform/errors.mjs';
 import { logger } from '../platform/logger.mjs';
 
@@ -16,6 +16,7 @@ export class NLNormalizer {
   constructor(strategyRegistry) {
     this.strategyRegistry = strategyRegistry;
     this.validator = new CNLValidator();
+    this.parser = new CNLParser();
   }
 
   async toIntentCNL(rawNL, history, systemPrompt, strategy, requestedModel = null) {
@@ -67,6 +68,14 @@ export class NLNormalizer {
   }
 
   async toNaturalLanguage(cnl) {
+    if (looksLikeSOPDocument(cnl)) {
+      const document = this.parser.interpretDocument(cnl, { documentKind: 'mixed' });
+      const parts = [
+        ...[...document.intents.values()].map(intent => intent.target).filter(Boolean),
+        ...[...document.kus.values()].map(ku => ku.claim || ku.procedure).filter(Boolean)
+      ];
+      return parts.join(' ') || cnl;
+    }
     const lines = cnl.split('\n');
     const parts = [];
     for (const line of lines) {
@@ -104,7 +113,7 @@ export class NLNormalizer {
       throw new MRPError(validationFailCode, MOD, 'Validation failed (symbolic, no retry)', { errors: vr.errors });
     }
 
-    const correctionPrompt = `Previous attempt produced invalid CNL. Errors:\n${vr.errors.map(e => `- ${e.code}: ${e.message}`).join('\n')}\n\nPrevious invalid output:\n${cnl}\n\nPlease fix the output. Output raw Markdown only, no code fences.`;
+    const correctionPrompt = `Previous attempt produced invalid control output. Errors:\n${vr.errors.map(e => `- ${e.code}: ${e.message}`).join('\n')}\n\nPrevious invalid output:\n${cnl}\n\nPlease fix the output. Output raw SOP/CNL only, no code fences.`;
     const correctionInput = { ...initialInput, systemPrompt: correctionPrompt };
 
     try {
@@ -143,22 +152,22 @@ export class NLNormalizer {
         'Intent CNL errors:',
         ...validation.intentValidation.errors.map(error => `- ${error.code}: ${error.message}`),
         '',
-        'Previous invalid Intent CNL:',
+        'Previous invalid Intent control document:',
         validation.intentCNL || '(empty)'
       );
     }
     if (!validation.contextValidation.valid) {
       parts.push(
-        'Session Context CNL errors:',
+        'Session Context control-document errors:',
         ...validation.contextValidation.errors.map(error => `- ${error.code}: ${error.message}`),
         '',
-        'Previous invalid Session Context CNL:',
+        'Previous invalid Session Context control document:',
         validation.currentTurnContextCNL || '(empty)'
       );
     }
     parts.push(
       '',
-      'Please regenerate BOTH sections as valid raw Markdown.'
+      'Please regenerate BOTH sections as valid raw SOP/CNL documents.'
     );
     return parts.join('\n');
   }

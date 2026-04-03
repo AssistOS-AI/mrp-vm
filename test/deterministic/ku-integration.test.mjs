@@ -96,12 +96,12 @@ describe('Symbolic ingest produces individual KUs per fact', () => {
     assert.equal(factUnit.relation, 'uses');
   });
 
-  it('emits KUType field in CNL output', async () => {
+  it('emits KUType in SOP output', async () => {
     const result = await strategy.normalizePersistentContext({
       chunkText: 'Alpha uses Beta.',
       provenance: { sourceId: 'src-test', chunkId: 'src-test::chunk-000' }
     });
-    assert.ok(result.contextCNL.includes('KUType:'), 'Should include KUType field');
+    assert.match(result.contextCNL, /@k\d+\s+ku\s+atomic\s+"src-test::chunk-000::unit-000"/, 'Should include KUType in the ku constructor');
   });
 
   it('serializes multiline guidance safely for Context CNL validation', async () => {

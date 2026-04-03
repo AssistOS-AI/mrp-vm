@@ -2,6 +2,14 @@
 import { randomUUID } from 'node:crypto';
 import { MRPError } from '../platform/errors.mjs';
 import { logger } from '../platform/logger.mjs';
+import { buildExecutionGraph } from './trace-builder.mjs';
+import {
+  createBranchAttempt,
+  createExecutionFrame,
+  createTraceFailure,
+  createTraceResult
+} from './runtime-objects.mjs';
+import { looksLikeSOPDocument } from '../parser/cnl-validator-parser.mjs';
 
 const MOD = 'core';
 
@@ -111,8 +119,11 @@ export class MRPEngine {
    */
   async _executeChildFrame(parentCtx, parentPlan, resolvedIntents, session, requestedModel, budgetState, options = {}) {
     const childDepth = parentCtx.frameDepth + 1;
-    const childFrameId = `frame-${parentCtx.requestId}-${childDepth}`;
-    const childCtx = this._buildPluginContext(parentCtx.requestId, session, childFrameId, childDepth);
+    const childTrace = parentCtx.executionTrace || null;
+    const childFrameId = childTrace
+      ? this._allocateFrameId(parentCtx.requestId, childTrace)
+      : `frame-${parentCtx.requestId}-${childDepth}`;
+    const childCtx = this._buildPluginContext(parentCtx.requestId, session, childFrameId, childDepth, childTrace);
     const emitProgress = payload => this._emitProgress(options.onProgress, {
       requestId: parentCtx.requestId,
       sessionId: session.sessionId,
@@ -120,6 +131,29 @@ export class MRPEngine {
       frameDepth: childDepth,
       ...payload
     });
+    if (childTrace) {
+      this._ensureFrameRecord(childTrace, createExecutionFrame({
+        frameId: childFrameId,
+        parentFrameId: parentCtx.frameId,
+        requestId: parentCtx.requestId,
+        depth: childDepth,
+        maxDepth: this.maxFrameDepth,
+        status: 'active',
+        purpose: parentPlan.framePurpose || 'decomposition',
+        seedDetails: [],
+        budgets: {
+          remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0)),
+          remainingTimeMs: null
+        },
+        localState: {
+          intents: [],
+          currentTurnKUs: [],
+          retrievedKUs: [],
+          partialResults: [],
+          plan: null
+        }
+      }));
+    }
 
     emitProgress({
       type: 'frame',
@@ -169,6 +203,12 @@ export class MRPEngine {
       if (result.status === 'success') { seedResult = result; break; }
     }
     if (!seedResult) {
+      this._patchFrameRecord(childTrace, childFrameId, {
+        status: 'failed',
+        budgets: {
+          remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
+        }
+      });
       emitProgress({
         type: 'frame',
         event: 'finish',
@@ -178,8 +218,19 @@ export class MRPEngine {
       return { goalResult: null, llmCallCount: budgetState.llmCallCount };
     }
 
-    const intentGroups = this.parser.parseIntentCNL(seedResult.intentCNL);
+    const admittedSeedDocs = this._admitSeedDocuments(seedResult, childFrameId);
+    const {
+      intentGroups,
+      currentTurnUnits,
+      seedDetails
+    } = admittedSeedDocs;
     if (!intentGroups.length) {
+      this._patchFrameRecord(childTrace, childFrameId, {
+        status: 'failed',
+        budgets: {
+          remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
+        }
+      });
       emitProgress({
         type: 'frame',
         event: 'finish',
@@ -188,11 +239,13 @@ export class MRPEngine {
       });
       return { goalResult: null, llmCallCount: budgetState.llmCallCount };
     }
-
-    let currentTurnUnits = [];
-    if (seedResult.currentTurnContextCNL?.trim()) {
-      currentTurnUnits = this.parser.parseContextCNL(seedResult.currentTurnContextCNL);
-    }
+    this._patchFrameRecord(childTrace, childFrameId, {
+      seedDetails,
+      localState: {
+        intents: intentGroups,
+        currentTurnKUs: currentTurnUnits
+      }
+    });
     const decomposed = this.decomposer.decompose(intentGroups);
     const profiles = decomposed.map(d => this.decomposer.deriveContextProfile(d));
 
@@ -310,6 +363,12 @@ export class MRPEngine {
       }
     }
     if (!kbResults.length) {
+      this._patchFrameRecord(childTrace, childFrameId, {
+        status: 'failed',
+        budgets: {
+          remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
+        }
+      });
       emitProgress({
         type: 'frame',
         event: 'finish',
@@ -383,6 +442,18 @@ export class MRPEngine {
         message: `Child frame: planner refined route to ${refinedPlan.goalSolverOrder?.[0] || 'gs-auto'}`
       });
     }
+    this._patchFrameRecord(childTrace, childFrameId, {
+      localState: {
+        plan: {
+          plannerPluginId: refinedPlan.plannerPluginId,
+          kbPluginOrder: refinedPlan.kbPluginOrder,
+          goalSolverOrder: refinedPlan.goalSolverOrder,
+          decompose: !!refinedPlan.decompose,
+          framePurpose: refinedPlan.framePurpose || null,
+          notes: refinedPlan.notes || []
+        }
+      }
+    });
 
     if (refinedPlan.decompose) {
       if (childDepth >= this.maxFrameDepth) {
@@ -404,25 +475,40 @@ export class MRPEngine {
             message: 'Child frame detected no-progress decomposition and will try direct solving'
           });
         } else {
-        return this._executeChildFrame(
-          childCtx,
-          refinedPlan,
-          bestKB.result.resolvedIntents,
-          session,
-          requestedModel,
-          budgetState,
-          {
-            ...options,
-            plannerPluginId: refinedPlan.plannerPluginId || plannerPluginId,
-            systemPrompt: options.systemPrompt || null
-          }
-        );
+          const nestedResult = await this._executeChildFrame(
+            childCtx,
+            refinedPlan,
+            bestKB.result.resolvedIntents,
+            session,
+            requestedModel,
+            budgetState,
+            {
+              ...options,
+              plannerPluginId: refinedPlan.plannerPluginId || plannerPluginId,
+              systemPrompt: options.systemPrompt || null
+            }
+          );
+          this._patchFrameRecord(childTrace, childFrameId, {
+            status: nestedResult?.goalResult ? 'succeeded' : 'failed',
+            budgets: {
+              remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
+            }
+          });
+          return nestedResult;
         }
       }
     }
 
     // Goal solving in child frame
     const goalCandidates = (refinedPlan.goalSolverOrder || []).slice(0, this.maxPluginsPerStage);
+    let goalResult = null;
+    let selectedGoalSolverPlugin = null;
+    let selectedKBPlugin = null;
+    let selectedBranchIds = [];
+    let weakGoalResult = null;
+    let weakGoalSolverPlugin = null;
+    let weakKBPlugin = null;
+    let weakBranchIds = [];
     for (const kb of kbResults) {
       const resolvedIntentsForKB = kb.result.resolvedIntents || [];
       const guidanceUnits = this._dedupeGuidanceEntries(
@@ -460,22 +546,47 @@ export class MRPEngine {
           llmCalls: result.metadata?.llmCalls || 0,
           message: `Child frame: goal solver ${pluginId} finished with ${result.status}`
         });
+        const activeBranches = childTrace
+          ? resolvedIntentsForKB.map(ri => {
+            const intentGroup = intentGroups.find(group => group.groupNumber === ri.intentRef) || null;
+            const seed = seedDetails.find(candidate => candidate.intentGroupNumber === ri.intentRef) || seedDetails[0] || null;
+            return this._recordBranchAttempt(childTrace, {
+              frameId: childFrameId,
+              intentId: intentGroup?.intentId || `intent-${ri.intentRef}`,
+              seedId: seed?.seedId || null,
+              pluginId,
+              kbPluginId: kb.pluginId,
+              plannerPluginId: refinedPlan.plannerPluginId || plannerPluginId || null,
+              status: 'active',
+              outputPreview: result.responseMarkdown || null,
+              evidenceProfileHash: this._resolvedIntentSignature(resolvedIntentsForKB)
+            });
+          })
+          : [];
         if (result.status === 'success') {
-          emitProgress({
-            type: 'frame',
-            event: 'finish',
-            status: 'success',
-            message: `Child frame ${childDepth} solved successfully`
-          });
-          return {
-            goalResult: result,
-            selectedGoalSolverPlugin: pluginId,
-            selectedKBPlugin: kb.pluginId,
-            llmCallCount: budgetState.llmCallCount
-          };
+          goalResult = result;
+          selectedGoalSolverPlugin = pluginId;
+          selectedKBPlugin = kb.pluginId;
+          selectedBranchIds = activeBranches.map(branch => branch.branchId);
+          break;
         }
         if (result.status === 'needs-decomposition' && childDepth < this.maxFrameDepth) {
-          return this._executeChildFrame(
+          for (const branch of activeBranches) {
+            this._patchBranchAttempt(childTrace, branch.branchId, {
+              status: 'failed',
+              error: { code: 'NEEDS_DECOMPOSITION', message: 'Goal solver requested decomposition' }
+            });
+            this._recordFailure(childTrace, {
+              frameId: branch.frameId,
+              branchId: branch.branchId,
+              seedId: branch.seedId,
+              pluginId,
+              reason: 'needs-decomposition',
+              error: { code: 'NEEDS_DECOMPOSITION', message: 'Goal solver requested decomposition' },
+              evidenceProfileHash: branch.evidenceProfileHash
+            });
+          }
+          const nestedResult = await this._executeChildFrame(
             childCtx,
             refinedPlan,
             resolvedIntentsForKB,
@@ -487,8 +598,92 @@ export class MRPEngine {
               plannerPluginId: refinedPlan.plannerPluginId || plannerPluginId
             }
           );
+          this._patchFrameRecord(childTrace, childFrameId, {
+            status: nestedResult?.goalResult ? 'succeeded' : 'failed',
+            budgets: {
+              remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
+            }
+          });
+          return nestedResult;
+        }
+        if (result.status === 'no-context' && !weakGoalResult) {
+          weakGoalResult = result;
+          weakGoalSolverPlugin = pluginId;
+          weakKBPlugin = kb.pluginId;
+          weakBranchIds = activeBranches.map(branch => branch.branchId);
+          continue;
+        }
+        for (const branch of activeBranches) {
+          this._patchBranchAttempt(childTrace, branch.branchId, {
+            status: 'failed',
+            error: result.error || { code: 'GOAL_NO_CONTEXT', message: 'Goal solver returned no-context' }
+          });
+          this._recordFailure(childTrace, {
+            frameId: branch.frameId,
+            branchId: branch.branchId,
+            seedId: branch.seedId,
+            pluginId,
+            reason: result.status || 'error',
+            error: result.error || { code: 'GOAL_NO_CONTEXT', message: 'Goal solver returned no-context' },
+            evidenceProfileHash: branch.evidenceProfileHash
+          });
         }
       }
+      if (goalResult) break;
+    }
+    if (!goalResult && weakGoalResult) {
+      goalResult = weakGoalResult;
+      selectedGoalSolverPlugin = weakGoalSolverPlugin;
+      selectedKBPlugin = weakKBPlugin;
+      selectedBranchIds = weakBranchIds;
+    } else if (goalResult && weakBranchIds.length > 0) {
+      for (const branchId of weakBranchIds) {
+        const branch = this._patchBranchAttempt(childTrace, branchId, {
+          status: 'failed',
+          error: { code: 'GOAL_NO_CONTEXT', message: 'Replaced by a stronger goal result' }
+        });
+        if (!branch) continue;
+        this._recordFailure(childTrace, {
+          frameId: branch.frameId,
+          branchId: branch.branchId,
+          seedId: branch.seedId,
+          pluginId: branch.pluginId,
+          reason: 'superseded',
+          error: { code: 'GOAL_NO_CONTEXT', message: 'Replaced by a stronger goal result' },
+          evidenceProfileHash: branch.evidenceProfileHash
+        });
+      }
+    }
+    if (goalResult) {
+      const selectedResolvedIntents =
+        (kbResults.find(item => item.pluginId === selectedKBPlugin) || kbResults[0])?.result?.resolvedIntents || [];
+      this._patchFrameRecord(childTrace, childFrameId, {
+        status: 'succeeded',
+        budgets: {
+          remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
+        },
+        localState: {
+          retrievedKUs: selectedResolvedIntents.map(ri => ({
+            intentRef: ri.intentRef,
+            currentTurnCount: ri.currentTurnContextUnits?.length || 0,
+            sessionCount: ri.sessionUnits?.length || 0,
+            kbCount: ri.kbUnits?.length || 0
+          }))
+        }
+      });
+      emitProgress({
+        type: 'frame',
+        event: 'finish',
+        status: 'success',
+        message: `Child frame ${childDepth} solved successfully`
+      });
+      return {
+        goalResult,
+        selectedGoalSolverPlugin,
+        selectedKBPlugin,
+        llmCallCount: budgetState.llmCallCount,
+        selectedBranchIds
+      };
     }
     emitProgress({
       type: 'frame',
@@ -496,10 +691,16 @@ export class MRPEngine {
       status: 'failed',
       message: `Child frame ${childDepth} did not produce an answer`
     });
+    this._patchFrameRecord(childTrace, childFrameId, {
+      status: 'failed',
+      budgets: {
+        remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
+      }
+    });
     return { goalResult: null, llmCallCount: budgetState.llmCallCount };
   }
 
-  _buildPluginContext(requestId, session, frameId = null, frameDepth = 0) {
+  _buildPluginContext(requestId, session, frameId = null, frameDepth = 0, executionTrace = null) {
     return {
       requestId,
       session,
@@ -516,7 +717,8 @@ export class MRPEngine {
         maxFrameDepth: this.maxFrameDepth
       },
       frameId,
-      frameDepth
+      frameDepth,
+      executionTrace
     };
   }
 
@@ -596,6 +798,161 @@ export class MRPEngine {
       .join('|');
   }
 
+  _remainingBudgetSnapshot(budgetState, startTime) {
+    return {
+      remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0)),
+      remainingTimeMs: Math.max(0, this.requestTimeout - (Date.now() - startTime))
+    };
+  }
+
+  _allocateFrameId(requestId, executionTrace) {
+    const next = executionTrace._frameSequence || 0;
+    executionTrace._frameSequence = next + 1;
+    return `frame-${requestId}-${next}`;
+  }
+
+  _normalizeSeedDetails(intentGroups = [], interpretedIntentDoc = null, frameId = 'frame') {
+    if (interpretedIntentDoc?.seeds?.size) {
+      const intentIds = [...interpretedIntentDoc.intents.keys()];
+      const groupNumberByIntentId = new Map(intentIds.map((id, index) => [id, index + 1]));
+      return [...interpretedIntentDoc.seeds.values()].map(seed => ({
+        seedId: seed.id,
+        intentId: seed.intentId || null,
+        intentGroupNumber: groupNumberByIntentId.get(seed.intentId) || null,
+        mode: seed.mode || null,
+        action: seed.action || null,
+        focus: seed.focus || null,
+        domain: seed.domain || null,
+        evidenceNeed: seed.evidenceNeed || null,
+        priority: seed.priority || null,
+        status: seed.state || seed.status || 'active',
+        splitFrom: seed.splitFrom || null
+      }));
+    }
+    return intentGroups.map(group => ({
+      seedId: `seed-${frameId}-${group.groupNumber}`,
+      intentId: group.intentId || `intent-${group.groupNumber}`,
+      intentGroupNumber: group.groupNumber,
+      mode: 'direct',
+      action: group.act || 'explain',
+      focus: group.intent,
+      domain: 'chat_turn',
+      evidenceNeed: 'general',
+      priority: null,
+      status: 'active',
+      splitFrom: null
+    }));
+  }
+
+  _admitSeedDocuments(seedResult, frameId) {
+    const intentGroups = this.parser.parseIntentCNL(seedResult.intentCNL);
+    let interpretedIntentDoc = null;
+    if (typeof this.parser.interpretDocument === 'function' && looksLikeSOPDocument(seedResult.intentCNL)) {
+      interpretedIntentDoc = this.parser.interpretDocument(seedResult.intentCNL, { documentKind: 'intent' });
+    }
+
+    let currentTurnUnits = [];
+    let interpretedContextDoc = null;
+    if (seedResult.currentTurnContextCNL?.trim()) {
+      currentTurnUnits = this.parser.parseContextCNL(seedResult.currentTurnContextCNL);
+      if (typeof this.parser.interpretDocument === 'function' && looksLikeSOPDocument(seedResult.currentTurnContextCNL)) {
+        interpretedContextDoc = this.parser.interpretDocument(seedResult.currentTurnContextCNL, { documentKind: 'context' });
+      }
+    }
+
+    return {
+      intentGroups,
+      currentTurnUnits,
+      interpretedIntentDoc,
+      interpretedContextDoc,
+      seedDetails: this._normalizeSeedDetails(intentGroups, interpretedIntentDoc, frameId)
+    };
+  }
+
+  _ensureFrameRecord(executionTrace, frameRecord) {
+    const existing = executionTrace.frames.find(frame => frame.frameId === frameRecord.frameId);
+    if (existing) return existing;
+    executionTrace.frames.push(frameRecord);
+    if (!executionTrace.rootFrameId) executionTrace.rootFrameId = frameRecord.frameId;
+    return frameRecord;
+  }
+
+  _patchFrameRecord(executionTrace, frameId, patch = {}) {
+    const frame = executionTrace.frames.find(item => item.frameId === frameId);
+    if (!frame) return null;
+    Object.assign(frame, patch);
+    if (patch.seedDetails) {
+      frame.seedDetails = [...patch.seedDetails];
+      frame.seedIds = patch.seedDetails.map(seed => seed.seedId);
+    }
+    if (patch.localState) {
+      frame.localState = {
+        ...frame.localState,
+        ...patch.localState
+      };
+    }
+    if (patch.budgets) {
+      frame.budgets = {
+        ...frame.budgets,
+        ...patch.budgets
+      };
+    }
+    return frame;
+  }
+
+  _recordBranchAttempt(executionTrace, details = {}) {
+    const branch = createBranchAttempt({
+      branchId: `branch-${executionTrace.branches.length + 1}`,
+      ...details
+    });
+    executionTrace.branches.push(branch);
+    const frame = executionTrace.frames.find(item => item.frameId === branch.frameId);
+    if (frame && !frame.activeBranchIds.includes(branch.branchId)) {
+      frame.activeBranchIds.push(branch.branchId);
+    }
+    return branch;
+  }
+
+  _patchBranchAttempt(executionTrace, branchId, patch = {}) {
+    const branch = executionTrace.branches.find(item => item.branchId === branchId);
+    if (!branch) return null;
+    Object.assign(branch, patch);
+    const frame = executionTrace.frames.find(item => item.frameId === branch.frameId);
+    if (frame && ['succeeded', 'failed'].includes(branch.status)) {
+      frame.activeBranchIds = frame.activeBranchIds.filter(id => id !== branchId);
+      if (!frame.completedBranchIds.includes(branchId)) frame.completedBranchIds.push(branchId);
+    }
+    return branch;
+  }
+
+  _recordFailure(executionTrace, details = {}) {
+    const failure = createTraceFailure({
+      failureId: `failure-${executionTrace.failures.length + 1}`,
+      ...details
+    });
+    executionTrace.failures.push(failure);
+    const frame = executionTrace.frames.find(item => item.frameId === failure.frameId);
+    if (frame) {
+      frame.failureMemory.push({
+        branchId: failure.branchId,
+        seedId: failure.seedId,
+        pluginId: failure.pluginId,
+        reason: failure.reason,
+        evidenceProfileHash: failure.evidenceProfileHash || null
+      });
+    }
+    return failure;
+  }
+
+  _recordResult(executionTrace, details = {}) {
+    const result = createTraceResult({
+      resultId: `result-${executionTrace.results.length + 1}`,
+      ...details
+    });
+    executionTrace.results.push(result);
+    return result;
+  }
+
   async processChatTurn(request) {
     const requestId = `req-${randomUUID().substring(0, 12)}`;
     const startTime = Date.now();
@@ -606,13 +963,20 @@ export class MRPEngine {
         const executionTrace = {
       requestId,
       sessionId: null,
+      rootFrameId: null,
       plannerPluginId: null,
       plannerAttempts: [],
       stages: [],
+      frames: [],
+      branches: [],
+      results: [],
+      failures: [],
+      graph: { rootFrameId: null, nodes: [], edges: [] },
       finalStatus: 'failure',
       finalAnswerStatus: null,
       frameDepth: 0,
-      frameTransitions: 0
+      frameTransitions: 0,
+      _frameSequence: 0
     };
 
     const emitProgress = payload => this._emitProgress(request.onProgress, {
@@ -634,12 +998,15 @@ export class MRPEngine {
       model = null,
       modelRole = null,
       inputSnippet = null,
-      outputSnippet = null
+      outputSnippet = null,
+      kbPluginId = null
     ) => {
       executionTrace.stages.push({
         stage,
+        frameId: pluginCtx?.frameId || null,
         plannerPluginId: executionTrace.plannerPluginId,
         pluginId,
+        kbPluginId,
         status,
         durationMs: Date.now() - startedAt,
         llmCalls,
@@ -717,7 +1084,9 @@ export class MRPEngine {
 
         executionTrace.sessionId = session.sessionId;
         executionTrace.inputMessage = snip(currentMessage, 500);
-        pluginCtx = this._buildPluginContext(requestId, session, `frame-${requestId}-0`, 0);
+        const rootFrameId = this._allocateFrameId(requestId, executionTrace);
+        pluginCtx = this._buildPluginContext(requestId, session, rootFrameId, 0, executionTrace);
+        executionTrace.rootFrameId = rootFrameId;
         emitProgress({
           type: 'request',
           event: 'start',
@@ -743,6 +1112,37 @@ export class MRPEngine {
         executionTrace.plannerCandidates = plannerCandidates;
 
         const finalizeExecution = async (executed, plannerId) => {
+          executionTrace.plannerPluginId = plannerId;
+          for (const stage of executionTrace.stages) {
+            if (!stage.plannerPluginId) stage.plannerPluginId = plannerId;
+          }
+          executionTrace.finalStatus = 'success';
+          executionTrace.finalAnswerStatus =
+            executed.goalResult.status === 'no-context' ? 'no-context' : 'answered';
+          for (const branchId of executed.selectedBranchIds || []) {
+            const branch = this._patchBranchAttempt(executionTrace, branchId, { status: 'succeeded' });
+            if (!branch) continue;
+            const resultRecord = this._recordResult(executionTrace, {
+              frameId: branch.frameId,
+              branchId,
+              kind: executed.goalResult.status === 'no-context' ? 'no-context' : 'answer',
+              validationStatus: executionTrace.finalAnswerStatus,
+              preservesConstraints: executed.goalResult.status === 'no-context' ? 'unknown' : 'yes',
+              structuralComplete: executed.goalResult.status === 'no-context' ? 'partial' : 'yes',
+              body: executed.goalResult.responseMarkdown || null
+            });
+            this._patchBranchAttempt(executionTrace, branchId, { resultId: resultRecord.resultId });
+          }
+          this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
+            status: 'succeeded',
+            budgets: this._remainingBudgetSnapshot(budgetState, startTime),
+            localState: {
+              partialResults: executionTrace.results,
+              plan: executionTrace.lastPlan || null
+            }
+          });
+          executionTrace.graph = buildExecutionGraph(executionTrace);
+
           await this.conversationHandler.commitSuccessfulTurn(
             session,
             currentMessage,
@@ -761,14 +1161,6 @@ export class MRPEngine {
               executionTrace: executionTrace || null
             }
           );
-
-          executionTrace.plannerPluginId = plannerId;
-          for (const stage of executionTrace.stages) {
-            if (!stage.plannerPluginId) stage.plannerPluginId = plannerId;
-          }
-          executionTrace.finalStatus = 'success';
-          executionTrace.finalAnswerStatus =
-            executed.goalResult.status === 'no-context' ? 'no-context' : 'answered';
 
           const finalPlanner = this.pluginRegistry.get('mrp-plan-plugin', plannerId);
           await finalPlanner?.recordOutcome?.(executionTrace, pluginCtx);
@@ -859,13 +1251,10 @@ export class MRPEngine {
           );
         }
 
-        const intentGroups = this.parser.parseIntentCNL(seedResult.intentCNL);
+        const admittedSeedDocs = this._admitSeedDocuments(seedResult, pluginCtx.frameId);
+        const { intentGroups, currentTurnUnits, interpretedIntentDoc, seedDetails } = admittedSeedDocs;
         if (intentGroups.length === 0) {
           throw new MRPError('DECOMPOSER_EMPTY_RESULT', MOD, 'No intent groups produced');
-        }
-        let currentTurnUnits = [];
-        if (seedResult.currentTurnContextCNL?.trim()) {
-          currentTurnUnits = this.parser.parseContextCNL(seedResult.currentTurnContextCNL);
         }
         if (this.conversationHandler.stageDetectedContextUnits) {
           await this.conversationHandler.stageDetectedContextUnits(session, currentTurnUnits, {
@@ -875,13 +1264,32 @@ export class MRPEngine {
         }
         const decomposedIntents = this.decomposer.decompose(intentGroups);
         const contextProfiles = decomposedIntents.map(d => this.decomposer.deriveContextProfile(d));
+        this._ensureFrameRecord(executionTrace, createExecutionFrame({
+          frameId: pluginCtx.frameId,
+          parentFrameId: null,
+          requestId,
+          depth: 0,
+          maxDepth: this.maxFrameDepth,
+          status: 'active',
+          purpose: 'chat-turn',
+          seedDetails,
+          budgets: this._remainingBudgetSnapshot(budgetState, startTime),
+          localState: {
+            intents: intentGroups,
+            currentTurnKUs: currentTurnUnits,
+            retrievedKUs: [],
+            partialResults: [],
+            plan: null
+          }
+        }));
         const decomposeNodeSnapshot = {
           type: 'decompose',
           intentGroups: intentGroups.map(g => ({
             groupNumber: g.groupNumber,
             act: g.act,
             intent: g.intent,
-            output: g.output
+            output: g.output,
+            intentId: g.intentId || null
           })),
           contextProfiles: contextProfiles.map(p => ({
             intentGroupNumber: p.intentGroupNumber,
@@ -1005,7 +1413,8 @@ export class MRPEngine {
             addStageTrace('kb', pluginId, result.status, startedAt, 0,
               result.sufficient, result.error || null, null, null,
               snip(contextProfiles.map(p => p.queryText).join(' | ')),
-              snip(`${evidenceCount} evidence units, strategy=${strategyCount}, sufficient=${result.sufficient}`));
+              snip(`${evidenceCount} evidence units, strategy=${strategyCount}, sufficient=${result.sufficient}`),
+              pluginId);
             if (result.status === 'success' || result.status === 'insufficient') {
               kbResults.push({ result, pluginId, sufficient: result.status === 'success' });
             }
@@ -1106,6 +1515,8 @@ export class MRPEngine {
           let weakGoalSolverPlugin = null;
           let weakKBPlugin = null;
           let weakKBSufficient = false;
+          let selectedBranchIds = [];
+          let weakBranchIds = [];
           const goalCandidates = (refinedPlan.goalSolverOrder || []).slice(0, this.maxPluginsPerStage);
 
           executionTrace.lastPlan = {
@@ -1117,6 +1528,11 @@ export class MRPEngine {
             framePurpose: refinedPlan.framePurpose || null,
             notes: refinedPlan.notes || []
           };
+          this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
+            localState: {
+              plan: executionTrace.lastPlan
+            }
+          });
 
           if (refinedPlan.decompose) {
             if (pluginCtx.frameDepth >= this.maxFrameDepth) {
@@ -1156,7 +1572,8 @@ export class MRPEngine {
                     selectedKBPlugin: bestKB.pluginId,
                     selectedGoalSolverPlugin: childResult.selectedGoalSolverPlugin || goalCandidates[0] || null,
                     kbSufficient: bestKB.sufficient,
-                    weakOutcome: false
+                    weakOutcome: false,
+                    selectedBranchIds: childResult.selectedBranchIds || []
                   };
                 }
               } catch {
@@ -1211,18 +1628,53 @@ export class MRPEngine {
                 result.error || null, result.metadata?.model || null,
                 plugin.getDescriptor().modelRoles?.[0] || null,
                 snip(`${resolvedIntentsForKB.length} resolved intents (kb:${kb.pluginId})`),
-                snip(result.responseMarkdown));
+                snip(result.responseMarkdown),
+                kb.pluginId);
+              const stageTraceIndex = executionTrace.stages.length - 1;
+              const activeBranches = resolvedIntentsForKB.map(ri => {
+                const intentGroup = intentGroups.find(group => group.groupNumber === ri.intentRef) || null;
+                const seed = seedDetails.find(candidate => candidate.intentGroupNumber === ri.intentRef) || seedDetails[0] || null;
+                return this._recordBranchAttempt(executionTrace, {
+                  frameId: pluginCtx.frameId,
+                  intentId: intentGroup?.intentId || `intent-${ri.intentRef}`,
+                  seedId: seed?.seedId || null,
+                  pluginId,
+                  kbPluginId: kb.pluginId,
+                  plannerPluginId: refinedPlan.plannerPluginId || plan.plannerPluginId || null,
+                  status: 'active',
+                  stageTraceIndex,
+                  outputPreview: snip(result.responseMarkdown),
+                  evidenceProfileHash: this._resolvedIntentSignature(resolvedIntentsForKB)
+                });
+              });
               if (result.status === 'success') {
                 goalResult = result; selectedGoalSolverPlugin = pluginId;
                 selectedKBPlugin = kb.pluginId; kbSufficient = kb.sufficient;
+                selectedBranchIds = activeBranches.map(branch => branch.branchId);
                 break;
               }
               if (result.status === 'needs-decomposition') {
+                for (const branch of activeBranches) {
+                  this._patchBranchAttempt(executionTrace, branch.branchId, {
+                    status: 'failed',
+                    error: { code: 'NEEDS_DECOMPOSITION', message: 'Goal solver requested decomposition' }
+                  });
+                  this._recordFailure(executionTrace, {
+                    frameId: branch.frameId,
+                    branchId: branch.branchId,
+                    seedId: branch.seedId,
+                    pluginId,
+                    reason: 'needs-decomposition',
+                    error: { code: 'NEEDS_DECOMPOSITION', message: 'Goal solver requested decomposition' },
+                    evidenceProfileHash: branch.evidenceProfileHash
+                  });
+                }
                 addStageTrace('goal-solver', pluginId, 'needs-decomposition', startedAt,
                   result.metadata?.llmCalls || 0, false, null,
                   result.metadata?.model || null,
                   plugin.getDescriptor().modelRoles?.[0] || null,
-                  null, snip('needs-decomposition'));
+                  null, snip('needs-decomposition'),
+                  kb.pluginId);
                 // DS002: attempt child-frame decomposition if depth budget allows
                 if (pluginCtx.frameDepth < this.maxFrameDepth) {
                   try {
@@ -1248,6 +1700,7 @@ export class MRPEngine {
                       selectedGoalSolverPlugin = childResult.selectedGoalSolverPlugin || pluginId;
                       selectedKBPlugin = kb.pluginId; kbSufficient = kb.sufficient;
                       executionTrace.frameTransitions = (executionTrace.frameTransitions || 0) + 1;
+                      selectedBranchIds = childResult.selectedBranchIds || [];
                       break;
                     }
                   } catch { /* child frame failed, continue backtracking */ }
@@ -1257,6 +1710,23 @@ export class MRPEngine {
               if (result.status === 'no-context' && !weakGoalResult) {
                 weakGoalResult = result; weakGoalSolverPlugin = pluginId;
                 weakKBPlugin = kb.pluginId; weakKBSufficient = kb.sufficient;
+                weakBranchIds = activeBranches.map(branch => branch.branchId);
+                continue;
+              }
+              for (const branch of activeBranches) {
+                this._patchBranchAttempt(executionTrace, branch.branchId, {
+                  status: 'failed',
+                  error: result.error || { code: 'GOAL_NO_CONTEXT', message: 'Goal solver returned no-context' }
+                });
+                this._recordFailure(executionTrace, {
+                  frameId: branch.frameId,
+                  branchId: branch.branchId,
+                  seedId: branch.seedId,
+                  pluginId,
+                  reason: result.status || 'error',
+                  error: result.error || { code: 'GOAL_NO_CONTEXT', message: 'Goal solver returned no-context' },
+                  evidenceProfileHash: branch.evidenceProfileHash
+                });
               }
             }
             if (goalResult) break; // found a good answer, stop backtracking
@@ -1265,6 +1735,24 @@ export class MRPEngine {
           if (!goalResult && weakGoalResult) {
             goalResult = weakGoalResult; selectedGoalSolverPlugin = weakGoalSolverPlugin;
             selectedKBPlugin = weakKBPlugin; kbSufficient = weakKBSufficient;
+            selectedBranchIds = weakBranchIds;
+          } else if (goalResult && weakBranchIds.length > 0) {
+            for (const branchId of weakBranchIds) {
+              const branch = this._patchBranchAttempt(executionTrace, branchId, {
+                status: 'failed',
+                error: { code: 'GOAL_NO_CONTEXT', message: 'Replaced by a stronger goal result' }
+              });
+              if (!branch) continue;
+              this._recordFailure(executionTrace, {
+                frameId: branch.frameId,
+                branchId: branch.branchId,
+                seedId: branch.seedId,
+                pluginId: branch.pluginId,
+                reason: 'superseded',
+                error: { code: 'GOAL_NO_CONTEXT', message: 'Replaced by a stronger goal result' },
+                evidenceProfileHash: branch.evidenceProfileHash
+              });
+            }
           }
           if (!goalResult) {
             throw new MRPError('PLUGIN_STAGE_EXHAUSTED', MOD,
@@ -1273,6 +1761,16 @@ export class MRPEngine {
           }
 
           const resolvedIntents = (kbResults.find(k => k.pluginId === selectedKBPlugin) || kbResults[0]).result.resolvedIntents || [];
+          this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
+            localState: {
+              retrievedKUs: resolvedIntents.map(ri => ({
+                intentRef: ri.intentRef,
+                currentTurnCount: ri.currentTurnContextUnits?.length || 0,
+                sessionCount: ri.sessionUnits?.length || 0,
+                kbCount: ri.kbUnits?.length || 0
+              }))
+            }
+          });
 
           // --- Validation ---
           const valCandidates = this.pluginRegistry.listByType('val-plugin').map(d => d.id);
@@ -1329,6 +1827,22 @@ export class MRPEngine {
             }
           }
           if (validationVerdict === 'rejected') {
+            for (const branchId of selectedBranchIds) {
+              const branch = this._patchBranchAttempt(executionTrace, branchId, {
+                status: 'failed',
+                error: { code: 'VALIDATION_REJECTED', message: validationReason }
+              });
+              if (!branch) continue;
+              this._recordFailure(executionTrace, {
+                frameId: branch.frameId,
+                branchId: branch.branchId,
+                seedId: branch.seedId,
+                pluginId: branch.pluginId,
+                reason: validationReason,
+                error: { code: 'VALIDATION_REJECTED', message: validationReason },
+                evidenceProfileHash: branch.evidenceProfileHash
+              });
+            }
             throw new MRPError(
               'VALIDATION_REJECTED',
               MOD,
@@ -1348,7 +1862,8 @@ export class MRPEngine {
             selectedKBPlugin,
             selectedGoalSolverPlugin,
             kbSufficient,
-            weakOutcome: goalResult.status === 'no-context'
+            weakOutcome: goalResult.status === 'no-context',
+            selectedBranchIds
           };
         };
 
@@ -1437,6 +1952,11 @@ export class MRPEngine {
           code: error?.code || 'ENGINE_ERROR',
           message: error?.message || String(error)
         };
+        this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
+          status: 'failed',
+          budgets: this._remainingBudgetSnapshot(budgetState, startTime)
+        });
+        executionTrace.graph = buildExecutionGraph(executionTrace);
         if (planner) {
           try {
             await planner.recordOutcome(executionTrace, pluginCtx);

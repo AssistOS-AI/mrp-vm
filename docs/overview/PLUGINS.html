@@ -21,39 +21,42 @@
   <a href="../future/agentic-loops.html">Agentic Loops</a>
 </nav>
 
-<h1>Specialized Interpreters and Symbolic Grounding</h1>
-<h2>The Plugin Ecosystem</h2>
-<p>In MRP-VM, a plugin is a specialized engine that processes a resolved intent bundle within a specific reasoning regime. Plugins are external processes — they can be written in any language. See <a href="../specs/DS003-plugin-system.md">DS003</a>, <a href="../specs/DS016-wrapper-convention.md">DS016</a>.</p>
+<h1>Typed Plugins and External Wrappers</h1>
+<h2>The plugin ecosystem around the kernel</h2>
+<p>MRP-VM delegates most behavior to typed plugins. Built-in plugins live in-process, while external wrappers can expose the same typed contracts through the manifest-driven wrapper convention. See <a href="../specs/DS003-plugin-system.md">DS003</a>, <a href="../specs/DS016-wrapper-convention.md">DS016</a>, and <a href="../specs/DS027-plugin-types.md">DS027</a>.</p>
 
-<h3>Key Concepts</h3>
+<h3>Plugin families</h3>
 <ul>
-  <li><strong>Encapsulated Processes</strong> — plugins run as separate OS processes (Node.js, Python, Rust, etc.)</li>
-  <li><strong>CNL I/O</strong> — communication via stdin/stdout using <a href="../concepts/cnl-formats.html">CNL Markdown</a></li>
-  <li><strong>Post-Retrieval</strong> — plugins receive the full resolved evidence bundle, not raw user input</li>
-  <li><strong>One per Intent</strong> — exactly one plugin is selected per intent group</li>
+  <li><strong><code>sd-plugin</code></strong> — emits Intent/Seed control plus current-turn KU shells</li>
+  <li><strong><code>kb-plugin</code></strong> — retrieves and fuses evidence, strategy units, and phase-scoped guidance</li>
+  <li><strong><code>gs-plugin</code></strong> — produces answers, <code>no-context</code>, or <code>needs-decomposition</code></li>
+  <li><strong><code>mrp-plan-plugin</code></strong> — selects plugin order and child-frame strategy</li>
+  <li><strong><code>val-plugin</code></strong> — checks grounding and answer acceptability</li>
 </ul>
 
-<h3>The Wrapper Convention</h3>
-<pre><code>wrappers/z3-solver/
-├── manifest.json    # capabilities, keywords, command
-├── wrapper.js       # the actual interpreter
-└── README.md</code></pre>
-
-<h3>Plugin Result Format</h3>
-<pre><code>## Plugin Result
-Status: success
-Plugin: z3-solver
-Confidence: high
-Result: Constraint is satisfiable.
-Evidence: Z3 returned SAT in 12ms.</code></pre>
-
-<p>Plugin results are integrated as explicit <code>### Plugin Evidence</code> sections in the synthesis prompt — never merged silently with KB evidence.</p>
-
-<h3>Learn More</h3>
+<h3>Key concepts</h3>
 <ul>
-  <li><a href="../architecture/plugin-guide.html">Plugin Development Guide</a> — step-by-step tutorial with manifest reference, protocol I/O examples, dispatch rules, security</li>
-  <li><a href="../future/agentic-loops.html">Agentic Plugin Loops</a> — proposed multi-step continuation protocol for iterative reasoning</li>
-  <li><a href="../future/symbolic-execution.html">Symbolic Execution Strategy</a> <a href="../future/thinkingdb.html">ThinkingDB</a> — proposed constraint-based candidate pruning</li>
+  <li><strong>Typed contracts</strong> — plugins exchange structured inputs and outputs rather than ad-hoc prompt snippets.</li>
+  <li><strong>SOP on control boundaries</strong> — when control payloads are serialized, they use SOP Lang Control rather than legacy heading blocks.</li>
+  <li><strong>Branch-local execution</strong> — goal solvers operate over resolved intents within a branch attempt, not over raw user text.</li>
+  <li><strong>Planner-driven routing</strong> — plugin order is chosen per request and may change after retrieval guidance arrives.</li>
+</ul>
+
+<h3>Wrapper convention</h3>
+<pre><code>wrappers/z3-solver/
+├── manifest.json    # protocolVersion, command, plugin type, metadata
+├── wrapper.js       # adapter process
+└── README.md</code></pre>
+<p>External wrappers are useful when a capability already exists outside Node.js. The wrapper speaks the protocol expected by the kernel and advertises its metadata in the manifest.</p>
+
+<h3>How plugins fit into explainability</h3>
+<p>Plugin attempts appear in the canonical execution graph as typed plugin nodes connected to frames, seeds, branches, results, and failures. This is why plugin IDs, statuses, and selected routes are visible in the Explainability panel per chat turn.</p>
+
+<h3>Learn more</h3>
+<ul>
+  <li><a href="../architecture/plugin-guide.html">Plugin Development Guide</a> — repository layout, descriptor rules, and examples</li>
+  <li><a href="../concepts/planner.html">Planner concepts</a> — how route selection works</li>
+  <li><a href="../future/agentic-loops.html">Agentic Plugin Loops</a> — future multi-step continuation ideas</li>
 </ul>
 
 <div class="nav-bottom">

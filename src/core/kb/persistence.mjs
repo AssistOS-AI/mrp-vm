@@ -3,6 +3,7 @@ import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, rename
 import { join, resolve } from 'node:path';
 import { CNLValidator, CNLParser } from '../parser/cnl-validator-parser.mjs';
 import { logger } from '../platform/logger.mjs';
+import { createSOPBuilder, renderSOPValue, sopRef } from '../../mrp-vm-sdk/control/sop.mjs';
 
 const MOD = 'persistence';
 
@@ -37,7 +38,7 @@ export class FileMemoryPersistence {
   }
 
   async saveContextUnits(sourceId, units) {
-    const lines = units.map(u => this._unitToMarkdown(u)).join('\n\n');
+    const lines = this._unitsToSOP(units);
     atomicWrite(join(this.paths.cnl, `${sourceId}.cnl.md`), lines);
   }
 
@@ -168,36 +169,63 @@ export class FileMemoryPersistence {
     return filePath;
   }
 
-  _unitToMarkdown(u) {
-    let md = `## Context Unit ${u.id}\n`;
-    md += `SourceId: ${u.sourceId}\n`;
-    if (u.sourceName) md += `SourceName: ${u.sourceName}\n`;
-    md += `ChunkId: ${u.chunkId}\n`;
-    if (u.chunkIndex !== null && u.chunkIndex !== undefined) md += `ChunkIndex: ${u.chunkIndex}\n`;
-    if (u.unitIndex !== null && u.unitIndex !== undefined) md += `UnitIndex: ${u.unitIndex}\n`;
-    if (u.unitType) md += `UnitType: ${u.unitType}\n`;
-    if (u.textBody) md += `TextBody: ${u.textBody}\n`;
-    md += `Role: ${u.role}\n`;
-    md += `Topic: ${u.topic}\n`;
-    if (u.claim) md += `Claim: ${u.claim}\n`;
-    if (u.condition) md += `Condition: ${u.condition}\n`;
-    if (u.procedure) md += `Procedure: ${u.procedure}\n`;
-    if (u.parentUnitIds?.length) md += `ParentUnitIds: ${u.parentUnitIds.join(', ')}\n`;
-    if (u.childUnitIds?.length) md += `ChildUnitIds: ${u.childUnitIds.join(', ')}\n`;
-    if (u.derivedFromUnitIds?.length) md += `DerivedFromUnitIds: ${u.derivedFromUnitIds.join(', ')}\n`;
-    if (u.charStart !== null && u.charStart !== undefined) md += `CharStart: ${u.charStart}\n`;
-    if (u.charEnd !== null && u.charEnd !== undefined) md += `CharEnd: ${u.charEnd}\n`;
-    if (u.createdAt) md += `CreatedAt: ${u.createdAt}\n`;
-    if (u.chunkType) md += `ChunkType: ${u.chunkType}\n`;
-    if (u.sectionTitle) md += `SectionTitle: ${u.sectionTitle}\n`;
-    if (u.subject) md += `Subject: ${u.subject}\n`;
-    if (u.relation) md += `Relation: ${u.relation}\n`;
-    if (u.object) md += `Object: ${u.object}\n`;
-    if (u.confidence !== null && u.confidence !== undefined) md += `Confidence: ${u.confidence}\n`;
-    md += `UtilityActs: ${(u.utilityActs || []).join(', ')}\n`;
-    if (u.phaseScopes?.length) md += `PhaseScopes: ${u.phaseScopes.join(', ')}\n`;
-    if (u.utilityNote) md += `UtilityNote: ${u.utilityNote}\n`;
-    if (u.hash) md += `Hash: ${u.hash}\n`;
-    return md;
+  _unitsToSOP(units = []) {
+    const builder = createSOPBuilder();
+    const refByUnitId = new Map();
+
+    for (const unit of units) {
+      const kuId = builder.nextId('k');
+      refByUnitId.set(unit.id, kuId);
+      builder.push(kuId, 'ku', renderSOPValue(unit.kuType || 'atomic'), renderSOPValue(unit.id, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceId', renderSOPValue(unit.sourceId));
+      if (unit.sourceName) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceName', renderSOPValue(unit.sourceName, { forceQuoted: true }));
+      if (unit.sourceType) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceType', renderSOPValue(unit.sourceType));
+      if (unit.author) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'author', renderSOPValue(unit.author, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'chunkId', renderSOPValue(unit.chunkId));
+      if (unit.chunkIndex !== null && unit.chunkIndex !== undefined) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'chunkIndex', renderSOPValue(unit.chunkIndex));
+      if (unit.unitIndex !== null && unit.unitIndex !== undefined) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'unitIndex', renderSOPValue(unit.unitIndex));
+      if (unit.unitType) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'unitType', renderSOPValue(unit.unitType));
+      if (unit.textBody) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'textBody', renderSOPValue(unit.textBody, { forceQuoted: true }));
+      if (unit.title) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'title', renderSOPValue(unit.title, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'role', renderSOPValue(unit.role));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'topic', renderSOPValue(unit.topic, { forceQuoted: true }));
+      if (unit.claim) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'claim', renderSOPValue(unit.claim, { forceQuoted: true }));
+      if (unit.condition) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'condition', renderSOPValue(unit.condition, { forceQuoted: true }));
+      if (unit.procedure) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'procedure', renderSOPValue(unit.procedure, { forceQuoted: true }));
+      if (unit.charStart !== null && unit.charStart !== undefined) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'charStart', renderSOPValue(unit.charStart));
+      if (unit.charEnd !== null && unit.charEnd !== undefined) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'charEnd', renderSOPValue(unit.charEnd));
+      if (unit.createdAt) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'createdAt', renderSOPValue(unit.createdAt));
+      if (unit.ingestedAt) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'ingestedAt', renderSOPValue(unit.ingestedAt));
+      if (unit.knowledgeDate) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'knowledgeDate', renderSOPValue(unit.knowledgeDate));
+      if (unit.chunkType) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'chunkType', renderSOPValue(unit.chunkType));
+      if (unit.sectionTitle) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sectionTitle', renderSOPValue(unit.sectionTitle, { forceQuoted: true }));
+      if (unit.subject) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'symbolicSubject', renderSOPValue(unit.subject));
+      if (unit.relation) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'symbolicRelation', renderSOPValue(unit.relation));
+      if (unit.object) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'symbolicObject', renderSOPValue(unit.object));
+      if (unit.confidence !== null && unit.confidence !== undefined) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'confidence', renderSOPValue(unit.confidence));
+      if (unit.utilityActs?.length) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'utilityActs', renderSOPValue(unit.utilityActs));
+      if (unit.phaseScopes?.length) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'phaseScopes', renderSOPValue(unit.phaseScopes));
+      if (unit.utilityNote) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'utilityNote', renderSOPValue(unit.utilityNote, { forceQuoted: true }));
+      if (unit.hash) builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'hash', renderSOPValue(unit.hash));
+    }
+
+    for (const unit of units) {
+      const kuId = refByUnitId.get(unit.id);
+      if (!kuId) continue;
+      for (const parentId of unit.parentUnitIds || []) {
+        const parentRef = refByUnitId.get(parentId);
+        if (parentRef) {
+          builder.push(builder.nextId('kr'), 'parent', sopRef(kuId), sopRef(parentRef));
+        }
+      }
+      for (const sourceId of unit.derivedFromUnitIds || []) {
+        const sourceRef = refByUnitId.get(sourceId);
+        if (sourceRef) {
+          builder.push(builder.nextId('kr'), 'derived_from', sopRef(kuId), sopRef(sourceRef));
+        }
+      }
+    }
+
+    return builder.toString();
   }
 }

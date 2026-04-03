@@ -4,6 +4,11 @@ import { LanguageProcessingStrategy } from './registry.mjs';
 import { extractSymbolicFact } from '../knowledge/symbolic-facts.mjs';
 import { buildResponseDocument } from '../synthesis/response-document.mjs';
 import { inferPhaseScopes } from '../knowledge/pragmatics.mjs';
+import {
+  createSOPBuilder,
+  renderSOPValue,
+  sopRef
+} from '../control/sop.mjs';
 
 // Simple rule-based NL→CNL for common patterns
 const ACT_VERBS = {
@@ -55,10 +60,21 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
   _buildIntentCNL(rawNL) {
     const act = detectAct(rawNL);
     const sentences = rawNL.length < 200 ? [this._normalizeFieldText(rawNL)] : this._splitIntoSentences(rawNL);
-    return sentences.map((s, i) => {
-      const a = i === 0 ? act : detectAct(s);
-      return `## Intent Group ${i + 1}\nAct: ${a}\nIntent: ${s}\nOutput: Structured response.`;
-    }).join('\n\n');
+    const builder = createSOPBuilder();
+    for (let i = 0; i < sentences.length; i += 1) {
+      const sentence = sentences[i];
+      const sentenceAct = i === 0 ? act : detectAct(sentence);
+      const intentId = builder.nextId('i');
+      builder.push(intentId, 'intent', sentenceAct, renderSOPValue(sentence, { forceQuoted: true }));
+      builder.push(builder.nextId('is'), 'set', sopRef(intentId), 'output', renderSOPValue('structured_response'));
+
+      const seedId = builder.nextId('s');
+      builder.push(seedId, 'seed', sopRef(intentId), 'direct', sentenceAct, renderSOPValue(sentence, { forceQuoted: true }));
+      builder.push(builder.nextId('ss'), 'set', sopRef(seedId), 'domain', renderSOPValue('chat_turn'));
+      builder.push(builder.nextId('ss'), 'set', sopRef(seedId), 'evidenceNeed', renderSOPValue('general'));
+      builder.push(builder.nextId('ss'), 'set', sopRef(seedId), 'state', renderSOPValue('active'));
+    }
+    return builder.toString();
   }
 
   _buildSessionContextCNL(rawNL) {
@@ -67,7 +83,7 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
     if (contextSentences.length === 0) return '';
 
     const groups = this._groupRelatedSentences(contextSentences);
-    const units = [];
+    const builder = createSOPBuilder();
     let unitIdx = 0;
 
     for (const group of groups) {
@@ -87,17 +103,31 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
         procedure: role === 'Procedure' ? combinedText : null,
         utilityActs: [act]
       });
-      let md = `## Context Unit session::turn::unit-${String(unitIdx).padStart(3, '0')}\nSourceId: session\nChunkId: session::turn\nKUType: ${kuType}\nSourceType: chat-turn\nRole: ${role}\nTopic: ${topic}\n`;
-      if (role === 'Procedure') md += `Procedure: ${combinedText}\n`;
-      else md += `Claim: ${combinedText}\n`;
-      if (fact && role !== 'Procedure') {
-        md += `Subject: ${fact.subject}\nRelation: ${fact.relation}\nObject: ${fact.object}\nConfidence: ${fact.confidence}\n`;
+      const unitId = `session::turn::unit-${String(unitIdx).padStart(3, '0')}`;
+      const kuId = builder.nextId('k');
+      builder.push(kuId, 'ku', kuType, renderSOPValue(unitId, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceId', renderSOPValue('session'));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'chunkId', renderSOPValue('session::turn'));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceType', renderSOPValue('chat-turn'));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'role', renderSOPValue(role));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'topic', renderSOPValue(topic, { forceQuoted: true }));
+      if (role === 'Procedure') {
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'procedure', renderSOPValue(combinedText, { forceQuoted: true }));
+      } else {
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'claim', renderSOPValue(combinedText, { forceQuoted: true }));
       }
-      md += `UtilityActs: ${act}\nPhaseScopes: ${phaseScopes.join(', ')}\nHash: ${hash}`;
-      units.push(md);
+      if (fact && role !== 'Procedure') {
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'symbolicSubject', renderSOPValue(fact.subject));
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'symbolicRelation', renderSOPValue(fact.relation));
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'symbolicObject', renderSOPValue(fact.object));
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'confidence', renderSOPValue(fact.confidence));
+      }
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'utilityActs', renderSOPValue([act]));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'phaseScopes', renderSOPValue(phaseScopes));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'hash', renderSOPValue(hash));
       unitIdx++;
     }
-    return units.join('\n\n');
+    return builder.toString();
   }
 
   async normalizePersistentContext({ chunkText, provenance }) {
@@ -131,7 +161,7 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
       for (const g of groups) emitQueue.push({ sentences: g.sentences, topic: g.topic, fact: null });
     }
 
-    const units = [];
+    const builder = createSOPBuilder();
     let unitIdx = 0;
     for (const entry of emitQueue) {
       const unitId = `${provenance.sourceId}::${provenance.chunkId.split('::').pop()}::unit-${String(unitIdx).padStart(3, '0')}`;
@@ -148,19 +178,33 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
         procedure: role === 'Procedure' ? combinedText : null,
         utilityActs: acts
       });
-      let md = `## Context Unit ${unitId}\nSourceId: ${provenance.sourceId}\nChunkId: ${provenance.chunkId}\nKUType: ${kuType}\nTitle: ${topic}\nRole: ${role}\nTopic: ${topic}\n`;
-      if (provenance.sourceName) md += `SourceName: ${provenance.sourceName}\n`;
-      if (provenance.createdAt) md += `IngestedAt: ${provenance.createdAt}\n`;
+      const kuId = builder.nextId('k');
+      builder.push(kuId, 'ku', kuType, renderSOPValue(unitId, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceId', renderSOPValue(provenance.sourceId));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'chunkId', renderSOPValue(provenance.chunkId));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'title', renderSOPValue(topic, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'role', renderSOPValue(role));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'topic', renderSOPValue(topic, { forceQuoted: true }));
+      if (provenance.sourceName) {
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceName', renderSOPValue(provenance.sourceName, { forceQuoted: true }));
+      }
+      if (provenance.createdAt) {
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'ingestedAt', renderSOPValue(provenance.createdAt));
+      }
       if (role === 'Procedure') {
-        md += `Procedure: ${combinedText}\n`;
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'procedure', renderSOPValue(combinedText, { forceQuoted: true }));
       } else {
-        md += `Claim: ${combinedText}\n`;
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'claim', renderSOPValue(combinedText, { forceQuoted: true }));
         if (entry.fact) {
-          md += `Subject: ${entry.fact.subject}\nRelation: ${entry.fact.relation}\nObject: ${entry.fact.object}\nConfidence: ${entry.fact.confidence}\n`;
+          builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'symbolicSubject', renderSOPValue(entry.fact.subject));
+          builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'symbolicRelation', renderSOPValue(entry.fact.relation));
+          builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'symbolicObject', renderSOPValue(entry.fact.object));
+          builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'confidence', renderSOPValue(entry.fact.confidence));
         }
       }
-      md += `UtilityActs: ${acts.join(', ')}\nPhaseScopes: ${phaseScopes.join(', ')}\nHash: ${hash}`;
-      units.push(md);
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'utilityActs', renderSOPValue(acts));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'phaseScopes', renderSOPValue(phaseScopes));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'hash', renderSOPValue(hash));
       unitIdx++;
     }
 
@@ -172,15 +216,26 @@ export class SymbolicOnlyStrategy extends LanguageProcessingStrategy {
       const hash = createHash('sha256').update(`${combinedText}|${role}|${topic}`).digest('hex');
       const unitId = `${provenance.sourceId}::${provenance.chunkId.split('::').pop()}::unit-${String(unitIdx).padStart(3, '0')}`;
       const phaseScopes = this._phaseScopesForQuestionGuidance(combinedText);
-      let md = `## Context Unit ${unitId}\nSourceId: ${provenance.sourceId}\nChunkId: ${provenance.chunkId}\nKUType: atomic\nTitle: ${topic}\nRole: ${role}\nTopic: ${topic}\n`;
-      if (provenance.sourceName) md += `SourceName: ${provenance.sourceName}\n`;
-      if (provenance.createdAt) md += `IngestedAt: ${provenance.createdAt}\n`;
-      md += `Claim: ${combinedText}\n`;
-      md += `UtilityActs: ${acts.join(', ')}\nPhaseScopes: ${phaseScopes.join(', ')}\nHash: ${hash}`;
-      units.push(md);
+      const kuId = builder.nextId('k');
+      builder.push(kuId, 'ku', 'atomic', renderSOPValue(unitId, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceId', renderSOPValue(provenance.sourceId));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'chunkId', renderSOPValue(provenance.chunkId));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'title', renderSOPValue(topic, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'role', renderSOPValue(role));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'topic', renderSOPValue(topic, { forceQuoted: true }));
+      if (provenance.sourceName) {
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceName', renderSOPValue(provenance.sourceName, { forceQuoted: true }));
+      }
+      if (provenance.createdAt) {
+        builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'ingestedAt', renderSOPValue(provenance.createdAt));
+      }
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'claim', renderSOPValue(combinedText, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'utilityActs', renderSOPValue(acts));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'phaseScopes', renderSOPValue(phaseScopes));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'hash', renderSOPValue(hash));
     }
 
-    return { contextCNL: units.join('\n\n') };
+    return { contextCNL: builder.toString() };
   }
 
   _inferRole(text) {

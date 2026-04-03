@@ -173,25 +173,33 @@
       decompose: 'Decompose',
       kb: 'KB',
       'goal-solver': 'Goal',
-      validation: 'Validation'
+      validation: 'Validation',
+      frame: 'Frame',
+      seed: 'Seed',
+      plugin: 'Plugin',
+      branch: 'Branch',
+      result: 'Result',
+      failure: 'Failure'
     };
     return labels[stage] || stage || 'stage';
   }
 
   function statusClass(status) {
     const normalized = String(status || '').toLowerCase();
-    if (normalized === 'success' || normalized === 'accepted' || normalized === 'answered') return 'success';
-    if (normalized === 'insufficient' || normalized === 'no-context') return 'warning';
-    if (normalized === 'skipped-budget' || normalized === 'retry') return 'neutral';
+    if (normalized === 'success' || normalized === 'accepted' || normalized === 'answered' || normalized === 'succeeded') return 'success';
+    if (normalized === 'insufficient' || normalized === 'no-context' || normalized === 'active') return 'warning';
+    if (normalized === 'skipped-budget' || normalized === 'retry' || normalized === 'queued' || normalized === 'unknown') return 'neutral';
     return 'error';
   }
 
   function statusIcon(status) {
     const normalized = String(status || '').toLowerCase();
-    if (normalized === 'success' || normalized === 'accepted' || normalized === 'answered') return '✅';
+    if (normalized === 'success' || normalized === 'accepted' || normalized === 'answered' || normalized === 'succeeded') return '✅';
     if (normalized === 'insufficient') return '⚠️';
     if (normalized === 'no-context') return '🔸';
+    if (normalized === 'active') return '🟡';
     if (normalized === 'retry') return '🔄';
+    if (normalized === 'queued') return '⏳';
     if (normalized === 'skipped-budget') return '⏭️';
     return '❌';
   }
@@ -206,12 +214,106 @@
     }
   }
 
+  function nodeTypeLabel(type) {
+    return stageLabel(type);
+  }
+
+  function edgeLabel(type) {
+    const labels = {
+      contains: 'contains',
+      spawned_from: 'spawned from',
+      uses: 'uses',
+      produced: 'produces',
+      failed_as: 'fails as',
+      needs: 'needs'
+    };
+    return labels[type] || type || 'relates to';
+  }
+
   function buildTraceGraphNodes(trace) {
+    const canonicalNodes = Array.isArray(trace?.graph?.nodes) ? trace.graph.nodes : [];
+    const canonicalEdges = Array.isArray(trace?.graph?.edges) ? trace.graph.edges : [];
+    if (canonicalNodes.length) {
+      const nodeMap = new Map(canonicalNodes.map(node => [node.id, node]));
+      const incoming = new Map();
+      const outgoing = new Map();
+      for (const edge of canonicalEdges) {
+        if (!incoming.has(edge.to)) incoming.set(edge.to, []);
+        if (!outgoing.has(edge.from)) outgoing.set(edge.from, []);
+        incoming.get(edge.to).push(edge);
+        outgoing.get(edge.from).push(edge);
+      }
+      const frameDepth = new Map(
+        canonicalNodes
+          .filter(node => node.type === 'frame')
+          .map(node => [node.id, node.depth ?? 0])
+      );
+      const typeRank = { frame: 0, seed: 1, plugin: 2, branch: 3, result: 4, failure: 5 };
+      const sorted = [...canonicalNodes].sort((left, right) => {
+        const leftFrame = left.type === 'frame' ? left.id : (left.frameId || '');
+        const rightFrame = right.type === 'frame' ? right.id : (right.frameId || '');
+        const leftDepth = frameDepth.get(leftFrame) ?? 0;
+        const rightDepth = frameDepth.get(rightFrame) ?? 0;
+        if (leftDepth !== rightDepth) return leftDepth - rightDepth;
+        if (leftFrame !== rightFrame) return String(leftFrame).localeCompare(String(rightFrame));
+        const rankDiff = (typeRank[left.type] ?? 9) - (typeRank[right.type] ?? 9);
+        if (rankDiff !== 0) return rankDiff;
+        return String(left.label || left.id).localeCompare(String(right.label || right.id));
+      });
+
+      const nodes = sorted.map((node, index) => ({
+        index,
+        id: node.id,
+        type: node.type || 'node',
+        stage: node.stage || node.type || 'stage',
+        title: node.label || node.id || 'node',
+        pluginId: node.type === 'plugin' ? (node.label || node.id || null) : null,
+        status: node.status || 'unknown',
+        durationMs: node.metadata?.durationMs ?? null,
+        llmCalls: node.metadata?.llmCalls ?? null,
+        model: node.metadata?.model || null,
+        evidenceCount: node.metadata?.seedCount ?? null,
+        plannerAttempt: node.metadata?.plannerPluginId || null,
+        kbPluginId: node.metadata?.kbPluginId || null,
+        input: node.input || null,
+        output: node.output || null,
+        contextCNL: node.contextCNL || null,
+        error: node.error || null,
+        frameId: node.frameId || (node.type === 'frame' ? node.id : null),
+        depth: node.depth ?? frameDepth.get(node.frameId) ?? 0,
+        metadata: node.metadata || {},
+        incoming: (incoming.get(node.id) || []).map(edge => {
+          const related = nodeMap.get(edge.from);
+          return {
+            type: edge.type,
+            label: edgeLabel(edge.type),
+            relatedId: edge.from,
+            relatedLabel: related?.label || related?.id || edge.from,
+            relatedType: related?.type || 'node'
+          };
+        }),
+        outgoing: (outgoing.get(node.id) || []).map(edge => {
+          const related = nodeMap.get(edge.to);
+          return {
+            type: edge.type,
+            label: edgeLabel(edge.type),
+            relatedId: edge.to,
+            relatedLabel: related?.label || related?.id || edge.to,
+            relatedType: related?.type || 'node'
+          };
+        })
+      }));
+      return { nodes, edges: canonicalEdges, hasCanonicalGraph: true };
+    }
+
     const nodes = [];
     const pushNode = node => {
       nodes.push({
+        index: nodes.length,
         id: `node-${nodes.length}`,
+        type: node.type || 'plugin',
         stage: node.stage || 'stage',
+        title: node.title || node.pluginId || stageLabel(node.stage),
         pluginId: node.pluginId || null,
         status: node.status || 'unknown',
         durationMs: node.durationMs ?? null,
@@ -223,7 +325,12 @@
         input: node.input || null,
         output: node.output || null,
         contextCNL: node.contextCNL || null,
-        error: node.error || null
+        error: node.error || null,
+        frameId: null,
+        depth: 0,
+        metadata: {},
+        incoming: [],
+        outgoing: []
       });
     };
 
@@ -236,8 +343,10 @@
             ? 'retry'
             : (trace?.finalStatus === 'success' ? 'success' : (trace?.finalStatus || 'failed'));
         pushNode({
+          type: 'plugin',
           stage: 'planner',
           pluginId: plan?.plannerPluginId || trace?.plannerPluginId || 'planner',
+          title: plan?.plannerPluginId || trace?.plannerPluginId || 'planner',
           status: plannerStatus,
           plannerAttempt: attemptIndex + 1,
           input: trace?.inputMessage || null,
@@ -252,8 +361,10 @@
         for (const child of plan?.children || []) {
           if (child?.type === 'decompose') {
             pushNode({
+              type: 'plugin',
               stage: 'decompose',
               pluginId: 'decomposer',
+              title: 'decomposer',
               status: 'success',
               plannerAttempt: attemptIndex + 1,
               output: safeJson({
@@ -267,8 +378,10 @@
           if (child?.type !== 'stage') continue;
           for (const pluginNode of child.children || []) {
             pushNode({
+              type: 'plugin',
               stage: child.stage || 'stage',
               pluginId: pluginNode.pluginId || null,
+              title: pluginNode.pluginId || stageLabel(child.stage),
               status: pluginNode.status || 'unknown',
               durationMs: pluginNode.durationMs ?? null,
               llmCalls: pluginNode.llmCalls ?? null,
@@ -288,8 +401,10 @@
     } else {
       for (const stageNode of trace?.stages || []) {
         pushNode({
+          type: 'plugin',
           stage: stageNode.stage || 'stage',
           pluginId: stageNode.pluginId || null,
+          title: stageNode.pluginId || stageLabel(stageNode.stage),
           status: stageNode.status || 'unknown',
           durationMs: stageNode.durationMs ?? null,
           llmCalls: stageNode.llmCalls ?? null,
@@ -302,7 +417,7 @@
       }
     }
 
-    return nodes;
+    return { nodes, edges: [], hasCanonicalGraph: false };
   }
 
   function normalizeNodeIndex(nodes, selectedNodeIndex) {
@@ -313,14 +428,43 @@
     return selectedNodeIndex;
   }
 
+  function renderNodeCard(node, isActive = false) {
+    const active = isActive ? ' active' : '';
+    const subtitleParts = [nodeTypeLabel(node.type)];
+    if (node.type === 'plugin' && node.stage && node.stage !== node.type) subtitleParts.push(stageLabel(node.stage));
+    if (node.type !== 'frame' && node.frameId) subtitleParts.push(node.frameId);
+    const relationText = `${node.incoming?.length || 0} in · ${node.outgoing?.length || 0} out`;
+    return `
+      <button type="button" class="graph-node graph-node-${statusClass(node.status)}${active}" data-node-index="${node.index}">
+        <div class="graph-node-title">${statusIcon(node.status)} <code>${esc(node.title || node.pluginId || node.id)}</code></div>
+        <div class="graph-node-subtitle">${esc(subtitleParts.join(' · '))}</div>
+        <div class="graph-node-status-text">${esc(node.status || 'unknown')}</div>
+        <div class="graph-node-relations">${esc(relationText)}</div>
+      </button>
+    `;
+  }
+
+  function renderRelationList(relations = []) {
+    if (!relations.length) return '(none)';
+    return relations
+      .map(relation => `${relation.label} ${relation.relatedLabel} (${nodeTypeLabel(relation.relatedType)})`)
+      .join('\n');
+  }
+
   function renderGraphNodeDetail(node) {
     if (!node) return '<div class="explainability-empty">Select a graph node to inspect input/output.</div>';
     const metaParts = [];
+    metaParts.push(`type: ${nodeTypeLabel(node.type)}`);
+    if (node.frameId) metaParts.push(`frame: ${node.frameId}`);
+    if (node.depth != null && node.type === 'frame') metaParts.push(`depth: ${node.depth}`);
     if (node.durationMs != null) metaParts.push(`duration: ${node.durationMs}ms`);
     if (node.llmCalls != null) metaParts.push(`llm: ${node.llmCalls}`);
     if (node.model) metaParts.push(`model: ${node.model}`);
     if (node.evidenceCount != null) metaParts.push(`evidence: ${node.evidenceCount}`);
     if (node.kbPluginId) metaParts.push(`kb-source: ${node.kbPluginId}`);
+    if (node.metadata?.maxDepth != null) metaParts.push(`max-depth: ${node.metadata.maxDepth}`);
+    if (node.metadata?.preservesConstraints) metaParts.push(`constraints: ${node.metadata.preservesConstraints}`);
+    if (node.metadata?.structuralComplete) metaParts.push(`structure: ${node.metadata.structuralComplete}`);
 
     const errorText = node.error
       ? `${node.error.code || 'ERROR'}: ${node.error.message || ''}`.trim()
@@ -329,8 +473,8 @@
     return `
       <div class="graph-node-detail-head">
         <div>
-          <strong>${esc(node.pluginId || stageLabel(node.stage))}</strong>
-          <span class="graph-node-stage">${esc(stageLabel(node.stage))}</span>
+          <strong>${esc(node.title || node.pluginId || stageLabel(node.stage))}</strong>
+          <span class="graph-node-stage">${esc(nodeTypeLabel(node.type))}</span>
         </div>
         <span class="graph-node-status graph-node-status-${statusClass(node.status)}">${statusIcon(node.status)} ${esc(node.status || 'unknown')}</span>
       </div>
@@ -343,6 +487,14 @@
         <h5>Output</h5>
         <pre>${esc(node.output || node.contextCNL || '(none)')}</pre>
       </div>
+      <div class="graph-node-io">
+        <h5>Inbound edges</h5>
+        <pre>${esc(renderRelationList(node.incoming))}</pre>
+      </div>
+      <div class="graph-node-io">
+        <h5>Outbound edges</h5>
+        <pre>${esc(renderRelationList(node.outgoing))}</pre>
+      </div>
       ${errorText ? `
       <div class="graph-node-io graph-node-error">
         <h5>Error</h5>
@@ -352,7 +504,7 @@
   }
 
   function renderExplainabilityGraph(trace, selectedNodeIndex) {
-    const nodes = buildTraceGraphNodes(trace || {});
+    const { nodes, edges, hasCanonicalGraph } = buildTraceGraphNodes(trace || {});
     const normalizedIndex = normalizeNodeIndex(nodes, selectedNodeIndex);
     if (!nodes.length) {
       return {
@@ -362,26 +514,88 @@
       };
     }
 
-    const trackHtml = nodes.map((node, index) => {
-      const isActive = index === normalizedIndex ? ' active' : '';
-      const attempt = node.plannerAttempt ? ` · try ${esc(String(node.plannerAttempt))}` : '';
-      const nodeHtml = `
-        <button type="button" class="graph-node graph-node-${statusClass(node.status)}${isActive}" data-node-index="${index}">
-          <div class="graph-node-title">${statusIcon(node.status)} <code>${esc(node.pluginId || stageLabel(node.stage))}</code></div>
-          <div class="graph-node-subtitle">${esc(stageLabel(node.stage))}${attempt}</div>
-          <div class="graph-node-status-text">${esc(node.status || 'unknown')}</div>
-        </button>
+    let graphBodyHtml = '';
+    if (hasCanonicalGraph) {
+      const frameNodes = nodes.filter(node => node.type === 'frame');
+      const frameGroups = new Map(frameNodes.map(node => [node.id, { frame: node, nodes: [] }]));
+      const ungrouped = [];
+      for (const node of nodes) {
+        if (node.type === 'frame') continue;
+        const group = node.frameId ? frameGroups.get(node.frameId) : null;
+        if (group) group.nodes.push(node);
+        else ungrouped.push(node);
+      }
+      const laneOrder = ['seed', 'plugin', 'branch', 'result', 'failure'];
+      const renderLane = (type, laneNodes) => {
+        if (!laneNodes.length) return '';
+        return `
+          <div class="graph-lane">
+            <div class="graph-lane-label">${esc(nodeTypeLabel(type))}</div>
+            <div class="graph-lane-nodes">
+              ${laneNodes.map(node => renderNodeCard(node, node.index === normalizedIndex)).join('')}
+            </div>
+          </div>
+        `;
+      };
+      const frameSections = frameNodes.map(frameNode => {
+        const group = frameGroups.get(frameNode.id);
+        const laneHtml = laneOrder
+          .map(type => renderLane(type, group.nodes.filter(node => node.type === type)))
+          .filter(Boolean)
+          .join('');
+        return `
+          <section class="graph-frame">
+            <div class="graph-frame-head">
+              ${renderNodeCard(frameNode, frameNode.index === normalizedIndex)}
+              <div class="graph-frame-meta">
+                depth ${esc(String(frameNode.depth ?? 0))} ·
+                seeds ${esc(String(frameNode.metadata?.seedCount ?? 0))} ·
+                status ${esc(frameNode.status || 'unknown')}
+              </div>
+            </div>
+            <div class="graph-frame-lanes">
+              ${laneHtml || '<div class="graph-lane-empty">No child nodes recorded for this frame.</div>'}
+            </div>
+          </section>
+        `;
+      }).join('');
+      const ungroupedHtml = ungrouped.length
+        ? `
+          <section class="graph-frame graph-frame-ungrouped">
+            <div class="graph-frame-head">
+              <div class="graph-frame-title">Ungrouped nodes</div>
+              <div class="graph-frame-meta">${esc(String(ungrouped.length))} nodes without frame ownership</div>
+            </div>
+            <div class="graph-lane-nodes">
+              ${ungrouped.map(node => renderNodeCard(node, node.index === normalizedIndex)).join('')}
+            </div>
+          </section>
+        `
+        : '';
+      graphBodyHtml = `
+        <div class="explainability-graph-summary">
+          ${esc(`${nodes.length} nodes · ${edges.length} edges · root ${trace?.graph?.rootFrameId || 'n/a'}`)}
+        </div>
+        <div class="explainability-graph-grid">
+          ${frameSections || ''}
+          ${ungroupedHtml}
+        </div>
       `;
-      if (index >= nodes.length - 1) return nodeHtml;
-      return `${nodeHtml}<span class="graph-arrow">→</span>`;
-    }).join('');
+    } else {
+      const trackHtml = nodes.map((node, index) => {
+        const nodeHtml = renderNodeCard({ ...node, index }, index === normalizedIndex);
+        if (index >= nodes.length - 1) return nodeHtml;
+        return `${nodeHtml}<span class="graph-arrow">→</span>`;
+      }).join('');
+      graphBodyHtml = `<div class="explainability-graph-track">${trackHtml}</div>`;
+    }
 
     return {
       nodes,
       selectedNodeIndex: normalizedIndex,
       html: `
         <div class="explainability-graph-wrap">
-          <div class="explainability-graph-track">${trackHtml}</div>
+          ${graphBodyHtml}
           <div class="explainability-node-detail">
             ${renderGraphNodeDetail(nodes[normalizedIndex])}
           </div>
@@ -491,7 +705,6 @@
       const selectedTurn = selectedIndex >= 0 ? turns[selectedIndex] : null;
       if (selectedTurn) {
         const when = selectedTurn.createdAt ? new Date(selectedTurn.createdAt).toLocaleString() : 'n/a';
-        const hasTrace = selectedTurn.executionTrace?.trees?.length || selectedTurn.executionTrace?.stages?.length;
         const statusBadge = selectedTurn.answerStatus
           ? `<span class="status-badge status-${selectedTurn.answerStatus}">${esc(selectedTurn.answerStatus)}</span>`
           : '';
@@ -625,7 +838,10 @@
     const displayHtml = answerText
       ? `<div class="answer-text">${renderMarkdown(answerText)}</div>`
       : `<div class="answer-text">${renderMarkdown(content)}</div>`;
-    const hasDetails = executionTrace?.stages?.length || executionTrace?.trees?.length;
+    const hasDetails =
+      executionTrace?.graph?.nodes?.length ||
+      executionTrace?.stages?.length ||
+      executionTrace?.trees?.length;
     const controls = [];
     const shouldShowExplainabilityJump = requestId || hasDetails;
     if (shouldShowExplainabilityJump) controls.push('<span class="msg-explainability-btn">🧭 Explainability</span>');

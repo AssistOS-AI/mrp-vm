@@ -1,61 +1,88 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>LLM Cache - MRP-VM</title><link rel="stylesheet" href="../assets/docs.css"></head><body><div class="page">
-<nav class="top"><a href="../index.html">Home</a> <a href="../architecture/engine.html">Engine</a> <a href="cnl-formats.html">CNL</a> <a href="retrieval-algorithms.html">Retrieval</a> <a href="processing-modes.html">Modes</a> <a href="../architecture/plugin-guide.html">Plugins</a> <a href="../architecture/session-lifecycle.html">Sessions</a> <a href="../future/agentic-loops.html">Agentic Loops</a> <a href="../future/symbolic-execution.html">Symbolic Exec</a> <a href="../future/thinkingdb.html">ThinkingDB</a> <a href="evaluation.html">Evaluation</a> <a href="llm-cache.html" class="current">Cache</a></nav>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Cache - MRP-VM</title>
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="page">
+<nav class="top">
+  <a href="../index.html">Home</a>
+  <a href="../architecture/engine.html">Engine</a>
+  <a href="cnl-formats.html">CNL</a>
+  <a href="retrieval-algorithms.html">Retrieval</a>
+  <a href="processing-modes.html">Modes</a>
+  <a href="../architecture/plugin-guide.html">Plugins</a>
+  <a href="../architecture/session-lifecycle.html">Sessions</a>
+  <a href="../future/agentic-loops.html">Agentic Loops</a>
+  <a href="../future/symbolic-execution.html">Symbolic Exec</a>
+  <a href="../future/thinkingdb.html">ThinkingDB</a>
+  <a href="evaluation.html">Evaluation</a>
+  <a href="llm-cache.html" class="current">Cache</a>
+</nav>
 
 <h1>LLM Response Cache <span class="badge done">IMPLEMENTED</span></h1>
-<p>All LLM calls go through a disk cache in <code>data/cache/</code>. Same prompt + model = same response, instantly. Spec: <a href="../specs/DS015-llmagent-integration.md">DS015</a>.</p>
+<p>All LLM calls go through a disk cache in <code>data/cache/</code>. Same prompt plus same model means same response body, returned immediately. Spec: <a href="../specs/DS015-llmagent-integration.md">DS015</a>.</p>
 
-<h2>How It Works</h2>
+<h2>How it works</h2>
 <ol>
   <li>Before calling the LLM, compute <code>SHA-256(model + "\n" + prompt)</code></li>
-  <li>Check if <code>data/cache/{hash}.json</code> exists</li>
-  <li>If yes → return cached response (0ms, zero cost)</li>
-  <li>If no → call LLM, save response to cache file</li>
+  <li>Check whether <code>data/cache/{hash}.json</code> exists</li>
+  <li>If yes, return the cached response body</li>
+  <li>If no, call the LLM and persist the response body</li>
 </ol>
 
-<h2>Cache File Format</h2>
+<h2>Cache file format</h2>
 <pre><code>{
   "mode": "test-fast",
-  "prompt": "You are a normalization engine...\n\nCurrent request:\nCompare X and Y",
-  "response": "## Intent Group 1\nAct: compare\nIntent: Compare X and Y\nOutput: Comparison",
+  "prompt": "You are a seed detection engine...\n\nCurrent request:\nCompare X and Y for CPU-only deployment",
+  "response": "# Intent CNL\n@i1 intent compare \"X and Y for CPU-only deployment\"\n@i2 set $i1 output comparative_recommendation\n@s1 seed $i1 explore locate \"tradeoffs\"\n@s2 set $s1 domain general\n@s3 set $s1 evidenceNeed structural\n@s4 set $s1 state active\n",
   "cachedAt": "2026-03-27T12:00:00Z"
 }</code></pre>
-<p>Each file contains the full request and response — you can inspect them to debug LLM behavior.</p>
+<p>The cache stores the raw prompt and raw model response so prompt migrations, validation failures, and SOP formatting issues remain debuggable.</p>
 
-<h2>What Gets Cached</h2>
+<h2>What gets cached</h2>
 <table>
 <tr><th>Scenario</th><th>Cached?</th></tr>
 <tr><td>Successful, non-empty LLM response</td><td>✅ Yes</td></tr>
 <tr><td>LLM error (timeout, 429, network)</td><td>❌ No</td></tr>
 <tr><td>Empty response</td><td>❌ No</td></tr>
-<tr><td>Validation failure (bad CNL)</td><td>✅ Yes (the raw LLM output is valid text, just bad CNL)</td></tr>
+<tr><td>Validation failure (bad SOP/CNL)</td><td>✅ Yes — the raw model text is still useful for debugging</td></tr>
 </table>
 
-<h2>Cache Stability</h2>
-<p>To ensure the same question produces the same cache key across server restarts:</p>
+<h2>Cache stability</h2>
+<p>To keep cache keys stable across restarts and evaluation reruns:</p>
 <ul>
-  <li>Session IDs are <strong>excluded</strong> from synthesis prompts</li>
-  <li>Source IDs are <strong>normalized</strong> (<code>src-xxx</code> → <code>src-REF</code>) in synthesis prompts</li>
-  <li>Intent normalization and session context prompts don't contain session/source IDs</li>
+  <li>session ids are excluded from LLM-facing prompts</li>
+  <li>source ids are normalized in synthesis prompts where appropriate</li>
+  <li>control prompts rely on stable SOP examples and deterministic section wrappers</li>
 </ul>
 
-<h2>Performance Impact</h2>
+<h2>Performance impact</h2>
 <table>
 <tr><th>Scenario</th><th>Without cache</th><th>With cache</th></tr>
-<tr><td>Full eval (48 questions)</td><td>~2 minutes</td><td>~2 seconds</td></tr>
-<tr><td>Single question (llm-assisted)</td><td>~3 seconds</td><td>~50 ms</td></tr>
-<tr><td>KB ingest (story)</td><td>~10 seconds</td><td>~100 ms</td></tr>
+<tr><td>Full eval</td><td>minutes</td><td>seconds</td></tr>
+<tr><td>Single llm-assisted request</td><td>seconds</td><td>tens of milliseconds</td></tr>
+<tr><td>Context ingest normalization</td><td>seconds</td><td>near-instant on replay</td></tr>
 </table>
 
 <h2>Configuration</h2>
 <pre><code>// config/llm.json
 {
-  "cache": true,           // set false to disable
-  "cacheDir": "data/cache" // override path
+  "cache": true,
+  "cacheDir": "data/cache"
 }</code></pre>
 
-<h2>Clearing the Cache</h2>
+<h2>Clearing the cache</h2>
 <pre><code>rm -f data/cache/*.json</code></pre>
-<p>Clear when: prompts change, LLM model changes, you want fresh non-deterministic results.</p>
 
-<div class="nav-bottom"><a href="evaluation.html" class="prev">← Evaluation</a> <a href="../future/agentic-loops.html">Agentic Loops →</a></div>
-</div><footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer></body></html>
+<div class="nav-bottom">
+  <a href="evaluation.html" class="prev">← Evaluation</a>
+  <a href="../future/agentic-loops.html">Agentic Loops →</a>
+</div>
+</div>
+<footer>MRP-VM Documentation — <a href="../index.html">Home</a></footer>
+</body>
+</html>
