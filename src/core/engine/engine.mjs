@@ -545,6 +545,7 @@ export class MRPEngine {
 
     // Goal solving in child frame
     const goalCandidates = (refinedPlan.goalSolverOrder || []).slice(0, this.maxPluginsPerStage);
+    const totalGoalAttempts = kbResults.length * Math.max(1, goalCandidates.length);
     let goalResult = null;
     let selectedGoalSolverPlugin = null;
     let selectedKBPlugin = null;
@@ -555,6 +556,7 @@ export class MRPEngine {
     let weakKBPlugin = null;
     let weakBranchIds = [];
     let executionOrder = 0;
+    let startedGoalAttempts = 0;
     for (const kb of kbResults) {
       const resolvedIntentsForKB = kb.result.resolvedIntents || [];
       const guidanceUnits = this._collectCommonGuidanceEntries(resolvedIntentsForKB, 'goalSolver');
@@ -570,6 +572,7 @@ export class MRPEngine {
           kbPluginId: kb.pluginId,
           message: `Child frame: solving with ${pluginId}`
         });
+        startedGoalAttempts += 1;
         const result = await plugin.solve({
           sessionId: session.sessionId,
           resolvedIntents: resolvedIntentsForKB,
@@ -620,9 +623,15 @@ export class MRPEngine {
             branches: activeBranches,
             resolvedIntents: resolvedIntentsForKB,
             familyKey: this._summarizeExecutionFamily(activeBranches),
-            familyCount: new Set(activeBranches.map(branch => branch.familySignature || 'default')).size
+            familyCount: new Set(activeBranches.map(branch => branch.familySignature || 'default')).size,
+            validationVerdict: null,
+            validationReason: ''
           });
-          if (!this._shouldContinueComparativeExploration(childDeliberationPolicy, candidateExecutions)) {
+          if (!this._shouldContinueComparativeExploration(
+            childDeliberationPolicy,
+            candidateExecutions,
+            { remainingAttempts: Math.max(0, totalGoalAttempts - startedGoalAttempts) }
+          )) {
             const selectedExecution = this._selectComparativeOutcome(candidateExecutions, childDeliberationPolicy);
             goalResult = selectedExecution?.goalResult || result;
             selectedGoalSolverPlugin = selectedExecution?.goalSolverPlugin || pluginId;
@@ -726,11 +735,48 @@ export class MRPEngine {
     if (goalResult) {
       const selectedResolvedIntents =
         (kbResults.find(item => item.pluginId === selectedKBPlugin) || kbResults[0])?.result?.resolvedIntents || [];
+      const childSelectedBranchIdSet = new Set(selectedBranchIds || []);
+      const childCandidateSet = candidateExecutions.map(outcome => {
+        const branchIds = outcome.branchIds || [];
+        const representativeBranch = outcome.branches?.[0]
+          || childTrace?.branches?.find(branch => branch.branchId === branchIds[0])
+          || null;
+        const selected = branchIds.some(branchId => childSelectedBranchIdSet.has(branchId));
+        for (const branchId of branchIds) {
+          this._patchBranchAttempt(childTrace, branchId, { status: 'succeeded' });
+        }
+        return this._buildCandidateRecord({
+          frameId: representativeBranch?.frameId || childFrameId,
+          branchId: representativeBranch?.branchId || branchIds[0] || null,
+          branchIds,
+          resultId: representativeBranch?.resultId || branchIds[0] || null,
+          resultBody: outcome.goalResult?.responseMarkdown || null,
+          familySignature: outcome.familyKey || representativeBranch?.familySignature || null,
+          validationStatus: selected ? 'accepted' : 'candidate',
+          kbSufficient: !!outcome.kbSufficient,
+          selected,
+          score: this._scoreExecutionOutcome(outcome, childDeliberationPolicy),
+          strength: this._deriveOutcomeStrength(outcome)
+        });
+      });
+      const childComparisonState = this._buildComparisonState(
+        childCandidateSet,
+        childDeliberationPolicy,
+        'accepted',
+        ''
+      );
+      const childSuspendedSet = candidateExecutions
+        .filter(outcome => !(outcome.branchIds || []).some(branchId => childSelectedBranchIdSet.has(branchId)))
+        .flatMap(outcome => outcome.branchIds || []);
       this._patchFrameRecord(childTrace, childFrameId, {
         status: 'succeeded',
         budgets: {
           remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
         },
+        candidateSet: childCandidateSet,
+        comparisonState: childComparisonState,
+        suspendedSet: childSuspendedSet,
+        deliberationStatus: childComparisonState.openQuestions.length > 0 ? 'comparative_open' : 'settled',
         localState: {
           retrievedKUs: selectedResolvedIntents.map(ri => ({
             intentRef: ri.intentRef,
@@ -1092,20 +1138,25 @@ export class MRPEngine {
           const candidateSet = [];
           for (const outcome of executionOutcomes) {
             const branchIds = outcome.branchIds || [];
+            const rejectedByValidation = outcome.validationVerdict === 'rejected';
             const representativeBranch = outcome.branches?.[0]
               || executionTrace.branches.find(branch => branch.branchId === branchIds[0])
               || null;
             const recordedResultIds = [];
             for (const branchId of branchIds) {
-              const branch = this._patchBranchAttempt(executionTrace, branchId, { status: 'succeeded' });
+              const branch = this._patchBranchAttempt(executionTrace, branchId, {
+                status: rejectedByValidation ? 'failed' : 'succeeded'
+              });
               if (!branch) continue;
               const resultRecord = this._recordResult(executionTrace, {
                 frameId: branch.frameId,
                 branchId,
                 kind: outcome.goalResult?.status === 'no-context' ? 'no-context' : 'answer',
-                validationStatus: selectedBranchIdSet.has(branchId)
-                  ? (executed.validationVerdict || executionTrace.finalAnswerStatus)
-                  : 'candidate',
+                validationStatus: rejectedByValidation
+                  ? 'rejected'
+                  : selectedBranchIdSet.has(branchId)
+                    ? (executed.validationVerdict || executionTrace.finalAnswerStatus)
+                    : (outcome.validationVerdict || 'candidate'),
                 preservesConstraints: outcome.goalResult?.status === 'no-context' ? 'unknown' : 'yes',
                 structuralComplete: outcome.goalResult?.status === 'no-context' ? 'partial' : 'yes',
                 body: outcome.goalResult?.responseMarkdown || null
@@ -1114,7 +1165,8 @@ export class MRPEngine {
               recordedResultIds.push(resultRecord.resultId);
             }
             if (!representativeBranch && !recordedResultIds.length) continue;
-            const selected = branchIds.some(branchId => selectedBranchIdSet.has(branchId));
+            const selected = !rejectedByValidation
+              && branchIds.some(branchId => selectedBranchIdSet.has(branchId));
             candidateSet.push(this._buildCandidateRecord({
               frameId: representativeBranch?.frameId || pluginCtx.frameId,
               branchId: representativeBranch?.branchId || branchIds[0] || null,
@@ -1122,15 +1174,15 @@ export class MRPEngine {
               resultId: recordedResultIds[0] || representativeBranch?.resultId || null,
               resultBody: outcome.goalResult?.responseMarkdown || null,
               familySignature: outcome.familyKey || representativeBranch?.familySignature || null,
-              validationStatus: selected
-                ? (executed.validationVerdict || executionTrace.finalAnswerStatus)
-                : 'candidate',
+              validationStatus: rejectedByValidation
+                ? 'rejected'
+                : selected
+                  ? (executed.validationVerdict || executionTrace.finalAnswerStatus)
+                  : (outcome.validationVerdict || 'candidate'),
               kbSufficient: !!outcome.kbSufficient,
               selected,
               score: this._scoreExecutionOutcome(outcome, resolvedFrame?.deliberationPolicy || executionTrace.deliberationPolicy),
-              strength: selected
-                ? (!!outcome.kbSufficient ? 'strong' : 'sufficient')
-                : (!!outcome.kbSufficient ? 'sufficient' : 'weak')
+              strength: rejectedByValidation ? 'weak' : this._deriveOutcomeStrength(outcome)
             }));
           }
           const comparisonState = this._buildComparisonState(
@@ -1139,11 +1191,19 @@ export class MRPEngine {
             executed.validationVerdict,
             executed.validationReason
           );
+          const suspendedSet = executionOutcomes
+            .filter(outcome =>
+              outcome.validationVerdict !== 'rejected'
+              && !(outcome.branchIds || []).some(branchId => selectedBranchIdSet.has(branchId))
+            )
+            .flatMap(outcome => outcome.branchIds || []);
           this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
             status: 'succeeded',
             budgets: this._remainingBudgetSnapshot(budgetState, startTime),
             candidateSet,
             comparisonState,
+            suspendedSet,
+            deliberationStatus: comparisonState.openQuestions.length > 0 ? 'comparative_open' : 'settled',
             localState: {
               partialResults: executionTrace.results,
               plan: executionTrace.lastPlan || null
@@ -1533,6 +1593,8 @@ export class MRPEngine {
           let candidateExecutions = [];
           let executionOrder = 0;
           const goalCandidates = (refinedPlan.goalSolverOrder || []).slice(0, this.maxPluginsPerStage);
+          const totalGoalAttempts = kbResults.length * Math.max(1, goalCandidates.length);
+          let startedGoalAttempts = 0;
 
           executionTrace.lastPlan = {
             plannerPluginId: refinedPlan.plannerPluginId,
@@ -1617,6 +1679,7 @@ export class MRPEngine {
                 kbPluginId: kb.pluginId,
                 message: `Solving with ${pluginId}`
               });
+              startedGoalAttempts += 1;
               const result = await plugin.solve({
                 sessionId: session.sessionId,
                 resolvedIntents: resolvedIntentsForKB,
@@ -1674,9 +1737,15 @@ export class MRPEngine {
                   branches: activeBranches,
                   resolvedIntents: resolvedIntentsForKB,
                   familyKey: this._summarizeExecutionFamily(activeBranches),
-                  familyCount: new Set(activeBranches.map(branch => branch.familySignature || 'default')).size
+                  familyCount: new Set(activeBranches.map(branch => branch.familySignature || 'default')).size,
+                  validationVerdict: null,
+                  validationReason: ''
                 });
-                if (!this._shouldContinueComparativeExploration(executionTrace.deliberationPolicy, candidateExecutions)) {
+                if (!this._shouldContinueComparativeExploration(
+                  executionTrace.deliberationPolicy,
+                  candidateExecutions,
+                  { remainingAttempts: Math.max(0, totalGoalAttempts - startedGoalAttempts) }
+                )) {
                   const selectedExecution = this._selectComparativeOutcome(candidateExecutions, executionTrace.deliberationPolicy);
                   goalResult = selectedExecution?.goalResult || result;
                   selectedGoalSolverPlugin = selectedExecution?.goalSolverPlugin || pluginId;
@@ -1804,7 +1873,22 @@ export class MRPEngine {
               { stage: 'goal-solver', pluginsTried: goalCandidates });
           }
 
-          const resolvedIntents = (kbResults.find(k => k.pluginId === selectedKBPlugin) || kbResults[0]).result.resolvedIntents || [];
+          let selectedExecution = candidateExecutions.find(outcome =>
+            outcome.goalResult === goalResult &&
+            outcome.goalSolverPlugin === selectedGoalSolverPlugin &&
+            outcome.kbPlugin === selectedKBPlugin
+          ) || null;
+          if (!selectedExecution && candidateExecutions.length > 0) {
+            selectedExecution = this._selectComparativeOutcome(candidateExecutions, executionTrace.deliberationPolicy);
+            if (selectedExecution) {
+              goalResult = selectedExecution.goalResult;
+              selectedGoalSolverPlugin = selectedExecution.goalSolverPlugin;
+              selectedKBPlugin = selectedExecution.kbPlugin;
+              kbSufficient = !!selectedExecution.kbSufficient;
+              selectedBranchIds = selectedExecution.branchIds || [];
+            }
+          }
+          let resolvedIntents = (kbResults.find(k => k.pluginId === selectedKBPlugin) || kbResults[0]).result.resolvedIntents || [];
           this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
             localState: {
               retrievedKUs: resolvedIntents.map(ri => ({
@@ -1823,68 +1907,108 @@ export class MRPEngine {
           if (valCandidates.length > 0 && goalResult.status === 'success') {
             const valNode = { type: 'stage', stage: 'validation', children: [] };
             planNode.children.push(valNode);
-            const validationGuidance = this._collectCommonGuidanceEntries(resolvedIntents, 'validation');
-            for (const valId of valCandidates.slice(0, this.maxPluginsPerStage)) {
-              const valPlugin = this.pluginRegistry.get('val-plugin', valId);
-              if (!valPlugin) continue;
-              if (!reserveBudgetOrSkip('validation', valId, valPlugin)) {
-                valNode.children.push({ type: 'plugin', pluginId: valId, status: 'skipped-budget' });
-                continue;
+            let candidateValidationPool = candidateExecutions
+              .filter(outcome => outcome.goalResult?.status === 'success' && outcome.validationVerdict !== 'rejected');
+            if (!candidateValidationPool.length && selectedExecution) {
+              candidateValidationPool = [selectedExecution];
+            }
+            while (true) {
+              validationVerdict = 'accepted';
+              validationReason = '';
+              resolvedIntents = (kbResults.find(k => k.pluginId === selectedKBPlugin) || kbResults[0]).result.resolvedIntents || [];
+              const validationGuidance = this._collectCommonGuidanceEntries(resolvedIntents, 'validation');
+              for (const valId of valCandidates.slice(0, this.maxPluginsPerStage)) {
+                const valPlugin = this.pluginRegistry.get('val-plugin', valId);
+                if (!valPlugin) continue;
+                if (!reserveBudgetOrSkip('validation', valId, valPlugin)) {
+                  valNode.children.push({ type: 'plugin', pluginId: valId, status: 'skipped-budget' });
+                  continue;
+                }
+                const startedAt = Date.now();
+                emitProgress({
+                  type: 'stage',
+                  event: 'start',
+                  stage: 'validation',
+                  pluginId: valId,
+                  message: `Validating response with ${valId}`
+                });
+                const valResult = await valPlugin.validate({
+                  originalMessage: currentMessage,
+                  responseMarkdown: goalResult.responseMarkdown,
+                  resolvedIntents,
+                  guidanceUnits: validationGuidance,
+                  requestedModel,
+                  sessionModel: session.preferredModel
+                }, pluginCtx);
+                this._consumeLLMCalls(budgetState, valResult);
+                checkBudget();
+                valNode.children.push({
+                  type: 'plugin', pluginId: valId, status: valResult.status,
+                  durationMs: Date.now() - startedAt,
+                  llmCalls: valResult.metadata?.llmCalls || 0,
+                  model: valResult.metadata?.model || null,
+                  input: currentMessage,
+                  output: `${valResult.verdict}: ${valResult.reason}`,
+                  error: valResult.error || null
+                });
+                addStageTrace('validation', valId, valResult.status, startedAt,
+                  valResult.metadata?.llmCalls || 0, valResult.verdict === 'accepted',
+                  valResult.error || null, valResult.metadata?.model || null,
+                  valPlugin.getDescriptor().modelRoles?.[0] || null,
+                  snip(currentMessage), snip(`${valResult.verdict}: ${valResult.reason}`));
+                validationVerdict = valResult.verdict;
+                validationReason = valResult.reason;
+                break;
               }
-              const startedAt = Date.now();
+              if (validationVerdict !== 'rejected') {
+                if (selectedExecution) {
+                  selectedExecution.validationVerdict = validationVerdict;
+                  selectedExecution.validationReason = validationReason;
+                }
+                break;
+              }
+              if (selectedExecution) {
+                selectedExecution.validationVerdict = 'rejected';
+                selectedExecution.validationReason = validationReason;
+              }
+              for (const branchId of selectedBranchIds) {
+                const branch = this._patchBranchAttempt(executionTrace, branchId, {
+                  status: 'failed',
+                  error: { code: 'VALIDATION_REJECTED', message: validationReason }
+                });
+                if (!branch) continue;
+                this._recordFailure(executionTrace, {
+                  frameId: branch.frameId,
+                  branchId: branch.branchId,
+                  seedId: branch.seedId,
+                  pluginId: branch.pluginId,
+                  reason: validationReason,
+                  error: { code: 'VALIDATION_REJECTED', message: validationReason },
+                  evidenceProfileHash: branch.evidenceProfileHash
+                });
+              }
+              candidateValidationPool = candidateValidationPool.filter(outcome => outcome !== selectedExecution);
+              const fallbackExecution = this._selectComparativeOutcome(
+                candidateValidationPool,
+                executionTrace.deliberationPolicy
+              );
+              if (!fallbackExecution) break;
+              selectedExecution = fallbackExecution;
+              goalResult = fallbackExecution.goalResult;
+              selectedGoalSolverPlugin = fallbackExecution.goalSolverPlugin;
+              selectedKBPlugin = fallbackExecution.kbPlugin;
+              kbSufficient = !!fallbackExecution.kbSufficient;
+              selectedBranchIds = fallbackExecution.branchIds || [];
+              resolvedIntents = (kbResults.find(k => k.pluginId === selectedKBPlugin) || kbResults[0]).result.resolvedIntents || [];
               emitProgress({
-                type: 'stage',
-                event: 'start',
-                stage: 'validation',
-                pluginId: valId,
-                message: `Validating response with ${valId}`
+                type: 'validation',
+                event: 'retry',
+                status: 'fallback-candidate',
+                message: `Validation rejected a candidate, retrying with ${selectedGoalSolverPlugin}`
               });
-              const valResult = await valPlugin.validate({
-                originalMessage: currentMessage,
-                responseMarkdown: goalResult.responseMarkdown,
-                resolvedIntents,
-                guidanceUnits: validationGuidance,
-                requestedModel,
-                sessionModel: session.preferredModel
-              }, pluginCtx);
-              this._consumeLLMCalls(budgetState, valResult);
-              checkBudget();
-              valNode.children.push({
-                type: 'plugin', pluginId: valId, status: valResult.status,
-                durationMs: Date.now() - startedAt,
-                llmCalls: valResult.metadata?.llmCalls || 0,
-                model: valResult.metadata?.model || null,
-                input: currentMessage,
-                output: `${valResult.verdict}: ${valResult.reason}`,
-                error: valResult.error || null
-              });
-              addStageTrace('validation', valId, valResult.status, startedAt,
-                valResult.metadata?.llmCalls || 0, valResult.verdict === 'accepted',
-                valResult.error || null, valResult.metadata?.model || null,
-                valPlugin.getDescriptor().modelRoles?.[0] || null,
-                snip(currentMessage), snip(`${valResult.verdict}: ${valResult.reason}`));
-              validationVerdict = valResult.verdict;
-              validationReason = valResult.reason;
-              break;
             }
           }
           if (validationVerdict === 'rejected') {
-            for (const branchId of selectedBranchIds) {
-              const branch = this._patchBranchAttempt(executionTrace, branchId, {
-                status: 'failed',
-                error: { code: 'VALIDATION_REJECTED', message: validationReason }
-              });
-              if (!branch) continue;
-              this._recordFailure(executionTrace, {
-                frameId: branch.frameId,
-                branchId: branch.branchId,
-                seedId: branch.seedId,
-                pluginId: branch.pluginId,
-                reason: validationReason,
-                error: { code: 'VALIDATION_REJECTED', message: validationReason },
-                evidenceProfileHash: branch.evidenceProfileHash
-              });
-            }
             throw new MRPError(
               'VALIDATION_REJECTED',
               MOD,
@@ -1896,6 +2020,16 @@ export class MRPEngine {
               }
             );
           }
+          this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
+            localState: {
+              retrievedKUs: resolvedIntents.map(ri => ({
+                intentRef: ri.intentRef,
+                currentTurnCount: ri.currentTurnContextUnits?.length || 0,
+                sessionCount: ri.sessionUnits?.length || 0,
+                kbCount: ri.kbUnits?.length || 0
+              }))
+            }
+          });
 
             return {
               goalResult,

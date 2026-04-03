@@ -21,7 +21,7 @@ const DELIBERATION_DEFAULTS = {
     validationFloor: 'sufficient'
   },
   3: {
-    closureMode: 'comparative',
+    closureMode: 'scientific',
     maxFrontier: 6,
     minFamilies: 2,
     maxComparisons: 4,
@@ -47,7 +47,7 @@ export function createDeliberationPolicy(policy = {}, parentPolicy = null) {
     closureMode: policy.closureMode || defaults.closureMode,
     maxFrontier,
     minFamilies: Math.min(minFamilies, maxFrontier),
-    maxComparisons,
+    maxComparisons: Math.min(maxComparisons, Math.max(0, maxFrontier - 1)),
     validationFloor: policy.validationFloor || defaults.validationFloor,
     inheritedLevel: parentPolicy?.level ?? null
   };

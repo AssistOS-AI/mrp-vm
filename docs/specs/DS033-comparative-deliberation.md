@@ -528,11 +528,15 @@ base plugin-family taxonomy.
 - [ ] Teach proposal generation to emit `compare`
   and `challenge` proposals, not only branch
   expansion.
-- [ ] Implement candidate promotion and dominance
+- [x] Implement candidate promotion and dominance
   filtering.
-- [ ] Implement comparative frame-closure rules.
+- [x] Implement comparative frame-closure rules for
+  multi-candidate continuation, validation fallback,
+  and scientific no-first-success behavior.
 - [x] Add explainability trace nodes/edges for
   candidates, comparisons, and challenges.
+- [ ] Add explicit partial-closure reasons when
+  frontier or budget exhaustion forces selection.
 - [ ] Decide whether the reference implementation
   ships with `comparativeDeliberationEnabled`
   defaulting to `false` or `true`.
@@ -543,8 +547,9 @@ branch-family signatures, interpreter support for
 `policy` / `objective` / `candidate` / `compare` /
 `challenge`, and graph-level explainability nodes.
 What remains open is stronger comparative scheduling,
-multi-candidate dominance filtering, and explicit
-proposal generation for compare/challenge control.
+portfolio-aware family coverage, explicit
+proposal generation for compare/challenge control,
+and truthful partial-closure reporting.
 
 ## Dependencies
 

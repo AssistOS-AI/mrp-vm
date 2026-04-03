@@ -821,6 +821,406 @@ describe('MRPEngine', () => {
     assert.equal(frame.comparisonState.challenges.length, 1);
   });
 
+  it('falls back to the next comparative candidate when validation rejects the first one', async () => {
+    let validationCalls = 0;
+    const planner = {
+      getDescriptor() {
+        return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+      },
+      async buildPlan() {
+        return {
+          plannerPluginId: 'planner-default',
+          kbPluginOrder: ['kb-fast'],
+          goalSolverOrder: ['gs-fast', 'gs-deep'],
+          notes: []
+        };
+      },
+      async recordOutcome() {}
+    };
+    const registry = {
+      listByType(type) {
+        if (type === 'mrp-plan-plugin') return [{ id: 'planner-default' }];
+        if (type === 'val-plugin') return [{ id: 'val-guard' }];
+        return [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin' && id === 'planner-default') return planner;
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              return {
+                status: 'success',
+                intentCNL: [
+                  '@i1 intent explain "Explain Aurora\'s role"',
+                  '@i2 intent explain "Explain why the shield held"',
+                  '@i3 set $i1 output "Structured answer"',
+                  '@i4 set $i2 output "Structured answer"',
+                  '@s1 seed $i1 direct explain "Aurora role"',
+                  '@s2 seed $i2 direct explain "Shield stability"'
+                ].join('\n'),
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve() {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: [
+                  {
+                    intentRef: 1,
+                    intentGroup: { groupNumber: 1, act: 'explain', intent: 'Explain Aurora\'s role', output: 'Structured answer' },
+                    decomposed: { groupNumber: 1, act: 'explain', intent: 'Explain Aurora\'s role', outputType: 'Structured answer' },
+                    currentTurnContextUnits: [],
+                    sessionUnits: [],
+                    kbUnits: [],
+                    retrievalTrace: {}
+                  },
+                  {
+                    intentRef: 2,
+                    intentGroup: { groupNumber: 2, act: 'explain', intent: 'Explain why the shield held', output: 'Structured answer' },
+                    decomposed: { groupNumber: 2, act: 'explain', intent: 'Explain why the shield held', outputType: 'Structured answer' },
+                    currentTurnContextUnits: [],
+                    sessionUnits: [],
+                    kbUnits: [],
+                    retrievalTrace: {}
+                  }
+                ],
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-fast', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              return {
+                status: 'success',
+                responseMarkdown: '1. Aurora stabilized the lattice around the shield.\n2. The shield held because she relied on an unsupported claim about hidden nanites in the corridor.',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-deep') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-deep', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              return {
+                status: 'success',
+                responseMarkdown: '1. Aurora stabilized the lattice around the shield.\n2. The shield held because she kept the corridor aligned while pressure was rising.',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'val-plugin' && id === 'val-guard') {
+          return {
+            getDescriptor() {
+              return { id: 'val-guard', type: 'val-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async validate({ responseMarkdown }) {
+              validationCalls += 1;
+              if (/unsupported claim/i.test(responseMarkdown)) {
+                return {
+                  status: 'rejected',
+                  verdict: 'rejected',
+                  reason: 'Contains an unsupported claim',
+                  metadata: { llmCalls: 0, model: null },
+                  error: null
+                };
+              }
+              return {
+                status: 'accepted',
+                verdict: 'accepted',
+                reason: 'Structured answer accepted',
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: 'planner-default',
+            preferredSeedDetectorPlugin: 'sd-symbolic',
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-fast',
+            preferredDeliberationLevel: 0
+          },
+          currentMessage: 'Explain Aurora and explain why the shield held.',
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedDeliberationLevel: 2,
+          explicitPlannerPlugin: null,
+          explicitSeedDetectorPlugin: null,
+          explicitKBPlugin: null,
+          explicitGoalSolverPlugin: null,
+          requestedPlannerPlugin: 'planner-default',
+          requestedSeedDetectorPlugin: 'sd-symbolic',
+          requestedKBPlugin: 'kb-fast',
+          requestedGoalSolverPlugin: null
+        };
+      },
+      async commitSuccessfulTurn() {}
+    };
+    const engine = new MRPEngine(
+      {
+        maxLLMAttemptsPerRequest: 4,
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        defaultPlannerPlugin: 'planner-default',
+        defaultSeedDetectorPlugin: 'sd-symbolic'
+      },
+      registry,
+      conversationHandler,
+      new CNLParser(),
+      new IntentDecomposer(),
+      { selectPlugin() { return null; } },
+      {},
+      null
+    );
+
+    const result = await engine.processChatTurn({
+      deliberation_level: 2,
+      messages: [{ role: 'user', content: 'Explain Aurora and explain why the shield held.' }]
+    });
+
+    const frame = result.executionTrace.frames[0];
+    assert.equal(validationCalls, 2);
+    assert.match(result.responseMarkdown, /^1\./);
+    assert.equal(frame.candidateSet.length, 2);
+    assert.equal(frame.candidateSet.filter(candidate => candidate.validationStatus === 'rejected').length, 1);
+    assert.equal(frame.candidateSet.filter(candidate => candidate.selected).length, 1);
+    assert.match(frame.comparisonState.openQuestions.join(' '), /rejected by validation/i);
+  });
+
+  it('keeps scientific exploration open past the first success until a dominant candidate appears', async () => {
+    const solverCalls = { fast: 0, deep: 0, alt: 0 };
+    const planner = {
+      getDescriptor() {
+        return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+      },
+      async buildPlan() {
+        return {
+          plannerPluginId: 'planner-default',
+          kbPluginOrder: ['kb-fast'],
+          goalSolverOrder: ['gs-fast', 'gs-deep', 'gs-alt'],
+          notes: []
+        };
+      },
+      async recordOutcome() {}
+    };
+    const registry = {
+      listByType(type) {
+        if (type === 'mrp-plan-plugin') return [{ id: 'planner-default' }];
+        if (type === 'val-plugin') return [];
+        return [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin' && id === 'planner-default') return planner;
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              return {
+                status: 'success',
+                intentCNL: [
+                  '@i1 intent explain "Explain Aurora\'s role"',
+                  '@i2 intent explain "Explain why the shield held"',
+                  '@i3 set $i1 output "Structured answer"',
+                  '@i4 set $i2 output "Structured answer"',
+                  '@s1 seed $i1 direct explain "Aurora role"',
+                  '@s2 seed $i2 direct explain "Shield stability"'
+                ].join('\n'),
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve() {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: [
+                  {
+                    intentRef: 1,
+                    intentGroup: { groupNumber: 1, act: 'explain', intent: 'Explain Aurora\'s role', output: 'Structured answer' },
+                    decomposed: { groupNumber: 1, act: 'explain', intent: 'Explain Aurora\'s role', outputType: 'Structured answer' },
+                    currentTurnContextUnits: [],
+                    sessionUnits: [],
+                    kbUnits: [],
+                    retrievalTrace: {}
+                  },
+                  {
+                    intentRef: 2,
+                    intentGroup: { groupNumber: 2, act: 'explain', intent: 'Explain why the shield held', output: 'Structured answer' },
+                    decomposed: { groupNumber: 2, act: 'explain', intent: 'Explain why the shield held', outputType: 'Structured answer' },
+                    currentTurnContextUnits: [],
+                    sessionUnits: [],
+                    kbUnits: [],
+                    retrievalTrace: {}
+                  }
+                ],
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-fast', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              solverCalls.fast += 1;
+              return {
+                status: 'success',
+                responseMarkdown: 'Aurora kept the shield active.',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-deep') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-deep', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              solverCalls.deep += 1;
+              return {
+                status: 'success',
+                responseMarkdown: '1. Aurora stabilized the lattice around the shield.\n2. The shield held because she kept the corridor aligned while pressure was rising.',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-alt') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-alt', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              solverCalls.alt += 1;
+              return {
+                status: 'success',
+                responseMarkdown: 'Alternative answer that should not be needed once a dominant answer exists.',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: 'planner-default',
+            preferredSeedDetectorPlugin: 'sd-symbolic',
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-fast',
+            preferredDeliberationLevel: 0
+          },
+          currentMessage: 'Explain Aurora and explain why the shield held.',
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedDeliberationLevel: 3,
+          explicitPlannerPlugin: null,
+          explicitSeedDetectorPlugin: null,
+          explicitKBPlugin: null,
+          explicitGoalSolverPlugin: null,
+          requestedPlannerPlugin: 'planner-default',
+          requestedSeedDetectorPlugin: 'sd-symbolic',
+          requestedKBPlugin: 'kb-fast',
+          requestedGoalSolverPlugin: null
+        };
+      },
+      async commitSuccessfulTurn() {}
+    };
+    const engine = new MRPEngine(
+      {
+        maxLLMAttemptsPerRequest: 4,
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        defaultPlannerPlugin: 'planner-default',
+        defaultSeedDetectorPlugin: 'sd-symbolic'
+      },
+      registry,
+      conversationHandler,
+      new CNLParser(),
+      new IntentDecomposer(),
+      { selectPlugin() { return null; } },
+      {},
+      null
+    );
+
+    const result = await engine.processChatTurn({
+      deliberation_level: 3,
+      messages: [{ role: 'user', content: 'Explain Aurora and explain why the shield held.' }]
+    });
+
+    const frame = result.executionTrace.frames[0];
+    assert.equal(solverCalls.fast, 1);
+    assert.equal(solverCalls.deep, 1);
+    assert.equal(solverCalls.alt, 0);
+    assert.match(result.responseMarkdown, /^1\./);
+    assert.equal(frame.candidateSet.length, 2);
+    assert.equal(frame.candidateSet.filter(candidate => candidate.selected).length, 1);
+    assert.equal(frame.deliberationPolicy.closureMode, 'scientific');
+  });
+
   it('skips an LLM plugin when its reserved budget exceeds the remaining budget', async () => {
     let detectCalls = 0;
     const planner = {

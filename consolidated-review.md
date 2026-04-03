@@ -58,29 +58,30 @@ retained as history.
 
 ## P1. Deepen DS033 Comparative Runtime Behavior
 
-- [ ] Replace the remaining selected-branch-oriented
-  finalize assumptions in `src/core/engine/engine.mjs`
-  with fully policy-driven candidate promotion.
-  - Promote candidates based on `validationFloor`,
-    not only branch selection.
-  - Add dominance filtering and candidate
-    competitiveness updates.
-- [ ] Make planner/runtime proposal generation more
-  family-aware.
-  - Respect `minFamilies`, `maxFrontier`, and
-    `maxComparisons`.
-  - Avoid near-duplicate family expansion while
-    relevant families remain unexplored.
-  - Emit explicit `compare` and `challenge`
-    proposals and support reactivation from
-    `suspendedSet`.
-- [ ] Implement truthful closure behavior for
-  `first_valid`, `best_effort`, `comparative`, and
-  `scientific`.
-  - Do not auto-close on first success when
-    comparative coverage is still open.
-  - Return honest partial statuses when budgets end
-    before closure.
+- [ ] Implement bounded frontier scheduling for
+  independent branch families in
+  `src/core/engine/engine.mjs`.
+  - Stop treating comparative continuation as only a
+    better stop condition over a sequential loop.
+  - Add an explicit frontier budget such as
+    `maxParallelSeeds` / branch-batch concurrency.
+  - Preserve trace truthfulness when frontier work is
+    batched or parallelized.
+- [ ] Make planner/runtime proposal generation
+  portfolio-aware instead of purely ranked-order.
+  - Feed the planner current family coverage, explored
+    branches, and `suspendedSet` state.
+  - Prefer unexplored families when `minFamilies`
+    remains unmet.
+  - Emit actionable `compare`, `challenge`, and
+    reactivation proposals, not only explanatory
+    comparison metadata.
+- [ ] Return explicit comparative closure reasons.
+  - Distinguish `policy_satisfied`,
+    `dominance_clear`, `validation_fallback`,
+    `frontier_exhausted`, and `budget_exhausted`.
+  - Surface honest partial closure when the runtime
+    must stop before the policy is fully satisfied.
 
 ## P2. Retire Legacy Markdown-CNL as an Active Runtime Contract
 
