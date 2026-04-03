@@ -123,4 +123,32 @@ describe('seed detection bundle flow', () => {
     assert.equal(groups.length, 1);
     assert.match(groups[0].intent, /Trace every intermediate step\./i);
   });
+
+  it('treats story preambles as current-turn context when questions are listed in an appendix', async () => {
+    const strategy = new RuleBasedSOPSeedBundleGenerator();
+    const parser = new CNLParser();
+    const bundle = await strategy.detectSeedBundle({
+      rawNL: [
+        'The Awakening of Lumina-7',
+        '',
+        'Aura-City stands between a burning sun and an unconquerable night.',
+        'Commander Vex extracted the Flux Core in the Quartz Desert.',
+        '',
+        'Questions - answer each with a single word or Yes/No only:',
+        '',
+        'Q1: Would Vex prioritize the Flux Core?',
+        'Q2: Name the commander.'
+      ].join('\n')
+    });
+
+    const groups = parser.parseIntentCNL(bundle.intentCNL);
+    const contextUnits = parser.parseContextCNL(bundle.currentTurnContextCNL);
+
+    assert.equal(groups.length, 2);
+    assert.match(groups[0].intent, /Would Vex prioritize the Flux Core/i);
+    assert.match(groups[1].intent, /Name the commander/i);
+    assert.ok(!groups.some(group => /Aura-City stands/i.test(group.intent)));
+    assert.ok(contextUnits.some(unit => /Aura-City stands between/i.test(unit.claim || '')));
+    assert.ok(contextUnits.some(unit => /Questions - answer each with a single word or Yes\/No only:/i.test(unit.claim || '')));
+  });
 });

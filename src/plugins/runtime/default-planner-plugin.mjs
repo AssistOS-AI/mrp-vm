@@ -372,7 +372,7 @@ export class DefaultPlannerPlugin {
       notes.push('decompose:multi-intent-without-guidance');
       return true;
     }
-    if (signals.retrievalHeavy && signals.wantsDepth && !signals.hasStrategyGuidance) {
+    if (signals.intentCount > 1 && signals.retrievalHeavy && signals.wantsDepth && !signals.hasStrategyGuidance) {
       notes.push('decompose:retrieval-heavy-without-guidance');
       return true;
     }

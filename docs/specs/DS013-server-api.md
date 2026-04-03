@@ -69,6 +69,14 @@ Success payload includes:
 }
 ```
 
+For explicit multi-question prompts that decompose into
+independent child frames, `response_document.groups`
+MUST preserve one answer group per admitted question
+intent, and `execution_trace` MUST expose the
+corresponding root child frames plus the aggregate root
+closure reason (for example
+`parallel_intent_aggregation`).
+
 Structured errors expose `MRPError.toJSON()` fields
 when available (including `requestId`, `sessionId`,
 and `timestamp`).

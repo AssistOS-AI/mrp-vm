@@ -533,6 +533,16 @@ base plugin-family taxonomy.
 - [x] Implement comparative frame-closure rules for
   multi-candidate continuation, validation fallback,
   and scientific no-first-success behavior.
+- [x] Execute explicit independent multi-question
+  prompts as bounded parallel child frames with
+  truthful root aggregation.
+  - Use bounded frontier concurrency such as
+    `maxParallelSeeds`.
+  - Reuse root-admitted intent decomposition and
+    current-turn evidence inside child frames instead
+    of re-running seed detection per child.
+  - Mark the aggregate root with an explicit closure
+    reason such as `parallel_intent_aggregation`.
 - [x] Add explainability trace nodes/edges for
   candidates, comparisons, and challenges.
 - [ ] Add explicit partial-closure reasons when
@@ -545,7 +555,9 @@ The current reference implementation now covers the
 request/session/UI surface, frame-state foundation,
 branch-family signatures, interpreter support for
 `policy` / `objective` / `candidate` / `compare` /
-`challenge`, and graph-level explainability nodes.
+`challenge`, graph-level explainability nodes, and
+bounded root-level fan-out for explicit independent
+multi-question prompts.
 What remains open is stronger comparative scheduling,
 portfolio-aware family coverage, explicit
 proposal generation for compare/challenge control,

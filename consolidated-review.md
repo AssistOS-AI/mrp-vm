@@ -58,15 +58,6 @@ retained as history.
 
 ## P1. Deepen DS033 Comparative Runtime Behavior
 
-- [ ] Implement bounded frontier scheduling for
-  independent branch families in
-  `src/core/engine/engine.mjs`.
-  - Stop treating comparative continuation as only a
-    better stop condition over a sequential loop.
-  - Add an explicit frontier budget such as
-    `maxParallelSeeds` / branch-batch concurrency.
-  - Preserve trace truthfulness when frontier work is
-    batched or parallelized.
 - [ ] Make planner/runtime proposal generation
   portfolio-aware instead of purely ranked-order.
   - Feed the planner current family coverage, explored

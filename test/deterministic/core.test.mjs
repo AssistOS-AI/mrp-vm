@@ -472,6 +472,40 @@ describe('DefaultPlannerPlugin', () => {
     assert.equal(plan.kbPluginOrder[0], 'kb-legal');
     assert.ok(plan.kbPluginOrder.includes('kb-legal'));
   });
+
+  it('does not request decomposition for a single retrieval-heavy intent without explicit guidance', async () => {
+    const planner = new DefaultPlannerPlugin(null, { rank: ids => ids }, {});
+    const plan = await planner.buildPlan({
+      phase: 'post-kb',
+      currentMessage: 'Explain why AchillesIDE benefits from isolation for secure execution.',
+      intentGroups: [
+        {
+          groupNumber: 1,
+          act: 'explain',
+          intent: 'Explain why AchillesIDE benefits from isolation for secure execution.',
+          output: 'Structured answer.'
+        }
+      ],
+      decomposedIntents: [
+        {
+          groupNumber: 1,
+          act: 'explain',
+          intent: 'Explain why AchillesIDE benefits from isolation for secure execution.',
+          outputType: 'Structured answer.'
+        }
+      ],
+      explicitSelections: {},
+      sessionPreferences: {},
+      historyForPrompt: [],
+      strategyGuidanceUnits: [],
+      plannerGuidanceUnits: [],
+      goalSolverGuidanceUnits: [],
+      decompositionGuidanceUnits: [],
+      validationGuidanceUnits: [],
+      seedDetectorGuidanceUnits: []
+    });
+    assert.equal(plan.decompose, false);
+  });
 });
 
 describe('LLMValidationPlugin', () => {
@@ -1818,6 +1852,480 @@ describe('MRPEngine', () => {
     assert.equal(result.executionTrace.frameTransitions, 1);
     assert.equal(result.executionTrace.framePurpose, 'strategy-guidance');
     assert.equal(plannerCallCount >= 2, true);
+  });
+
+  it('fans out independent question intents into parallel child frames', async () => {
+    let symbolicSeedCalls = 0;
+    let llmSeedCalls = 0;
+    let activeGoalCalls = 0;
+    let maxConcurrentGoalCalls = 0;
+    const parser = new CNLParser();
+    const registry = {
+      listByType(type) {
+        if (type === 'mrp-plan-plugin') return [{ id: 'planner-default' }];
+        if (type === 'sd-plugin') return [{ id: 'sd-symbolic' }, { id: 'sd-llm-fast' }];
+        return [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin' && id === 'planner-default') {
+          return {
+            getDescriptor() {
+              return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+            },
+            async buildPlan() {
+              return {
+                plannerPluginId: 'planner-default',
+                kbPluginOrder: ['kb-fast'],
+                goalSolverOrder: ['gs-symbolic'],
+                decompose: false,
+                framePurpose: 'parallel-intent',
+                notes: []
+              };
+            },
+            async recordOutcome() {}
+          };
+        }
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              symbolicSeedCalls += 1;
+              return {
+                status: 'error',
+                intentCNL: '',
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 0, model: null },
+                error: { code: 'SHOULD_NOT_RUN', message: 'symbolic detector should not run first for multi-question prompts' }
+              };
+            }
+          };
+        }
+        if (type === 'sd-plugin' && id === 'sd-llm-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-llm-fast', type: 'sd-plugin', maxLLMCalls: 1, modelRoles: ['seed-fast'] };
+            },
+            async detectSeeds({ currentMessage }) {
+              llmSeedCalls += 1;
+              let intentCNL = '';
+              if (currentMessage.includes('Q1') && currentMessage.includes('Q2')) {
+                intentCNL = [
+                  '## Intent Group 1',
+                  'Act: verify',
+                  'Intent: Q1: Would Kaelen survive without city tech?',
+                  'Output: Yes/No.',
+                  '',
+                  '## Intent Group 2',
+                  'Act: identify',
+                  'Intent: Q2: Name the commander tied to the Flux Core.',
+                  'Output: Single word.'
+                ].join('\n');
+              } else if (currentMessage.includes('Q1')) {
+                intentCNL = [
+                  '## Intent Group 1',
+                  'Act: verify',
+                  'Intent: Q1: Would Kaelen survive without city tech?',
+                  'Output: Yes/No.'
+                ].join('\n');
+              } else {
+                intentCNL = [
+                  '## Intent Group 1',
+                  'Act: identify',
+                  'Intent: Q2: Name the commander tied to the Flux Core.',
+                  'Output: Single word.'
+                ].join('\n');
+              }
+              return {
+                status: 'success',
+                intentCNL,
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 1, model: 'seed-fast-model' },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve({ decomposedIntents }) {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: decomposedIntents.map(intent => ({
+                  intentRef: intent.groupNumber,
+                  intentGroup: {
+                    groupNumber: intent.groupNumber,
+                    act: intent.act,
+                    intent: intent.intent,
+                    output: intent.outputType
+                  },
+                  decomposed: intent,
+                  strategyUnits: [],
+                  currentTurnContextUnits: [],
+                  sessionUnits: [],
+                  kbUnits: [{
+                    unitId: `kb-${intent.groupNumber}`,
+                    sourceId: `src-${intent.groupNumber}`,
+                    score: 1,
+                    unit: {
+                      sourceId: `src-${intent.groupNumber}`,
+                      role: 'Explanation',
+                      claim: intent.intent.includes('Kaelen')
+                        ? 'Kaelen relies on city-linked neural implants.'
+                        : 'Commander Vex controls the Flux Core extraction.'
+                    }
+                  }],
+                  retrievalTrace: {}
+                })),
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-symbolic', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve({ resolvedIntents }) {
+              activeGoalCalls += 1;
+              maxConcurrentGoalCalls = Math.max(maxConcurrentGoalCalls, activeGoalCalls);
+              await new Promise(resolve => setTimeout(resolve, 25));
+              activeGoalCalls -= 1;
+              const intent = resolvedIntents[0];
+              const answer = intent.decomposed.intent.includes('Kaelen') ? 'No' : 'Vex';
+              return {
+                status: 'success',
+                responseMarkdown: `# MRP Response\n\n## Intent Group 1\n### Answer\n${answer}\n`,
+                responseDocument: {
+                  sessionId: 'sess-test',
+                  groups: [{
+                    intentRef: 1,
+                    act: intent.decomposed.act,
+                    intent: intent.decomposed.intent,
+                    status: 'answered',
+                    currentTurnContext: [],
+                    sessionSources: [],
+                    kbSources: [{
+                      unitId: `kb-${intent.intentRef}`,
+                      sourceId: `src-${intent.intentRef}`,
+                      score: 1,
+                      unit: {
+                        sourceId: `src-${intent.intentRef}`,
+                        role: 'Explanation',
+                        claim: answer === 'No'
+                          ? 'Kaelen depends on city-linked machinery.'
+                          : 'Commander Vex runs the Flux Core extraction.'
+                      }
+                    }],
+                    pluginOutput: null,
+                    answerMarkdown: answer,
+                    warnings: []
+                  }]
+                },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: 'planner-default',
+            preferredSeedDetectorPlugin: null,
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-symbolic',
+            pendingTurnContextUnits: [],
+            sessionContextUnits: [],
+            workspace: { getIndex() { return null; } },
+            messageLog: []
+          },
+          currentMessage: [
+            'Questions — answer each with a single word or Yes/No only:',
+            '',
+            'Q1: Would Kaelen survive without city tech?',
+            'Q2: Name the commander tied to the Flux Core.'
+          ].join('\n'),
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedPlannerPlugin: null,
+          requestedSeedDetectorPlugin: null,
+          requestedKBPlugin: 'kb-fast',
+          requestedGoalSolverPlugin: 'gs-symbolic'
+        };
+      },
+      async commitSuccessfulTurn() {}
+    };
+    const engine = new MRPEngine(
+      {
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        maxParallelSeeds: 2,
+        maxFrameDepth: 3,
+        defaultPlannerPlugin: 'planner-default'
+      },
+      registry,
+      conversationHandler,
+      parser,
+      {
+        decompose(groups) {
+          return groups.map(group => ({
+            groupNumber: group.groupNumber,
+            act: group.act,
+            intent: group.intent,
+            outputType: group.output
+          }));
+        },
+        deriveContextProfile(intent) {
+          return { neededRoles: ['Explanation'], queryTerms: [intent.intent], actBoost: intent.act, maxResults: 10 };
+        }
+      },
+      { collectOutputs() { return []; } },
+      {},
+      null
+    );
+
+    const result = await engine.processChatTurn({
+      messages: [{
+        role: 'user',
+        content: 'Questions — answer each with a single word or Yes/No only:\nQ1: Would Kaelen survive without city tech?\nQ2: Name the commander tied to the Flux Core.'
+      }]
+    });
+
+    const childFrames = result.executionTrace.frames.filter(frame => frame.parentFrameId === result.executionTrace.rootFrameId);
+    const rootFrame = result.executionTrace.frames.find(frame => frame.frameId === result.executionTrace.rootFrameId);
+    assert.equal(symbolicSeedCalls, 0);
+    assert.equal(llmSeedCalls, 1);
+    assert.equal(result.executionTrace.frameTransitions, 2);
+    assert.equal(childFrames.length, 2);
+    assert.equal(maxConcurrentGoalCalls, 2);
+    assert.equal(result.responseDocument.groups.length, 2);
+    assert.deepStrictEqual(result.responseDocument.groups.map(group => group.answerMarkdown), ['No', 'Vex']);
+    assert.equal(rootFrame?.comparisonState?.closureReason, 'parallel_intent_aggregation');
+  });
+
+  it('keeps root current-turn context available inside parallel child frames', async () => {
+    const parser = new CNLParser();
+    const registry = {
+      listByType(type) {
+        if (type === 'mrp-plan-plugin') return [{ id: 'planner-default' }];
+        if (type === 'sd-plugin') return [{ id: 'sd-symbolic' }];
+        return [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin' && id === 'planner-default') {
+          return {
+            getDescriptor() {
+              return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+            },
+            async buildPlan() {
+              return {
+                plannerPluginId: 'planner-default',
+                kbPluginOrder: ['kb-fast'],
+                goalSolverOrder: ['gs-symbolic'],
+                decompose: false,
+                framePurpose: 'parallel-intent',
+                notes: []
+              };
+            },
+            async recordOutcome() {}
+          };
+        }
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              return {
+                status: 'success',
+                intentCNL: [
+                  '## Intent Group 1',
+                  'Act: explain',
+                  'Intent: Q1: Would Kaelen survive without city tech?',
+                  'Output: Yes/No.',
+                  '',
+                  '## Intent Group 2',
+                  'Act: identify',
+                  'Intent: Q2: Name the commander tied to the Flux Core.',
+                  'Output: Single word.'
+                ].join('\n'),
+                currentTurnContextCNL: [
+                  '## Context Unit session::turn::unit-000',
+                  'SourceId: session',
+                  'ChunkId: session::turn',
+                  'Role: Explanation',
+                  'Topic: Kaelen',
+                  'Claim: Kaelen depends on city-linked machinery to survive.',
+                  'UtilityActs: explain',
+                  '',
+                  '## Context Unit session::turn::unit-001',
+                  'SourceId: session',
+                  'ChunkId: session::turn',
+                  'Role: Explanation',
+                  'Topic: Commander Vex',
+                  'Claim: Commander Vex runs the Flux Core extraction.',
+                  'UtilityActs: identify'
+                ].join('\n'),
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve({ decomposedIntents, currentTurnUnits }) {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: decomposedIntents.map(intent => ({
+                  intentRef: intent.groupNumber,
+                  intentGroup: {
+                    groupNumber: intent.groupNumber,
+                    act: intent.act,
+                    intent: intent.intent,
+                    output: intent.outputType
+                  },
+                  decomposed: intent,
+                  strategyUnits: [],
+                  currentTurnContextUnits: currentTurnUnits,
+                  sessionUnits: [],
+                  kbUnits: [],
+                  retrievalTrace: {}
+                })),
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-symbolic', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve({ resolvedIntents }) {
+              const intent = resolvedIntents[0];
+              const claims = (intent.currentTurnContextUnits || []).map(unit => unit.claim || '');
+              const answer = intent.decomposed.intent.includes('Kaelen')
+                ? (claims.some(claim => /Kaelen depends on city-linked machinery/i.test(claim)) ? 'No' : 'Unknown')
+                : (claims.some(claim => /Commander Vex runs the Flux Core extraction/i.test(claim)) ? 'Vex' : 'Unknown');
+              return {
+                status: 'success',
+                responseMarkdown: `# MRP Response\n\n## Intent Group 1\n### Answer\n${answer}\n`,
+                responseDocument: {
+                  sessionId: 'sess-test',
+                  groups: [{
+                    intentRef: 1,
+                    act: intent.decomposed.act,
+                    intent: intent.decomposed.intent,
+                    status: 'answered',
+                    currentTurnContext: intent.currentTurnContextUnits || [],
+                    sessionSources: [],
+                    kbSources: [],
+                    pluginOutput: null,
+                    answerMarkdown: answer,
+                    warnings: []
+                  }]
+                },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: 'planner-default',
+            preferredSeedDetectorPlugin: 'sd-symbolic',
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-symbolic',
+            pendingTurnContextUnits: [],
+            sessionContextUnits: [],
+            workspace: { getIndex() { return null; } },
+            messageLog: []
+          },
+          currentMessage: [
+            'Story preamble.',
+            '',
+            'Questions - answer each with a single word or Yes/No only:',
+            'Q1: Would Kaelen survive without city tech?',
+            'Q2: Name the commander tied to the Flux Core.'
+          ].join('\n'),
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedPlannerPlugin: null,
+          requestedSeedDetectorPlugin: 'sd-symbolic',
+          requestedKBPlugin: 'kb-fast',
+          requestedGoalSolverPlugin: 'gs-symbolic'
+        };
+      },
+      async stageDetectedContextUnits() {},
+      async commitSuccessfulTurn() {}
+    };
+    const engine = new MRPEngine(
+      {
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        maxParallelSeeds: 2,
+        maxFrameDepth: 3,
+        defaultPlannerPlugin: 'planner-default'
+      },
+      registry,
+      conversationHandler,
+      parser,
+      {
+        decompose(groups) {
+          return groups.map(group => ({
+            groupNumber: group.groupNumber,
+            act: group.act,
+            intent: group.intent,
+            outputType: group.output
+          }));
+        },
+        deriveContextProfile(intent) {
+          return { neededRoles: ['Explanation'], queryTerms: [intent.intent], actBoost: intent.act, maxResults: 10 };
+        }
+      },
+      { collectOutputs() { return []; } },
+      {},
+      null
+    );
+
+    const result = await engine.processChatTurn({
+      messages: [{
+        role: 'user',
+        content: 'Questions - answer each with a single word or Yes/No only:\nQ1: Would Kaelen survive without city tech?\nQ2: Name the commander tied to the Flux Core.'
+      }]
+    });
+
+    assert.deepStrictEqual(result.responseDocument.groups.map(group => group.answerMarkdown), ['No', 'Vex']);
   });
 
   it('does not let child frames bypass the request-level LLM budget', async () => {

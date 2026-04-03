@@ -61,7 +61,8 @@ export class RuleBasedSOPMode extends LanguageProcessingMode {
   }
 
   _buildIntentCNL(rawNL) {
-    const sentences = this._segmentIntentPrompts(rawNL);
+    const { questionText } = this._extractQuestionAppendix(rawNL);
+    const sentences = this._segmentIntentPrompts(questionText || rawNL);
     const builder = createSOPBuilder();
     for (let i = 0; i < sentences.length; i += 1) {
       const sentence = this._normalizeFieldText(sentences[i]);
@@ -83,8 +84,12 @@ export class RuleBasedSOPMode extends LanguageProcessingMode {
   }
 
   _buildSessionContextCNL(rawNL) {
-    const sentences = this._splitIntoSentences(rawNL);
-    const contextSentences = sentences.filter(s => this._shouldKeepContextSentence(s));
+    const { evidenceText, questionGuidance, questionText } = this._extractQuestionAppendix(rawNL);
+    const contextSource = questionText ? evidenceText : rawNL;
+    const sentences = this._splitIntoSentences(contextSource);
+    const contextSentences = questionText
+      ? sentences.filter(sentence => this._normalizeFieldText(sentence))
+      : sentences.filter(s => this._shouldKeepContextSentence(s));
     if (contextSentences.length === 0) return '';
 
     const groups = this._groupRelatedSentences(contextSentences);
@@ -132,6 +137,26 @@ export class RuleBasedSOPMode extends LanguageProcessingMode {
       builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'hash', renderSOPValue(hash));
       unitIdx++;
     }
+    if (questionGuidance) {
+      const combinedText = this._normalizeFieldText(questionGuidance);
+      const role = 'Constraint';
+      const act = 'recommend';
+      const topic = this._normalizeFieldText(combinedText.substring(0, 60));
+      const hash = createHash('sha256').update(`${combinedText}|${role}|${topic}`).digest('hex');
+      const unitId = `session::turn::unit-${String(unitIdx).padStart(3, '0')}`;
+      const kuId = builder.nextId('k');
+      builder.push(kuId, 'ku', 'atomic', renderSOPValue(unitId, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceId', renderSOPValue('session'));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'chunkId', renderSOPValue('session::turn'));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'sourceType', renderSOPValue('chat-turn'));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'role', renderSOPValue(role));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'topic', renderSOPValue(topic, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'claim', renderSOPValue(combinedText, { forceQuoted: true }));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'utilityActs', renderSOPValue([act]));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'phaseScopes', renderSOPValue(this._phaseScopesForQuestionGuidance(combinedText)));
+      builder.push(builder.nextId('ks'), 'set', sopRef(kuId), 'hash', renderSOPValue(hash));
+    }
+
     return builder.toString();
   }
 
@@ -433,16 +458,20 @@ export class RuleBasedSOPMode extends LanguageProcessingMode {
     const lines = String(text || '').replace(/\r/g, '').split('\n');
     const headerIndex = lines.findIndex(line => /^\s*Questions\b/i.test(line));
     if (headerIndex < 0) {
-      return { evidenceText: text, questionGuidance: null };
+      return { evidenceText: text, questionText: null, questionGuidance: null };
     }
     const evidenceText = lines.slice(0, headerIndex).join('\n').trim();
     const appendixLines = lines
       .slice(headerIndex)
       .map(line => line.trim())
       .filter(Boolean);
+    const guidanceLines = appendixLines.filter(
+      line => !/^(?:q\s*\d+|\d+[.)])\s*[:.)-]?\s*/i.test(line)
+    );
     return {
       evidenceText,
-      questionGuidance: appendixLines[0] || null
+      questionText: appendixLines.join('\n'),
+      questionGuidance: guidanceLines.join(' ').trim() || appendixLines[0] || null
     };
   }
 

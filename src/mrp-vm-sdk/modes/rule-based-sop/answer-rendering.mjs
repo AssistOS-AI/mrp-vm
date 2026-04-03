@@ -1,4 +1,4 @@
-import { extractSymbolicFact } from '../../nlp-util/symbolic-facts.mjs';
+import { extractSymbolicFact, normalizeSymbolKey } from '../../nlp-util/symbolic-facts.mjs';
 
 export const ruleBasedSOPAnswerRenderingMethods = {
   _formatSourceScore(score) {
@@ -120,6 +120,9 @@ export const ruleBasedSOPAnswerRenderingMethods = {
   },
 
   _renderExplanationAnswer(claims, resolvedIntent, brief = false) {
+    const symbolicExplanation = this._renderSymbolicChainExplanation(resolvedIntent);
+    if (symbolicExplanation) return symbolicExplanation;
+
     const subjectHint = this._extractExplanationSubject(resolvedIntent);
     const normalizedClaims = claims
       .map(claim => this._normalizeAnswerSentence(claim))
@@ -134,6 +137,65 @@ export const ruleBasedSOPAnswerRenderingMethods = {
     if (!parts.some(part => part === conclusion)) parts.push(conclusion);
     return {
       answer: parts.join(' ').trim(),
+      status: 'answered'
+    };
+  },
+
+  _renderSymbolicChainExplanation(resolvedIntent) {
+    const facts = this._collectResolvedIntentFacts(resolvedIntent);
+    if (facts.length < 2) return null;
+    const subjectHint = this._extractExplanationSubject(resolvedIntent);
+    const subjectKey = this._findFactNodeKey(facts, subjectHint, 'subject');
+    if (!subjectKey) return null;
+    const targetPhrases = this._extractExplanationTargetPhrases(resolvedIntent, subjectHint);
+    if (!targetPhrases.length) return null;
+    const path = this._findFactPath(facts, subjectKey, targetPhrases);
+    if (!path || path.length < 2) return null;
+
+    const sentences = [];
+    const seen = new Set();
+    for (const fact of path) {
+      const sentence = this._renderFactSentence(fact);
+      if (!sentence || seen.has(sentence)) continue;
+      seen.add(sentence);
+      sentences.push(sentence);
+    }
+
+    const providedFact = path.find(fact => fact.relation === 'provides') || null;
+    const relevanceFact = path.find(fact => fact.relation === 'relevant_for')
+      || (providedFact
+        ? facts.find(fact => fact.relation === 'relevant_for' && fact.subjectKey === providedFact.objectKey)
+        : null);
+    const prompt = this._extractExplanationPrompt(resolvedIntent);
+    if (relevanceFact) {
+      const relevanceSentence = this._renderFactSentence(relevanceFact);
+      if (relevanceSentence && !seen.has(relevanceSentence)) {
+        seen.add(relevanceSentence);
+        sentences.push(relevanceSentence);
+      }
+    }
+    if (providedFact && relevanceFact) {
+      const provider = providedFact.subject;
+      const capability = providedFact.object;
+      const outcome = relevanceFact.object;
+      sentences.push(
+        `${path[0].subject} reaches ${outcome} through a dependency chain where ${provider} provides ${capability}, so that ${capability.toLowerCase()} is the concrete reason ${prompt || 'for the requested benefit'}.`
+      );
+    } else if (providedFact) {
+      sentences.push(
+        `That chain matters because ${providedFact.subject} provides ${providedFact.object}, which is the concrete mechanism behind ${prompt || 'the requested explanation'}.`
+      );
+    } else {
+      sentences.push(
+        `That dependency chain is what explains ${prompt || 'the requested relationship'}.`
+      );
+    }
+    if (prompt) {
+      sentences.push(`Taken together, these relationships explain ${prompt}.`);
+    }
+
+    return {
+      answer: sentences.join(' ').trim(),
       status: 'answered'
     };
   },
@@ -230,6 +292,131 @@ export const ruleBasedSOPAnswerRenderingMethods = {
       .find(item => !['explain', 'why', 'how', 'what', 'when', 'where', 'which'].includes(item)) || '';
   },
 
+  _extractExplanationTargetPhrases(resolvedIntent, subjectHint = '') {
+    const prompt = this._extractExplanationPrompt(resolvedIntent) || String(resolvedIntent?.decomposed?.intent || '');
+    const loweredPrompt = prompt.toLowerCase();
+    const phrases = [];
+    const benefitMatch = loweredPrompt.match(/\bbenefits?\s+from\s+(.+?)(?:\s+for\s+(.+))?$/i);
+    if (benefitMatch) {
+      if (benefitMatch[1]) phrases.push(benefitMatch[1]);
+      if (benefitMatch[2]) phrases.push(benefitMatch[2]);
+    }
+    const relevantMatch = loweredPrompt.match(/\brelevant\s+for\s+(.+)$/i);
+    if (relevantMatch?.[1]) phrases.push(relevantMatch[1]);
+    const afterWhyHow = loweredPrompt.match(/^(?:why|how)\s+(.+)$/i)?.[1] || loweredPrompt;
+    if (afterWhyHow) phrases.push(afterWhyHow);
+
+    return [...new Set(
+      phrases
+        .flatMap(phrase => String(phrase || '')
+          .split(/\b(?:through|via|with|because|and)\b/i)
+          .map(part => part.trim())
+        )
+        .map(phrase => {
+          if (!subjectHint) return phrase;
+          return phrase.replace(new RegExp(`\\b${subjectHint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'), '');
+        })
+        .map(phrase => phrase.replace(/\b(?:benefits?|for|from|the|a|an|why|how)\b/gi, ' ').replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+    )];
+  },
+
+  _collectResolvedIntentFacts(resolvedIntent) {
+    const evidenceUnits = [
+      ...(resolvedIntent?.currentTurnContextUnits || []),
+      ...(resolvedIntent?.sessionUnits || []).map(entry => entry?.unit || null),
+      ...(resolvedIntent?.kbUnits || []).map(entry => entry?.unit || null)
+    ].filter(Boolean);
+    const facts = [];
+    const seen = new Set();
+
+    for (const unit of evidenceUnits) {
+      const symbolic = unit?.subject && unit?.relation && unit?.object
+        ? {
+            subject: unit.subject,
+            relation: unit.relation,
+            object: unit.object
+          }
+        : extractSymbolicFact(unit?.claim || unit?.procedure || '');
+      if (!symbolic) continue;
+      const subjectKey = normalizeSymbolKey(symbolic.subject);
+      const objectKey = normalizeSymbolKey(symbolic.object);
+      if (!subjectKey || !objectKey) continue;
+      const key = `${subjectKey}|${symbolic.relation}|${objectKey}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      facts.push({
+        ...symbolic,
+        subjectKey,
+        objectKey,
+        text: this._normalizeAnswerSentence(unit?.claim || unit?.procedure || this._composeFactSentence(symbolic))
+      });
+    }
+    return facts;
+  },
+
+  _composeFactSentence(fact) {
+    const relationText = {
+      uses: 'uses',
+      provides: 'provides',
+      has_capability: 'has capability',
+      depends_on: 'depends on',
+      part_of: 'is part of',
+      instance_of: 'is an instance of',
+      relevant_for: 'is relevant for',
+      supports: 'supports',
+      mentions: 'mentions',
+      about: 'is about',
+      causes: 'causes'
+    }[fact?.relation] || fact?.relation || 'relates to';
+    return `${fact?.subject || 'It'} ${relationText} ${fact?.object || 'it'}.`;
+  },
+
+  _renderFactSentence(fact) {
+    return this._normalizeAnswerSentence(fact?.text || this._composeFactSentence(fact));
+  },
+
+  _findFactNodeKey(facts, hint, side = 'subject') {
+    const normalizedHint = normalizeSymbolKey(hint || '');
+    if (!normalizedHint) return null;
+    const exact = facts.find(fact => fact[`${side}Key`] === normalizedHint);
+    if (exact) return exact[`${side}Key`];
+    const overlap = facts.find(fact => fact[`${side}Key`].includes(normalizedHint) || normalizedHint.includes(fact[`${side}Key`]));
+    return overlap?.[`${side}Key`] || null;
+  },
+
+  _findFactPath(facts, subjectKey, targetPhrases = []) {
+    const outgoing = new Map();
+    for (const fact of facts) {
+      if (!outgoing.has(fact.subjectKey)) outgoing.set(fact.subjectKey, []);
+      outgoing.get(fact.subjectKey).push(fact);
+    }
+    const matchesTarget = (key, normalized) =>
+      key === normalized || key.includes(normalized) || normalized.includes(key);
+
+    for (const phrase of targetPhrases) {
+      const normalizedPhrase = normalizeSymbolKey(phrase);
+      if (!normalizedPhrase) continue;
+      const queue = [{ key: subjectKey, path: [] }];
+      const visited = new Set([subjectKey]);
+      while (queue.length > 0) {
+        const current = queue.shift();
+        if (current.path.length > 0 && matchesTarget(current.key, normalizedPhrase)) {
+          return current.path;
+        }
+        for (const fact of outgoing.get(current.key) || []) {
+          if (visited.has(fact.objectKey)) continue;
+          visited.add(fact.objectKey);
+          queue.push({
+            key: fact.objectKey,
+            path: [...current.path, fact]
+          });
+        }
+      }
+    }
+    return null;
+  },
+
   _scoreExplanationClaim(claim, subjectHint = '') {
     const text = String(claim || '').toLowerCase();
     const fact = extractSymbolicFact(claim);
@@ -271,13 +458,17 @@ export const ruleBasedSOPAnswerRenderingMethods = {
   },
 
   _inferSingleWordIdentity(claims, resolvedIntent) {
+    const intentText = String(resolvedIntent?.decomposed?.intent || '').toLowerCase();
     const queryTerms = new Set(
-      String(resolvedIntent?.decomposed?.intent || '')
-        .toLowerCase()
+      intentText
         .split(/\s+/)
         .map(term => term.replace(/[^\w-]/g, ''))
-        .filter(term => term && !['name', 'single', 'one', 'word', 'whose', 'would', 'could', 'should', 'character'].includes(term))
+        .filter(term => term && ![
+          'name', 'single', 'one', 'word', 'whose', 'would', 'could', 'should', 'character',
+          'questions', 'answer', 'each', 'with', 'yes', 'no', 'only'
+        ].includes(term))
     );
+    const operationalIdentityPrompt = /\b(operation|operations|extract|extraction|excavat|runs|run|controls?|protect(?:ing)?)\b/.test(intentText);
     const blockedWords = new Set([
       'desert', 'abyss', 'city', 'ocean', 'mountain', 'valley', 'forest', 'river',
       'planet', 'galaxy', 'world', 'region', 'area', 'zone', 'sector',
@@ -291,23 +482,44 @@ export const ruleBasedSOPAnswerRenderingMethods = {
       const claimText = String(claim || '');
       const claimLower = claimText.toLowerCase();
       const overlap = [...queryTerms].filter(term => claimLower.includes(term)).length;
+      const operationalScore = operationalIdentityPrompt && /\b(operation|operations|extract|extracted|extraction|excavator|excavators|runs|run|controls?|protect(?:ing)?)\b/.test(claimLower)
+        ? 4
+        : 0;
       const matches = claimText.match(/\b(?:Commander|Dr\.?|Doctor)?\s*[A-Z][a-zA-Z0-9-]*(?:\s+[A-Z][a-zA-Z0-9-]*)*/g) || [];
       for (const raw of matches) {
         const phrase = raw.trim().replace(/\s+/g, ' ');
         if (!phrase) continue;
         if (String(resolvedIntent?.decomposed?.intent || '').includes(phrase)) continue;
         const parts = phrase.split(/\s+/).filter(Boolean);
-        const answer = parts[parts.length - 1];
+        let answer = parts[parts.length - 1]
+          .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9-]+$/g, '');
+        if (/-/.test(answer)) {
+          const segments = answer.split('-').filter(Boolean);
+          if (segments.length > 1 && segments[segments.length - 1].length <= 2) {
+            answer = segments[0];
+          }
+        }
         const answerLower = answer.toLowerCase();
         if (!answer || blockedWords.has(answerLower)) continue;
-        const score = overlap + (/\b(Commander|Dr\.?|Doctor)\b/.test(phrase) ? 1 : 0);
-        const current = candidates.get(answer) || 0;
-        candidates.set(answer, current + Math.max(1, score));
+        const score =
+          overlap +
+          operationalScore +
+          (/\b(Commander|Dr\.?|Doctor)\b/.test(phrase) ? 1 : 0);
+        const weightedScore = Math.max(1, score);
+        const current = candidates.get(answer) || { total: 0, peak: 0 };
+        candidates.set(answer, {
+          total: current.total + weightedScore,
+          peak: Math.max(current.peak, weightedScore)
+        });
       }
     }
 
     return [...candidates.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .sort((a, b) =>
+        b[1].peak - a[1].peak
+        || b[1].total - a[1].total
+        || a[0].localeCompare(b[0])
+      )
       .map(([answer]) => answer)[0] || null;
   },
 

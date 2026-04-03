@@ -38,7 +38,7 @@ export function buildExecutionGraph(trace = {}) {
     pushNode(nodes, seenNodes, {
       id: frame.frameId,
       type: 'frame',
-      label: frame.purpose || (frame.depth === 0 ? 'root frame' : `frame ${frame.depth}`),
+      label: `frame ${frame.depth ?? 0}`,
       status: frame.status || 'unknown',
       frameId: frame.frameId,
       depth: frame.depth,
@@ -49,6 +49,7 @@ export function buildExecutionGraph(trace = {}) {
         candidateCount: frame.candidateSet?.length || 0
       }),
       metadata: {
+        purpose: frame.purpose || null,
         maxDepth: frame.maxDepth,
         seedCount: frame.seedIds?.length || 0,
         deliberationLevel: frame.deliberationPolicy?.level ?? 0,

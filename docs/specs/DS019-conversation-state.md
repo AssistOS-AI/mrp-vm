@@ -135,6 +135,10 @@ state as `pendingTurnContextUnits`.
 Rules:
 
 - staged turn KUs are visible to the current turn
+- staged turn KUs remain visible when the engine opens
+  child frames from the same root turn, including
+  bounded parallel fan-out of explicit independent
+  question groups
 - staged turn KUs are not yet durable session memory
 - on successful turn commit, deduplicated staged KUs
   are promoted into `sessionContextUnits`

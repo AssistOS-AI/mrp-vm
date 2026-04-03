@@ -102,11 +102,12 @@ main{flex:1;display:flex;flex-direction:column;width:100%;padding:0 .5rem;min-he
 .graph-canvas-scroll{overflow:auto;background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);cursor:grab}
 .graph-canvas-scroll.dragging{cursor:grabbing}
 .graph-canvas{display:block;min-width:100%}
-.graph-edge{fill:none;stroke:#94a3b8;stroke-width:2}
-.graph-edge-entry{stroke:#7c93b6;stroke-dasharray:4 4}
-.graph-edge-spawn{stroke:#6366f1}
-.graph-edge-produced,.graph-edge-derived_from,.graph-edge-compares,.graph-edge-challenges,.graph-edge-uses,.graph-edge-needs,.graph-edge-failed_as{stroke:#8b5cf6;stroke-dasharray:5 3}
-.graph-arrowhead{fill:#94a3b8}
+.graph-edge{fill:none;stroke:#64748b;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.graph-edge-entry{stroke:#64748b;stroke-dasharray:5 4}
+.graph-edge-sequence{stroke:#334155}
+.graph-edge-spawn{stroke:#4f46e5}
+.graph-edge-produced,.graph-edge-derived_from,.graph-edge-compares,.graph-edge-challenges,.graph-edge-uses,.graph-edge-needs,.graph-edge-failed_as{stroke:#7c3aed;stroke-dasharray:5 3}
+.graph-arrowhead{fill:#475569}
 .graph-svg-node{cursor:pointer}
 .graph-svg-selected .graph-frame-rect,.graph-svg-selected .graph-plugin-rect{stroke:#2563eb;stroke-width:3}
 .graph-svg-selected .graph-aux-rect{stroke:#2563eb;stroke-width:3}

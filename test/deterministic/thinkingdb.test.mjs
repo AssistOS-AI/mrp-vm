@@ -312,6 +312,35 @@ describe('RuleBasedSOPMode symbolic fields', () => {
     );
   });
 
+  it('renders symbolic dependency chains as causal explanations for isolation questions', async () => {
+    const strategy = new RuleBasedSOPMode();
+    const response = await strategy.synthesizeResponse({
+      sessionId: 'sess-iso',
+      resolvedIntents: [{
+        intentRef: 1,
+        decomposed: {
+          act: 'explain',
+          intent: 'Explain why AchillesIDE benefits from isolation for secure execution.',
+          outputType: 'Structured response.'
+        },
+        currentTurnContextUnits: [],
+        sessionUnits: [
+          { unitId: 'u1', unit: { claim: 'AchillesIDE depends on Ploinky.', subject: 'AchillesIDE', relation: 'depends_on', object: 'Ploinky' } },
+          { unitId: 'u2', unit: { claim: 'Ploinky depends on KernelX.', subject: 'Ploinky', relation: 'depends_on', object: 'KernelX' } },
+          { unitId: 'u3', unit: { claim: 'KernelX provides isolation.', subject: 'KernelX', relation: 'provides', object: 'isolation' } },
+          { unitId: 'u4', unit: { claim: 'Isolation is relevant for secure execution.', subject: 'Isolation', relation: 'relevant_for', object: 'secure execution' } }
+        ],
+        kbUnits: []
+      }],
+      pluginOutputs: [],
+      guidanceUnits: []
+    });
+
+    assert.match(response.responseMarkdown, /KernelX provides isolation\./);
+    assert.match(response.responseMarkdown, /Isolation is relevant for secure execution\./);
+    assert.match(response.responseMarkdown, /dependency chain/i);
+  });
+
   it('renders counterfactual answers as explicit alternative outcomes', async () => {
     const strategy = new RuleBasedSOPMode();
     const response = await strategy.synthesizeResponse({
@@ -338,5 +367,30 @@ describe('RuleBasedSOPMode symbolic fields', () => {
     assert.match(response.responseMarkdown, /If Commander Vex had discovered the obelisk instead of Dr\. Elara Vance, the outcome would likely have been much harsher and less cooperative\./);
     assert.match(response.responseMarkdown, /asset to control or exploit/);
     assert.match(response.responseMarkdown, /successful ending described in the evidence much less likely/);
+  });
+
+  it('prefers the operational actor for single-word identify questions', async () => {
+    const strategy = new RuleBasedSOPMode();
+    const response = await strategy.synthesizeResponse({
+      sessionId: 'sess-id',
+      resolvedIntents: [{
+        intentRef: 1,
+        decomposed: {
+          act: 'identify',
+          intent: 'Name the single character whose Quartz Desert extraction operations would become entirely pointless if the Flux Core had been buried elsewhere instead.',
+          outputType: 'One word.'
+        },
+        currentTurnContextUnits: [
+          { id: 'u1', claim: 'Commander Vex extracted a gigantic Flux Core in the Quartz Desert.' },
+          { id: 'u2', claim: 'Kaelen linked Elara\'s data to the desert Core\'s frequency.' }
+        ],
+        sessionUnits: [],
+        kbUnits: []
+      }],
+      pluginOutputs: [],
+      guidanceUnits: []
+    });
+
+    assert.match(response.responseMarkdown, /### Answer\nVex\n/);
   });
 });

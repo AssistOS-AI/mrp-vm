@@ -283,7 +283,9 @@
         id: node.id,
         type: node.type || 'node',
         stage: node.stage || node.type || 'stage',
-        title: node.label || node.id || 'node',
+        title: node.type === 'frame'
+          ? `Frame ${node.depth ?? frameDepth.get(node.id) ?? 0}`
+          : (node.type === 'plugin' ? (node.label || node.id || 'plugin') : (node.label || node.type || node.id || 'node')),
         pluginId: node.type === 'plugin' ? (node.label || node.id || null) : null,
         status: node.status || 'unknown',
         durationMs: node.metadata?.durationMs ?? null,
@@ -481,6 +483,7 @@
     if (node.kbPluginId) metaParts.push(`kb: ${node.kbPluginId}`);
     if (node.metadata?.deliberationLevel != null) metaParts.push(`deliberation: L${node.metadata.deliberationLevel}`);
     if (node.metadata?.closureMode) metaParts.push(`closure: ${node.metadata.closureMode}`);
+    if (node.metadata?.purpose && node.type === 'frame') metaParts.push(`purpose: ${node.metadata.purpose}`);
     if (node.metadata?.familySignature) metaParts.push(`family: ${node.metadata.familySignature}`);
     if (node.metadata?.strength) metaParts.push(`strength: ${node.metadata.strength}`);
     if (node.metadata?.selected != null) metaParts.push(`selected: ${node.metadata.selected ? 'yes' : 'no'}`);
@@ -576,25 +579,11 @@
       if (!pluginsByFrame.has(owner)) pluginsByFrame.set(owner, []);
       pluginsByFrame.get(owner).push(node);
     }
-    const auxPriority = ['policy', 'seed', 'branch', 'result', 'candidate', 'comparison', 'challenge', 'failure'];
-    for (const node of nodes) {
-      if (!node.frameId || ['frame', 'plugin'].includes(node.type)) continue;
-      if (!auxNodesByFrame.has(node.frameId)) auxNodesByFrame.set(node.frameId, []);
-      auxNodesByFrame.get(node.frameId).push(node);
-    }
     for (const entries of pluginsByFrame.values()) {
       entries.sort((left, right) => {
         const leftOrder = Number.parseInt(String(left.id).split(':').pop() || '0', 10);
         const rightOrder = Number.parseInt(String(right.id).split(':').pop() || '0', 10);
         return leftOrder - rightOrder || String(left.title || left.id).localeCompare(String(right.title || right.id));
-      });
-    }
-    for (const entries of auxNodesByFrame.values()) {
-      entries.sort((left, right) => {
-        const leftRank = auxPriority.indexOf(left.type);
-        const rightRank = auxPriority.indexOf(right.type);
-        return (leftRank < 0 ? auxPriority.length : leftRank) - (rightRank < 0 ? auxPriority.length : rightRank)
-          || String(left.title || left.id).localeCompare(String(right.title || right.id));
       });
     }
 
@@ -642,16 +631,12 @@
       const pluginStripWidth = plugins.length
         ? plugins.length * constants.pluginWidth + Math.max(0, plugins.length - 1) * constants.nodeGap
         : 0;
-      const auxStripWidth = auxNodes.length
-        ? auxNodes.length * constants.auxWidth + Math.max(0, auxNodes.length - 1) * constants.auxGap
-        : 0;
       const childWidth = childMeasures.length
         ? Math.max(...childMeasures.map(child => child.width + constants.childFrameIndent))
         : 0;
-      const innerWidth = Math.max(constants.minFrameWidth, pluginStripWidth, auxStripWidth, childWidth);
+      const innerWidth = Math.max(constants.minFrameWidth, pluginStripWidth, childWidth);
       let innerHeight = 0;
       if (plugins.length) innerHeight += constants.pluginHeight + constants.childFrameGap;
-      if (auxNodes.length) innerHeight += constants.auxHeight + constants.childFrameGap;
       if (childMeasures.length) {
         innerHeight += childMeasures.reduce((sum, child) => sum + child.height, 0);
         innerHeight += constants.childFrameGap * Math.max(0, childMeasures.length - 1);
@@ -715,23 +700,6 @@
           cursorX += constants.pluginWidth + constants.nodeGap;
         }
         cursorY += constants.pluginHeight + constants.childFrameGap;
-      }
-
-      if (auxNodes.length) {
-        const stripWidth = auxNodes.length * constants.auxWidth + Math.max(0, auxNodes.length - 1) * constants.auxGap;
-        let cursorX = x + constants.framePaddingX + Math.max(0, (measure.width - constants.framePaddingX * 2 - stripWidth) / 2);
-        for (const auxNode of auxNodes) {
-          shapes.push({
-            kind: 'aux',
-            node: auxNode,
-            x: cursorX,
-            y: cursorY,
-            width: constants.auxWidth,
-            height: constants.auxHeight
-          });
-          cursorX += constants.auxWidth + constants.auxGap;
-        }
-        cursorY += constants.auxHeight + constants.childFrameGap;
       }
 
       for (const childId of childIds) {
@@ -841,7 +809,7 @@
     for (const plugin of canvas.plugins) {
       const node = plugin.node;
       const selected = node.id === selectedId ? ' graph-svg-selected' : '';
-      const subtitle = [stageLabel(node.stage), formatDurationCompact(node.durationMs)].filter(Boolean).join(' · ');
+      const subtitle = formatDurationCompact(node.durationMs) || 'pending';
       svgParts.push(`
         <g class="graph-svg-node graph-svg-plugin graph-status-${statusClass(node.status)}${selected}" data-node-index="${node.index}">
           <rect class="graph-plugin-rect" x="${plugin.x}" y="${plugin.y}" width="${plugin.width}" height="${plugin.height}" rx="12" ry="12"></rect>
@@ -851,23 +819,13 @@
         </g>
       `);
     }
-
-    for (const aux of canvas.auxNodes || []) {
-      const node = aux.node;
-      const selected = node.id === selectedId ? ' graph-svg-selected' : '';
-      svgParts.push(`
-        <g class="graph-svg-node graph-svg-aux graph-status-${statusClass(node.status)}${selected}" data-node-index="${node.index}">
-          <rect class="graph-aux-rect" x="${aux.x}" y="${aux.y}" width="${aux.width}" height="${aux.height}" rx="10" ry="10"></rect>
-          <text class="graph-aux-title-text" x="${aux.x + 12}" y="${aux.y + 22}">${esc(truncateGraphLabel(node.title || node.label || node.id, 24))}</text>
-          <text class="graph-aux-type-text" x="${aux.x + 12}" y="${aux.y + 40}">${esc(`${nodeTypeLabel(node.type)} · ${node.status || 'unknown'}`)}</text>
-        </g>
-      `);
-    }
+    const visibleNodeCount = canvas.frames.length + canvas.plugins.length;
+    const visibleEdgeCount = canvas.connectors.length;
 
     return `
       <div class="graph-canvas-shell">
         <div class="explainability-graph-toolbar">
-          <div class="explainability-graph-summary">${esc(`${nodes.length} nodes · ${edges.length} edges · root ${canvas.rootFrameId || 'n/a'} · L${trace?.deliberationLevel ?? 0}`)}</div>
+          <div class="explainability-graph-summary">${esc(`${visibleNodeCount} nodes · ${visibleEdgeCount} edges · root ${canvas.rootFrameId || 'n/a'} · L${trace?.deliberationLevel ?? 0}`)}</div>
           ${renderGraphLegend()}
           <div class="graph-zoom-controls">
             <button type="button" class="graph-zoom-out" aria-label="Zoom out">−</button>

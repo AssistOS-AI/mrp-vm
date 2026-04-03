@@ -4,6 +4,11 @@ import { MRPError } from '../platform/errors.mjs';
 import { logger } from '../platform/logger.mjs';
 import { buildExecutionGraph } from './trace-builder.mjs';
 import { comparisonHelperMethods } from './comparison-helpers.mjs';
+import {
+  deriveIndependentIntentBatches,
+  mergeFrontierResults,
+  runWithConcurrency
+} from './frontier-helpers.mjs';
 import { traceStateHelperMethods } from './trace-state-helpers.mjs';
 import {
   createDeliberationPolicy,
@@ -38,6 +43,7 @@ export class MRPEngine {
     this.maxLLMAttempts = config.maxLLMAttemptsPerRequest ?? 5;
     this.requestTimeout = config.requestTimeoutMs ?? 60000;
     this.maxPluginsPerStage = config.maxPluginsPerStage ?? 4;
+    this.maxParallelSeeds = config.maxParallelSeeds ?? config.maxFrontier ?? 4;
     this.maxFrameDepth = config.maxFrameDepth ?? 3;
     this.defaultPlannerPlugin = config.defaultPlannerPlugin || 'planner-default';
     this._ready = false;
@@ -47,11 +53,28 @@ export class MRPEngine {
   setReady(v) { this._ready = v; }
 
   _createBudgetState(initialLLMCalls = 0) {
-    return { llmCallCount: Math.max(0, Number(initialLLMCalls) || 0) };
+    return {
+      llmCallCount: Math.max(0, Number(initialLLMCalls) || 0),
+      reservedLLMCalls: 0
+    };
   }
 
-  _consumeLLMCalls(budgetState, result = null) {
+  _consumeLLMCalls(budgetState, result = null, reservedLLMCalls = 0) {
+    if (reservedLLMCalls) {
+      budgetState.reservedLLMCalls = Math.max(
+        0,
+        (budgetState.reservedLLMCalls || 0) - reservedLLMCalls
+      );
+    }
     budgetState.llmCallCount += result?.metadata?.llmCalls || 0;
+  }
+
+  _releaseBudgetReservation(budgetState, reservedLLMCalls = 0) {
+    if (!budgetState || !reservedLLMCalls) return;
+    budgetState.reservedLLMCalls = Math.max(
+      0,
+      (budgetState.reservedLLMCalls || 0) - reservedLLMCalls
+    );
   }
 
   _checkBudgetState(budgetState) {
@@ -72,8 +95,16 @@ export class MRPEngine {
 
   _reserveBudgetOrSkip(budgetState, stage, pluginId, plugin, addStageTrace = null) {
     const reserved = this._getReservedLLMCalls(plugin);
-    const remaining = Math.max(0, this.maxLLMAttempts - budgetState.llmCallCount);
-    if (reserved <= remaining) return true;
+    const remaining = Math.max(
+      0,
+      this.maxLLMAttempts
+        - budgetState.llmCallCount
+        - (budgetState.reservedLLMCalls || 0)
+    );
+    if (reserved <= remaining) {
+      budgetState.reservedLLMCalls = (budgetState.reservedLLMCalls || 0) + reserved;
+      return true;
+    }
     if (addStageTrace) {
       const startedAt = Date.now();
       addStageTrace(
@@ -209,77 +240,120 @@ export class MRPEngine {
       `[${ri.decomposed?.act}] ${ri.decomposed?.intent || ''}`
     ).join('. ');
 
-    // Try seed detection on the decomposed input
-    const seedCandidates = (options.seedDetectorOrder || this._defaultSeedDetectorOrder(null, null, session))
-      .slice(0, this.maxPluginsPerStage);
-    let seedResult = null;
-    for (const pluginId of seedCandidates) {
-      const plugin = this.pluginRegistry.get('sd-plugin', pluginId);
-      if (!plugin) continue;
-      if (!this._reserveBudgetOrSkip(budgetState, 'seed-detector', pluginId, plugin)) continue;
-      emitProgress({
-        type: 'stage',
-        event: 'start',
-        stage: 'seed-detector',
-        pluginId,
-        message: `Child frame: running seed detector ${pluginId}`
-      });
-      const result = await plugin.detectSeeds({
+    const seedCandidates = (
+      options.seedDetectorOrder
+      || this._defaultSeedDetectorOrder(null, null, session, {
         currentMessage: inputText,
-        historyForPrompt: [],
-        systemPrompt: options.systemPrompt || null,
-        requestedModel,
-        sessionModel: session.preferredModel
-      }, childCtx);
-      this._consumeLLMCalls(budgetState, result);
-      this._checkBudgetState(budgetState);
-      emitProgress({
-        type: 'stage',
-        event: 'finish',
-        stage: 'seed-detector',
-        pluginId,
-        status: result.status,
-        llmCalls: result.metadata?.llmCalls || 0,
-        message: `Child frame: seed detector ${pluginId} finished with ${result.status}`
-      });
-      if (result.status === 'success') { seedResult = result; break; }
-    }
-    if (!seedResult) {
-      this._patchFrameRecord(childTrace, childFrameId, {
-        status: 'failed',
-        budgets: {
-          remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
-        }
-      });
-      emitProgress({
-        type: 'frame',
-        event: 'finish',
-        status: 'failed',
-        message: `Child frame ${childDepth} did not produce seeds`
-      });
-      return { goalResult: null, llmCallCount: budgetState.llmCallCount };
-    }
+        deliberationPolicy: childDeliberationPolicy
+      })
+    )
+      .slice(0, this.maxPluginsPerStage);
 
-    const admittedSeedDocs = this._admitSeedDocuments(seedResult, childFrameId);
-    const {
-      intentGroups,
-      currentTurnUnits,
-      seedDetails
-    } = admittedSeedDocs;
-    if (!intentGroups.length) {
-      this._patchFrameRecord(childTrace, childFrameId, {
-        status: 'failed',
-        budgets: {
-          remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
-        }
-      });
+    let intentGroups = [];
+    let currentTurnUnits = [];
+    let seedDetails = [];
+
+    if (options.reuseResolvedIntents) {
+      intentGroups = resolvedIntents.map(ri => ({
+        groupNumber: ri.intentRef,
+        act: ri.decomposed?.act || ri.intentGroup?.act || 'explain',
+        intent: ri.decomposed?.intent || ri.intentGroup?.intent || '',
+        output: ri.decomposed?.outputType || ri.intentGroup?.output || 'structured response'
+      }));
+      currentTurnUnits = Array.isArray(options.currentTurnUnits)
+        ? [...options.currentTurnUnits]
+        : [];
+      seedDetails = intentGroups.map(group => ({
+        seedId: `${childFrameId}-seed-${group.groupNumber}`,
+        intentGroupNumber: group.groupNumber,
+        mode: 'direct',
+        action: group.act,
+        focus: group.intent,
+        status: 'active',
+        domain: 'child-frame',
+        evidenceNeed: 'targeted'
+      }));
       emitProgress({
         type: 'frame',
-        event: 'finish',
-        status: 'failed',
-        message: `Child frame ${childDepth} produced no intents`
+        event: 'info',
+        status: 'seed-reuse',
+        message: `Child frame ${childDepth} reused root intent decomposition`
       });
-      return { goalResult: null, llmCallCount: budgetState.llmCallCount };
+    } else {
+      let seedResult = null;
+      for (const pluginId of seedCandidates) {
+        const plugin = this.pluginRegistry.get('sd-plugin', pluginId);
+        if (!plugin) continue;
+        const reservedLLMCalls = this._getReservedLLMCalls(plugin);
+        if (!this._reserveBudgetOrSkip(budgetState, 'seed-detector', pluginId, plugin)) continue;
+        emitProgress({
+          type: 'stage',
+          event: 'start',
+          stage: 'seed-detector',
+          pluginId,
+          message: `Child frame: running seed detector ${pluginId}`
+        });
+        let result;
+        try {
+          result = await plugin.detectSeeds({
+            currentMessage: inputText,
+            historyForPrompt: [],
+            systemPrompt: options.systemPrompt || null,
+            requestedModel,
+            sessionModel: session.preferredModel
+          }, childCtx);
+        } catch (error) {
+          this._releaseBudgetReservation(budgetState, reservedLLMCalls);
+          throw error;
+        }
+        this._consumeLLMCalls(budgetState, result, reservedLLMCalls);
+        this._checkBudgetState(budgetState);
+        emitProgress({
+          type: 'stage',
+          event: 'finish',
+          stage: 'seed-detector',
+          pluginId,
+          status: result.status,
+          llmCalls: result.metadata?.llmCalls || 0,
+          message: `Child frame: seed detector ${pluginId} finished with ${result.status}`
+        });
+        if (result.status === 'success') { seedResult = result; break; }
+      }
+      if (!seedResult) {
+        this._patchFrameRecord(childTrace, childFrameId, {
+          status: 'failed',
+          budgets: {
+            remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
+          }
+        });
+        emitProgress({
+          type: 'frame',
+          event: 'finish',
+          status: 'failed',
+          message: `Child frame ${childDepth} did not produce seeds`
+        });
+        return { goalResult: null, llmCallCount: budgetState.llmCallCount };
+      }
+
+      const admittedSeedDocs = this._admitSeedDocuments(seedResult, childFrameId);
+      intentGroups = admittedSeedDocs.intentGroups;
+      currentTurnUnits = admittedSeedDocs.currentTurnUnits;
+      seedDetails = admittedSeedDocs.seedDetails;
+      if (!intentGroups.length) {
+        this._patchFrameRecord(childTrace, childFrameId, {
+          status: 'failed',
+          budgets: {
+            remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0))
+          }
+        });
+        emitProgress({
+          type: 'frame',
+          event: 'finish',
+          status: 'failed',
+          message: `Child frame ${childDepth} produced no intents`
+        });
+        return { goalResult: null, llmCallCount: budgetState.llmCallCount };
+      }
     }
     this._patchFrameRecord(childTrace, childFrameId, {
       seedDetails,
@@ -288,7 +362,16 @@ export class MRPEngine {
         currentTurnKUs: currentTurnUnits
       }
     });
-    const decomposed = this.decomposer.decompose(intentGroups);
+    const decomposed = options.reuseResolvedIntents
+      ? resolvedIntents.map(ri => ({
+          ...(ri.decomposed || {}),
+          groupNumber: ri.decomposed?.groupNumber ?? ri.intentRef,
+          act: ri.decomposed?.act || ri.intentGroup?.act || 'explain',
+          intent: ri.decomposed?.intent || ri.intentGroup?.intent || '',
+          outputType: ri.decomposed?.outputType || ri.intentGroup?.output || 'structured response',
+          criteria: Array.isArray(ri.decomposed?.criteria) ? ri.decomposed.criteria : []
+        }))
+      : this.decomposer.decompose(intentGroups);
     const profiles = decomposed.map(d => this.decomposer.deriveContextProfile(d));
 
     const plannerPluginId =
@@ -563,6 +646,7 @@ export class MRPEngine {
       for (const pluginId of goalCandidates) {
         const plugin = this.pluginRegistry.get('gs-plugin', pluginId);
         if (!plugin) continue;
+        const reservedLLMCalls = this._getReservedLLMCalls(plugin);
         if (!this._reserveBudgetOrSkip(budgetState, 'goal-solver', pluginId, plugin)) continue;
         emitProgress({
           type: 'stage',
@@ -573,15 +657,21 @@ export class MRPEngine {
           message: `Child frame: solving with ${pluginId}`
         });
         startedGoalAttempts += 1;
-        const result = await plugin.solve({
-          sessionId: session.sessionId,
-          resolvedIntents: resolvedIntentsForKB,
-          guidanceUnits,
-          systemPrompt: options.systemPrompt || null,
-          requestedModel,
-          sessionModel: session.preferredModel
-        }, childCtx);
-        this._consumeLLMCalls(budgetState, result);
+        let result;
+        try {
+          result = await plugin.solve({
+            sessionId: session.sessionId,
+            resolvedIntents: resolvedIntentsForKB,
+            guidanceUnits,
+            systemPrompt: options.systemPrompt || null,
+            requestedModel,
+            sessionModel: session.preferredModel
+          }, childCtx);
+        } catch (error) {
+          this._releaseBudgetReservation(budgetState, reservedLLMCalls);
+          throw error;
+        }
+        this._consumeLLMCalls(budgetState, result, reservedLLMCalls);
         this._checkBudgetState(budgetState);
         emitProgress({
           type: 'stage',
@@ -843,14 +933,58 @@ export class MRPEngine {
     return value == null ? value : JSON.parse(JSON.stringify(value));
   }
 
-  _defaultSeedDetectorOrder(explicitSeedDetectorPlugin = null, requestedSeedDetectorPlugin = null, session = null) {
+  _estimateQuestionCount(text = '') {
+    const source = String(text || '');
+    if (!source.trim()) return 0;
+    const labeledQuestions = source.match(/\bQ\d+\s*:/gi);
+    if (labeledQuestions?.length) return labeledQuestions.length;
+    const questionMarks = source.match(/\?/g)?.length || 0;
+    if (questionMarks > 0) return questionMarks;
+    const numberedBlocks = source.match(/(?:^|\n)\s*\d+\.\s+/g);
+    return numberedBlocks?.length || 1;
+  }
+
+  _shouldPreferLLMSeedDetector(currentMessage = '', deliberationPolicy = null) {
+    const text = String(currentMessage || '');
+    if (!text.trim()) return false;
+    const questionCount = this._estimateQuestionCount(text);
+    if (questionCount >= 2) return true;
+    if ((deliberationPolicy?.level || 0) >= 2 && text.length >= 240) return true;
+    if (/\bquestions?\b/i.test(text) && /(?:yes\/no|single word|answer each)/i.test(text)) return true;
+    return false;
+  }
+
+  _defaultSeedDetectorOrder(
+    explicitSeedDetectorPlugin = null,
+    requestedSeedDetectorPlugin = null,
+    session = null,
+    options = {}
+  ) {
+    const preferLLM =
+      !explicitSeedDetectorPlugin
+      && !requestedSeedDetectorPlugin
+      && this._shouldPreferLLMSeedDetector(options.currentMessage || '', options.deliberationPolicy || null);
+    const deepPreferred =
+      (options.deliberationPolicy?.level || 0) >= 3
+      || this._estimateQuestionCount(options.currentMessage || '') >= 3
+      || String(options.currentMessage || '').length >= 500;
+    const heuristicFallback = preferLLM
+      ? [
+          deepPreferred ? 'sd-llm-deep' : 'sd-llm-fast',
+          'sd-llm-fast',
+          'sd-llm-deep',
+          'sd-symbolic'
+        ]
+      : [];
+    const defaultFallback = this.config.seedDetectorFallbackOrder || ['sd-symbolic', 'sd-llm-fast', 'sd-llm-deep'];
     return unique([
       explicitSeedDetectorPlugin,
       requestedSeedDetectorPlugin,
+      ...heuristicFallback,
       session?.preferredSeedDetectorPlugin || null,
       this.config.defaultSeedDetectorPlugin || null,
       this.conversationHandler?.defaultSeedDetectorPlugin || null,
-      ...(this.config.seedDetectorFallbackOrder || ['sd-symbolic', 'sd-llm-fast', 'sd-llm-deep']),
+      ...defaultFallback,
       ...((this.pluginRegistry?.listByType?.('sd-plugin') || []).map(item => item.id))
     ]).slice(0, this.maxPluginsPerStage);
   }
@@ -1084,7 +1218,11 @@ export class MRPEngine {
         const seedCandidates = this._defaultSeedDetectorOrder(
           explicitSeedDetectorPlugin ?? request.seed_detector_plugin ?? null,
           requestedSeedDetectorPlugin,
-          session
+          session,
+          {
+            currentMessage,
+            deliberationPolicy: executionTrace.deliberationPolicy
+          }
         );
         executionTrace.seedDetectorCandidates = seedCandidates;
         let plannerCandidates = unique([
@@ -1111,7 +1249,9 @@ export class MRPEngine {
           const resolvedFrame = this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
             deliberationStatus: executed.goalResult.status === 'no-context' ? 'fallback' : 'settled'
           });
-          const executionOutcomes = executed.candidateExecutions?.length
+          const executionOutcomes = executed.aggregateByIntent
+            ? []
+            : executed.candidateExecutions?.length
             ? executed.candidateExecutions
             : [{
                 order: 0,
@@ -1136,74 +1276,88 @@ export class MRPEngine {
               }];
           const selectedBranchIdSet = new Set(executed.selectedBranchIds || []);
           const candidateSet = [];
-          for (const outcome of executionOutcomes) {
-            const branchIds = outcome.branchIds || [];
-            const rejectedByValidation = outcome.validationVerdict === 'rejected';
-            const representativeBranch = outcome.branches?.[0]
-              || executionTrace.branches.find(branch => branch.branchId === branchIds[0])
-              || null;
-            const recordedResultIds = [];
-            for (const branchId of branchIds) {
-              const branch = this._patchBranchAttempt(executionTrace, branchId, {
-                status: rejectedByValidation ? 'failed' : 'succeeded'
-              });
-              if (!branch) continue;
-              const resultRecord = this._recordResult(executionTrace, {
-                frameId: branch.frameId,
-                branchId,
-                kind: outcome.goalResult?.status === 'no-context' ? 'no-context' : 'answer',
+          if (!executed.aggregateByIntent) {
+            for (const outcome of executionOutcomes) {
+              const branchIds = outcome.branchIds || [];
+              const rejectedByValidation = outcome.validationVerdict === 'rejected';
+              const representativeBranch = outcome.branches?.[0]
+                || executionTrace.branches.find(branch => branch.branchId === branchIds[0])
+                || null;
+              const recordedResultIds = [];
+              for (const branchId of branchIds) {
+                const branch = this._patchBranchAttempt(executionTrace, branchId, {
+                  status: rejectedByValidation ? 'failed' : 'succeeded'
+                });
+                if (!branch) continue;
+                const resultRecord = this._recordResult(executionTrace, {
+                  frameId: branch.frameId,
+                  branchId,
+                  kind: outcome.goalResult?.status === 'no-context' ? 'no-context' : 'answer',
+                  validationStatus: rejectedByValidation
+                    ? 'rejected'
+                    : selectedBranchIdSet.has(branchId)
+                      ? (executed.validationVerdict || executionTrace.finalAnswerStatus)
+                      : (outcome.validationVerdict || 'candidate'),
+                  preservesConstraints: outcome.goalResult?.status === 'no-context' ? 'unknown' : 'yes',
+                  structuralComplete: outcome.goalResult?.status === 'no-context' ? 'partial' : 'yes',
+                  body: outcome.goalResult?.responseMarkdown || null
+                });
+                this._patchBranchAttempt(executionTrace, branchId, { resultId: resultRecord.resultId });
+                recordedResultIds.push(resultRecord.resultId);
+              }
+              if (!representativeBranch && !recordedResultIds.length) continue;
+              const selected = !rejectedByValidation
+                && branchIds.some(branchId => selectedBranchIdSet.has(branchId));
+              candidateSet.push(this._buildCandidateRecord({
+                frameId: representativeBranch?.frameId || pluginCtx.frameId,
+                branchId: representativeBranch?.branchId || branchIds[0] || null,
+                branchIds,
+                resultId: recordedResultIds[0] || representativeBranch?.resultId || null,
+                resultBody: outcome.goalResult?.responseMarkdown || null,
+                familySignature: outcome.familyKey || representativeBranch?.familySignature || null,
                 validationStatus: rejectedByValidation
                   ? 'rejected'
-                  : selectedBranchIdSet.has(branchId)
+                  : selected
                     ? (executed.validationVerdict || executionTrace.finalAnswerStatus)
                     : (outcome.validationVerdict || 'candidate'),
-                preservesConstraints: outcome.goalResult?.status === 'no-context' ? 'unknown' : 'yes',
-                structuralComplete: outcome.goalResult?.status === 'no-context' ? 'partial' : 'yes',
-                body: outcome.goalResult?.responseMarkdown || null
-              });
-              this._patchBranchAttempt(executionTrace, branchId, { resultId: resultRecord.resultId });
-              recordedResultIds.push(resultRecord.resultId);
+                kbSufficient: !!outcome.kbSufficient,
+                selected,
+                score: this._scoreExecutionOutcome(outcome, resolvedFrame?.deliberationPolicy || executionTrace.deliberationPolicy),
+                strength: rejectedByValidation ? 'weak' : this._deriveOutcomeStrength(outcome)
+              }));
             }
-            if (!representativeBranch && !recordedResultIds.length) continue;
-            const selected = !rejectedByValidation
-              && branchIds.some(branchId => selectedBranchIdSet.has(branchId));
-            candidateSet.push(this._buildCandidateRecord({
-              frameId: representativeBranch?.frameId || pluginCtx.frameId,
-              branchId: representativeBranch?.branchId || branchIds[0] || null,
-              branchIds,
-              resultId: recordedResultIds[0] || representativeBranch?.resultId || null,
-              resultBody: outcome.goalResult?.responseMarkdown || null,
-              familySignature: outcome.familyKey || representativeBranch?.familySignature || null,
-              validationStatus: rejectedByValidation
-                ? 'rejected'
-                : selected
-                  ? (executed.validationVerdict || executionTrace.finalAnswerStatus)
-                  : (outcome.validationVerdict || 'candidate'),
-              kbSufficient: !!outcome.kbSufficient,
-              selected,
-              score: this._scoreExecutionOutcome(outcome, resolvedFrame?.deliberationPolicy || executionTrace.deliberationPolicy),
-              strength: rejectedByValidation ? 'weak' : this._deriveOutcomeStrength(outcome)
-            }));
           }
-          const comparisonState = this._buildComparisonState(
-            candidateSet,
-            resolvedFrame?.deliberationPolicy || executionTrace.deliberationPolicy,
-            executed.validationVerdict,
-            executed.validationReason
-          );
-          const suspendedSet = executionOutcomes
-            .filter(outcome =>
-              outcome.validationVerdict !== 'rejected'
-              && !(outcome.branchIds || []).some(branchId => selectedBranchIdSet.has(branchId))
-            )
-            .flatMap(outcome => outcome.branchIds || []);
+          const comparisonState = executed.aggregateByIntent
+            ? {
+                openQuestions: [],
+                closureReason: 'parallel_intent_aggregation',
+                frontierSize: executed.parallelFrontierSize || selectedBranchIdSet.size || 0
+              }
+            : this._buildComparisonState(
+                candidateSet,
+                resolvedFrame?.deliberationPolicy || executionTrace.deliberationPolicy,
+                executed.validationVerdict,
+                executed.validationReason
+              );
+          const suspendedSet = executed.aggregateByIntent
+            ? []
+            : executionOutcomes
+              .filter(outcome =>
+                outcome.validationVerdict !== 'rejected'
+                && !(outcome.branchIds || []).some(branchId => selectedBranchIdSet.has(branchId))
+              )
+              .flatMap(outcome => outcome.branchIds || []);
           this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
             status: 'succeeded',
             budgets: this._remainingBudgetSnapshot(budgetState, startTime),
             candidateSet,
             comparisonState,
             suspendedSet,
-            deliberationStatus: comparisonState.openQuestions.length > 0 ? 'comparative_open' : 'settled',
+            deliberationStatus: executed.aggregateByIntent
+              ? 'settled'
+              : comparisonState.openQuestions.length > 0
+                ? 'comparative_open'
+                : 'settled',
             localState: {
               partialResults: executionTrace.results,
               plan: executionTrace.lastPlan || null
@@ -1257,6 +1411,7 @@ export class MRPEngine {
         for (const pluginId of seedCandidates) {
           const plugin = this.pluginRegistry.get('sd-plugin', pluginId);
           if (!plugin) continue;
+          const reservedLLMCalls = this._getReservedLLMCalls(plugin);
           if (!reserveBudgetOrSkip('seed-detector', pluginId, plugin)) {
             seedNodeSnapshot.children.push({ type: 'plugin', pluginId, status: 'skipped-budget' });
             continue;
@@ -1269,14 +1424,20 @@ export class MRPEngine {
             pluginId,
             message: `Running seed detector ${pluginId}`
           });
-          const result = await plugin.detectSeeds({
-            currentMessage,
-            historyForPrompt,
-            systemPrompt,
-            requestedModel,
-            sessionModel: session.preferredModel
-          }, pluginCtx);
-          this._consumeLLMCalls(budgetState, result);
+          let result;
+          try {
+            result = await plugin.detectSeeds({
+              currentMessage,
+              historyForPrompt,
+              systemPrompt,
+              requestedModel,
+              sessionModel: session.preferredModel
+            }, pluginCtx);
+          } catch (error) {
+            this._releaseBudgetReservation(budgetState, reservedLLMCalls);
+            throw error;
+          }
+          this._consumeLLMCalls(budgetState, result, reservedLLMCalls);
           checkBudget();
           const pluginNode = {
             type: 'plugin',
@@ -1434,6 +1595,191 @@ export class MRPEngine {
           executionTrace.trees.push(planNode);
           planNode.children.push(this._cloneNode(seedNodeSnapshot));
           planNode.children.push(this._cloneNode(decomposeNodeSnapshot));
+
+          executionTrace.lastPlan = {
+            plannerPluginId: plan.plannerPluginId,
+            seedDetectorOrder: seedCandidates,
+            kbPluginOrder: plan.kbPluginOrder,
+            goalSolverOrder: plan.goalSolverOrder,
+            decompose: !!plan.decompose,
+            framePurpose: plan.framePurpose || null,
+            notes: plan.notes || []
+          };
+          this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
+            localState: {
+              plan: executionTrace.lastPlan
+            }
+          });
+
+          const frontierBatches = deriveIndependentIntentBatches(seedDetails, intentGroups, decomposedIntents);
+          const explicitFanoutPrompt =
+            this._estimateQuestionCount(currentMessage) >= 2
+            || /\banswer each\b/i.test(currentMessage)
+            || /\bquestions?\s*[—:-]/i.test(currentMessage);
+          if (frontierBatches.length > 1 && explicitFanoutPrompt && pluginCtx.frameDepth < this.maxFrameDepth) {
+            emitProgress({
+              type: 'frame',
+              event: 'fanout',
+              frontierSize: frontierBatches.length,
+              message: `Dispatching ${frontierBatches.length} independent intent frames`
+            });
+            const plannerSelections = buildPlannerInput();
+            const frontierResults = await runWithConcurrency(
+              frontierBatches,
+              this.maxParallelSeeds,
+              async batch => {
+                try {
+                  const childResult = await this._executeChildFrame(
+                    pluginCtx,
+                    {
+                      ...plan,
+                      decompose: false,
+                      framePurpose: plan.framePurpose || 'parallel-intent'
+                    },
+                    batch.resolvedIntents,
+                    session,
+                    requestedModel,
+                    budgetState,
+                    {
+                      seedDetectorOrder: seedCandidates,
+                      reuseResolvedIntents: true,
+                      currentTurnUnits,
+                      systemPrompt,
+                      plannerPluginId: plan.plannerPluginId,
+                      explicitSelections: plannerSelections.explicitSelections,
+                      sessionPreferences: plannerSelections.sessionPreferences,
+                      request,
+                      onProgress: request.onProgress
+                    }
+                  );
+                  return { ...batch, childResult };
+                } catch (error) {
+                  return { ...batch, error };
+                }
+              }
+            );
+            const settledFrontierResults = frontierResults.filter(result => result?.childResult?.goalResult);
+            if (!settledFrontierResults.length) {
+              throw new MRPError(
+                'PLUGIN_STAGE_EXHAUSTED',
+                MOD,
+                'No independent child frame produced a final answer',
+                { stage: 'goal-solver', frontierSize: frontierBatches.length }
+              );
+            }
+            executionTrace.frameTransitions = (executionTrace.frameTransitions || 0) + settledFrontierResults.length;
+            executionTrace.framePurpose = plan.framePurpose || 'parallel-intent';
+
+            const mergedFrontier = mergeFrontierResults(session.sessionId, frontierBatches, frontierResults);
+            const valCandidates = this.pluginRegistry.listByType('val-plugin').map(d => d.id);
+            let validationVerdict = 'accepted';
+            let validationReason = '';
+            if (valCandidates.length > 0 && mergedFrontier.goalResult.status === 'success') {
+              const valNode = { type: 'stage', stage: 'validation', children: [] };
+              planNode.children.push(valNode);
+              const validationGuidance = this._collectCommonGuidanceEntries(
+                mergedFrontier.resolvedIntentsForValidation,
+                'validation'
+              );
+              for (const valId of valCandidates.slice(0, this.maxPluginsPerStage)) {
+                const valPlugin = this.pluginRegistry.get('val-plugin', valId);
+                if (!valPlugin) continue;
+                const reservedLLMCalls = this._getReservedLLMCalls(valPlugin);
+                if (!reserveBudgetOrSkip('validation', valId, valPlugin)) {
+                  valNode.children.push({ type: 'plugin', pluginId: valId, status: 'skipped-budget' });
+                  continue;
+                }
+                const startedAt = Date.now();
+                emitProgress({
+                  type: 'stage',
+                  event: 'start',
+                  stage: 'validation',
+                  pluginId: valId,
+                  message: `Validating response with ${valId}`
+                });
+                let valResult;
+                try {
+                  valResult = await valPlugin.validate({
+                    originalMessage: currentMessage,
+                    responseMarkdown: mergedFrontier.goalResult.responseMarkdown,
+                    resolvedIntents: mergedFrontier.resolvedIntentsForValidation,
+                    guidanceUnits: validationGuidance,
+                    requestedModel,
+                    sessionModel: session.preferredModel
+                  }, pluginCtx);
+                } catch (error) {
+                  this._releaseBudgetReservation(budgetState, reservedLLMCalls);
+                  throw error;
+                }
+                this._consumeLLMCalls(budgetState, valResult, reservedLLMCalls);
+                checkBudget();
+                valNode.children.push({
+                  type: 'plugin',
+                  pluginId: valId,
+                  status: valResult.status,
+                  durationMs: Date.now() - startedAt,
+                  llmCalls: valResult.metadata?.llmCalls || 0,
+                  model: valResult.metadata?.model || null,
+                  input: currentMessage,
+                  output: `${valResult.verdict}: ${valResult.reason}`,
+                  error: valResult.error || null
+                });
+                addStageTrace(
+                  'validation',
+                  valId,
+                  valResult.status,
+                  startedAt,
+                  valResult.metadata?.llmCalls || 0,
+                  valResult.verdict === 'accepted',
+                  valResult.error || null,
+                  valResult.metadata?.model || null,
+                  valPlugin.getDescriptor().modelRoles?.[0] || null,
+                  snip(currentMessage),
+                  snip(`${valResult.verdict}: ${valResult.reason}`)
+                );
+                validationVerdict = valResult.verdict;
+                validationReason = valResult.reason;
+                break;
+              }
+            }
+            if (validationVerdict === 'rejected') {
+              throw new MRPError(
+                'VALIDATION_REJECTED',
+                MOD,
+                `Validation rejected: ${validationReason}`,
+                {
+                  goalSolverPlugin: mergedFrontier.selectedGoalSolverPlugin,
+                  kbPlugin: mergedFrontier.selectedKBPlugin,
+                  reason: validationReason
+                }
+              );
+            }
+            this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
+              localState: {
+                retrievedKUs: mergedFrontier.resolvedIntentsForValidation.map(ri => ({
+                  intentRef: ri.intentRef,
+                  currentTurnCount: ri.currentTurnContextUnits?.length || 0,
+                  sessionCount: ri.sessionUnits?.length || 0,
+                  kbCount: ri.kbUnits?.length || 0
+                }))
+              }
+            });
+            return {
+              goalResult: mergedFrontier.goalResult,
+              currentTurnUnits,
+              selectedSeedDetectorPlugin,
+              selectedKBPlugin: mergedFrontier.selectedKBPlugin,
+              selectedGoalSolverPlugin: mergedFrontier.selectedGoalSolverPlugin,
+              kbSufficient: mergedFrontier.kbSufficient,
+              weakOutcome: mergedFrontier.goalResult.status === 'no-context',
+              selectedBranchIds: unique(mergedFrontier.selectedBranchIds),
+              candidateExecutions: [],
+              validationVerdict,
+              validationReason,
+              aggregateByIntent: true,
+              parallelFrontierSize: frontierBatches.length
+            };
+          }
 
           // --- KB retrieval (collect all results for backtracking) ---
           const kbNode = { type: 'stage', stage: 'kb', children: [] };
@@ -1666,6 +2012,7 @@ export class MRPEngine {
             for (const pluginId of goalCandidates) {
               const plugin = this.pluginRegistry.get('gs-plugin', pluginId);
               if (!plugin) continue;
+              const reservedLLMCalls = this._getReservedLLMCalls(plugin);
               if (!reserveBudgetOrSkip('goal-solver', pluginId, plugin)) {
                 goalNode.children.push({ type: 'plugin', pluginId, status: 'skipped-budget' });
                 continue;
@@ -1680,14 +2027,20 @@ export class MRPEngine {
                 message: `Solving with ${pluginId}`
               });
               startedGoalAttempts += 1;
-              const result = await plugin.solve({
-                sessionId: session.sessionId,
-                resolvedIntents: resolvedIntentsForKB,
-                guidanceUnits: goalSolverGuidance,
-                systemPrompt,
-                requestedModel, sessionModel: session.preferredModel
-              }, pluginCtx);
-              this._consumeLLMCalls(budgetState, result);
+              let result;
+              try {
+                result = await plugin.solve({
+                  sessionId: session.sessionId,
+                  resolvedIntents: resolvedIntentsForKB,
+                  guidanceUnits: goalSolverGuidance,
+                  systemPrompt,
+                  requestedModel, sessionModel: session.preferredModel
+                }, pluginCtx);
+              } catch (error) {
+                this._releaseBudgetReservation(budgetState, reservedLLMCalls);
+                throw error;
+              }
+              this._consumeLLMCalls(budgetState, result, reservedLLMCalls);
               checkBudget();
               goalNode.children.push({
                 type: 'plugin', pluginId, status: result.status,
@@ -1920,6 +2273,7 @@ export class MRPEngine {
               for (const valId of valCandidates.slice(0, this.maxPluginsPerStage)) {
                 const valPlugin = this.pluginRegistry.get('val-plugin', valId);
                 if (!valPlugin) continue;
+                const reservedLLMCalls = this._getReservedLLMCalls(valPlugin);
                 if (!reserveBudgetOrSkip('validation', valId, valPlugin)) {
                   valNode.children.push({ type: 'plugin', pluginId: valId, status: 'skipped-budget' });
                   continue;
@@ -1932,15 +2286,21 @@ export class MRPEngine {
                   pluginId: valId,
                   message: `Validating response with ${valId}`
                 });
-                const valResult = await valPlugin.validate({
-                  originalMessage: currentMessage,
-                  responseMarkdown: goalResult.responseMarkdown,
-                  resolvedIntents,
-                  guidanceUnits: validationGuidance,
-                  requestedModel,
-                  sessionModel: session.preferredModel
-                }, pluginCtx);
-                this._consumeLLMCalls(budgetState, valResult);
+                let valResult;
+                try {
+                  valResult = await valPlugin.validate({
+                    originalMessage: currentMessage,
+                    responseMarkdown: goalResult.responseMarkdown,
+                    resolvedIntents,
+                    guidanceUnits: validationGuidance,
+                    requestedModel,
+                    sessionModel: session.preferredModel
+                  }, pluginCtx);
+                } catch (error) {
+                  this._releaseBudgetReservation(budgetState, reservedLLMCalls);
+                  throw error;
+                }
+                this._consumeLLMCalls(budgetState, valResult, reservedLLMCalls);
                 checkBudget();
                 valNode.children.push({
                   type: 'plugin', pluginId: valId, status: valResult.status,
