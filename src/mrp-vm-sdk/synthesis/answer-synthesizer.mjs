@@ -3,8 +3,7 @@ import { SDKError } from '../platform/errors.mjs';
 import { buildResponseDocument } from './response-document.mjs';
 
 export class AnswerSynthesizer {
-  constructor(modeRegistry, config = {}) {
-    this.modeRegistry = modeRegistry;
+  constructor(config = {}) {
     this.config = config;
   }
 
@@ -13,7 +12,7 @@ export class AnswerSynthesizer {
     resolvedIntents,
     pluginOutputs,
     systemPrompt,
-    mode,
+    responseRenderer,
     requestedModel = null,
     guidanceUnits = [],
     options = {}
@@ -25,7 +24,7 @@ export class AnswerSynthesizer {
       return this._renderNoContext(sessionId, resolvedIntents, pluginOutputs);
     }
     try {
-      const result = await mode.synthesizeResponse({
+      const result = await responseRenderer.synthesizeResponse({
         sessionId,
         resolvedIntents,
         pluginOutputs,

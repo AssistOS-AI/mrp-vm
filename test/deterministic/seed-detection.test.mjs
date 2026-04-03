@@ -2,10 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NLNormalizer } from '../../src/core/normalizer/nl-normalizer.mjs';
 import { CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
-import { StrategyRegistry } from '../../src/mrp-vm-sdk/strategies/registry.mjs';
-import { StrategySeedDetectorPlugin } from '../../src/mrp-vm-sdk/plugins/builtin-adapters.mjs';
-import { LLMAssistedStrategy } from '../../src/mrp-vm-sdk/strategies/llm-assisted.mjs';
-import { SymbolicOnlyStrategy } from '../../src/mrp-vm-sdk/strategies/symbolic-only.mjs';
+import { SeedDetectorHelperPlugin } from '../../src/mrp-vm-sdk/plugins/builtin-adapters.mjs';
+import {
+  LLMAssistedSeedBundleGenerator,
+  RuleBasedSOPSeedBundleGenerator
+} from '../../src/mrp-vm-sdk/seed-detection/builtin-helpers.mjs';
 
 describe('seed detection bundle flow', () => {
   it('uses a single detectSeedBundle call for sd-plugin.detectSeeds', async () => {
@@ -18,11 +19,13 @@ describe('seed detection bundle flow', () => {
           intentCNL: '## Intent Group 1\nAct: explain\nIntent: Explain Aurora Station.\nOutput: Structured response.',
           currentTurnContextCNL: '## Context Unit session::turn::unit-000\nSourceId: session\nChunkId: session::turn\nRole: Explanation\nTopic: Aurora Station\nClaim: Aurora Station provides thermal shielding.\nSubject: Aurora Station\nRelation: provides\nObject: thermal shielding\nConfidence: 0.9\nUtilityActs: explain'
         };
+      },
+      async normalizePersistentContext() {
+        return { contextCNL: '' };
       }
     };
-    const registry = new StrategyRegistry();
-    const normalizer = new NLNormalizer(registry);
-    const plugin = new StrategySeedDetectorPlugin('sd-test', strategy, normalizer, {
+    const normalizer = new NLNormalizer();
+    const plugin = new SeedDetectorHelperPlugin('sd-test', strategy, strategy, normalizer, {
       modelRole: 'seed-fast'
     });
 
@@ -49,7 +52,7 @@ describe('seed detection bundle flow', () => {
 
   it('llm-assisted strategy parses a combined seed bundle from one bridge call', async () => {
     let bridgeCalls = 0;
-    const strategy = new LLMAssistedStrategy({
+    const strategy = new LLMAssistedSeedBundleGenerator({
       async callWithRetry(_systemPrompt, _userMessage, opts = {}) {
         bridgeCalls += 1;
         assert.equal(opts.operation, 'detect-seeds');
@@ -89,7 +92,7 @@ describe('seed detection bundle flow', () => {
   });
 
   it('symbolic-only strategy splits short multi-question prompts into separate intent groups', async () => {
-    const strategy = new SymbolicOnlyStrategy();
+    const strategy = new RuleBasedSOPSeedBundleGenerator();
     const parser = new CNLParser();
     const bundle = await strategy.detectSeedBundle({
       rawNL: [
@@ -107,5 +110,17 @@ describe('seed detection bundle flow', () => {
     assert.equal(groups[1].output, 'structured response');
     assert.match(groups[2].intent, /Name the operator\./);
     assert.match(groups[2].output, /one word/i);
+  });
+
+  it('symbolic-only strategy keeps follow-up elaborations inside a single intent group', async () => {
+    const strategy = new RuleBasedSOPSeedBundleGenerator();
+    const parser = new CNLParser();
+    const bundle = await strategy.detectSeedBundle({
+      rawNL: 'Explain the chain of cause and effect that links the discovery of the obelisk in the Frozen Abyss to the reactivation of the Eon atmospheric shield. Trace every intermediate step.'
+    });
+
+    const groups = parser.parseIntentCNL(bundle.intentCNL);
+    assert.equal(groups.length, 1);
+    assert.match(groups[0].intent, /Trace every intermediate step\./i);
   });
 });

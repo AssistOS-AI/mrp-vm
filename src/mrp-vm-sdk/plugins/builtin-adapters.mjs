@@ -38,10 +38,11 @@ function shouldAutoAcceptTerseValidation(input = {}) {
   return isExplicitTerseQuestion(input.originalMessage);
 }
 
-export class ModeSeedDetectorPlugin {
-  constructor(id, mode, normalizer, options = {}) {
+export class SeedDetectorHelperPlugin {
+  constructor(id, seedBundleGenerator, contextNormalizer, normalizer, options = {}) {
     this.id = id;
-    this.mode = mode;
+    this.seedBundleGenerator = seedBundleGenerator;
+    this.contextNormalizer = contextNormalizer;
     this.normalizer = normalizer;
     this.modelRole = options.modelRole || null;
     this.ingestModelRole = options.ingestModelRole || this.modelRole;
@@ -58,9 +59,9 @@ export class ModeSeedDetectorPlugin {
       name: this.id,
       description: this.description,
       costClass: this.costClass,
-      usesLLM: this.mode.usesLLM(),
+      usesLLM: this.seedBundleGenerator.usesLLM() || this.contextNormalizer.usesLLM(),
       modelRoles: [this.modelRole, this.ingestModelRole].filter(Boolean),
-      maxLLMCalls: this.mode.usesLLM() ? 2 : 0,
+      maxLLMCalls: (this.seedBundleGenerator.usesLLM() || this.contextNormalizer.usesLLM()) ? 2 : 0,
       provides: ['detect-seeds', 'normalize-persistent-context'],
       plannerHints: this.plannerHints
     });
@@ -78,7 +79,7 @@ export class ModeSeedDetectorPlugin {
         input.currentMessage,
         input.historyForPrompt,
         input.systemPrompt,
-        this.mode,
+        this.seedBundleGenerator,
         model,
         { prompts: this.prompts, pluginId: this.id }
       );
@@ -87,7 +88,7 @@ export class ModeSeedDetectorPlugin {
         intentCNL: seedBundle.intentCNL,
         currentTurnContextCNL: seedBundle.currentTurnContextCNL,
         metadata: {
-          llmCalls: this.mode.usesLLM() ? seedBundle.attemptCount || 1 : 0,
+          llmCalls: this.seedBundleGenerator.usesLLM() ? seedBundle.attemptCount || 1 : 0,
           model
         },
         error: null
@@ -98,7 +99,7 @@ export class ModeSeedDetectorPlugin {
         intentCNL: null,
         currentTurnContextCNL: null,
         metadata: {
-          llmCalls: this.mode.usesLLM() ? error.details?.attemptCount || 1 : 0,
+          llmCalls: this.seedBundleGenerator.usesLLM() ? error.details?.attemptCount || 1 : 0,
           model
         },
         error: { code: error.code || 'SEED_PLUGIN_FAILED', message: error.message }
@@ -114,7 +115,7 @@ export class ModeSeedDetectorPlugin {
       sessionModel: input.sessionModel || null
     });
     try {
-      const result = await this.mode.normalizePersistentContext({
+      const result = await this.contextNormalizer.normalizePersistentContext({
         ...input,
         requestedModel: model,
         prompts: this.prompts,
@@ -124,7 +125,7 @@ export class ModeSeedDetectorPlugin {
         status: 'success',
         contextCNL: result.contextCNL || '',
         metadata: {
-          llmCalls: this.mode.usesLLM() ? 1 : 0,
+          llmCalls: this.contextNormalizer.usesLLM() ? 1 : 0,
           model
         },
         error: null
@@ -134,7 +135,7 @@ export class ModeSeedDetectorPlugin {
         status: error.code === 'STRATEGY_UNSUPPORTED_INPUT' ? 'unsupported' : 'error',
         contextCNL: null,
         metadata: {
-          llmCalls: this.mode.usesLLM() ? 1 : 0,
+          llmCalls: this.contextNormalizer.usesLLM() ? 1 : 0,
           model
         },
         error: { code: error.code || 'INGEST_PLUGIN_FAILED', message: error.message }
@@ -144,7 +145,7 @@ export class ModeSeedDetectorPlugin {
 
   createIngestStrategy(ctx, requestedModel = null, sessionModel = null) {
     return {
-      usesLLM: () => this.mode.usesLLM(),
+      usesLLM: () => this.contextNormalizer.usesLLM(),
       normalizePersistentContext: async (input) => {
         const result = await this.normalizePersistentContext({
           ...input,
@@ -325,10 +326,10 @@ export class RetrievalKBPlugin {
   }
 }
 
-export class ModeGoalSolverPlugin {
-  constructor(id, mode, synthesizer, options = {}) {
+export class GoalSolverRendererPlugin {
+  constructor(id, responseRenderer, synthesizer, options = {}) {
     this.id = id;
-    this.mode = mode;
+    this.responseRenderer = responseRenderer;
     this.synthesizer = synthesizer;
     this.modelRole = options.modelRole || null;
     this.description = options.description || '';
@@ -344,9 +345,9 @@ export class ModeGoalSolverPlugin {
       name: this.id,
       description: this.description,
       costClass: this.costClass,
-      usesLLM: this.mode.usesLLM(),
+      usesLLM: this.responseRenderer.usesLLM(),
       modelRoles: [this.modelRole].filter(Boolean),
-      maxLLMCalls: this.mode.usesLLM() ? 1 : 0,
+      maxLLMCalls: this.responseRenderer.usesLLM() ? 1 : 0,
       provides: ['solve-goal'],
       plannerHints: this.plannerHints
     });
@@ -369,7 +370,7 @@ export class ModeGoalSolverPlugin {
         input.resolvedIntents,
         pluginOutputs,
         input.systemPrompt,
-        this.mode,
+        this.responseRenderer,
         model,
         input.guidanceUnits || [],
         { prompts: this.prompts, pluginId: this.id }
@@ -379,7 +380,7 @@ export class ModeGoalSolverPlugin {
         responseMarkdown: result.responseMarkdown,
         responseDocument: result.responseDocument,
         metadata: {
-          llmCalls: this.mode.usesLLM() ? 1 : 0,
+          llmCalls: this.responseRenderer.usesLLM() ? 1 : 0,
           model,
           helperPluginCount: pluginOutputs.length
         },
@@ -391,7 +392,7 @@ export class ModeGoalSolverPlugin {
         responseMarkdown: null,
         responseDocument: null,
         metadata: {
-          llmCalls: this.mode.usesLLM() ? 1 : 0,
+          llmCalls: this.responseRenderer.usesLLM() ? 1 : 0,
           model
         },
         error: { code: error.code || 'GOAL_SOLVER_FAILED', message: error.message }
@@ -479,5 +480,7 @@ export class LLMValidationPlugin {
   }
 }
 
-export { ModeSeedDetectorPlugin as StrategySeedDetectorPlugin };
-export { ModeGoalSolverPlugin as StrategyGoalSolverPlugin };
+export { SeedDetectorHelperPlugin as ModeSeedDetectorPlugin };
+export { GoalSolverRendererPlugin as ModeGoalSolverPlugin };
+export { SeedDetectorHelperPlugin as StrategySeedDetectorPlugin };
+export { GoalSolverRendererPlugin as StrategyGoalSolverPlugin };

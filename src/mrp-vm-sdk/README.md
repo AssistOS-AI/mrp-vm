@@ -54,7 +54,7 @@ If a module defines or validates the language contract itself, it belongs in the
 
 ### SDK NLP Utilities
 
-Reusable natural-language helpers used by multiple plugins or strategies must live in:
+Reusable natural-language helpers used by multiple plugins or helper adapters must live in:
 
 - `src/mrp-vm-sdk/nlp-util/**`
 
@@ -95,7 +95,9 @@ Recommended layout:
 
 - `platform/` shared SDK-level errors and platform helpers
 - `plugins/` plugin-facing factories and adapters
-- `strategies/` orchestration-level strategy entry points
+- `seed-detection/` helper implementations for built-in seed detector plugins
+- `context-normalization/` helper implementations for built-in ingest / KU normalization
+- `response-rendering/` helper implementations for built-in goal solver rendering
 - `synthesis/` answer and payload rendering helpers
 - `nlp-util/` shared natural-language utilities
 - `slc/` shared plugin-facing SLC helpers
@@ -118,11 +120,11 @@ If code is specific to one plugin's private behavior, keep it inside that plugin
 
 Preferred direction:
 
-- plugins, strategies, and core orchestration may
+- plugins, helper adapters, and core orchestration may
   import stable SDK helpers from
   `src/mrp-vm-sdk/**` when the SDK is the declared
   owner of that reusable logic
-- strategies inside the SDK may import from
+- helper implementations inside the SDK may import from
   `nlp-util/**` and `slc/**`
 - interpreter-owned semantics stay inside
   `src/core/interpreter/**`

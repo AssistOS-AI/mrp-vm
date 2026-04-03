@@ -6,7 +6,8 @@
   "knowledgeUnitsFile": "plugin.kus.md",
   "description": "Lightweight LLM-backed extraction of problem seeds and session knowledge units in one pass.",
   "costClass": "moderate",
-  "modeId": "llm-assisted",
+  "seedBundleGeneratorId": "llm-assisted",
+  "contextNormalizerId": "llm-assisted",
   "modelRole": "seed-fast",
   "ingestModelRole": "kb-ingest",
   "plannerHints": {

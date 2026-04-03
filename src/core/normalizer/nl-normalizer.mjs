@@ -13,32 +13,31 @@ function stripCodeFences(text) {
 }
 
 export class NLNormalizer {
-  constructor(modeRegistry) {
-    this.modeRegistry = modeRegistry;
+  constructor() {
     this.validator = new CNLValidator();
     this.parser = new CNLParser();
   }
 
-  async toIntentCNL(rawNL, history, systemPrompt, mode, requestedModel = null, extraInput = {}) {
+  async toIntentCNL(rawNL, history, systemPrompt, seedBundleGenerator, requestedModel = null, extraInput = {}) {
     if (rawNL.length > MAX_NORMALIZER_INPUT_CHARS) {
       throw new MRPError('NORMALIZER_INPUT_TOO_LARGE', MOD, `Input exceeds ${MAX_NORMALIZER_INPUT_CHARS} characters`);
     }
     return this._normalizeWithRetry(
-      (input) => mode.normalizeIntent(input),
+      (input) => seedBundleGenerator.normalizeIntent(input),
       { rawNL, history, systemPrompt, requestedModel, ...extraInput },
       r => r.intentCNL,
       md => this.validator.validateIntentCNL(md),
       'NORMALIZER_FAILED', 'NORMALIZER_VALIDATION_FAILED',
-      mode
+      seedBundleGenerator
     );
   }
 
-  async toSessionContextCNL(rawNL, systemPrompt, mode, requestedModel = null, extraInput = {}) {
+  async toSessionContextCNL(rawNL, systemPrompt, seedBundleGenerator, requestedModel = null, extraInput = {}) {
     if (rawNL.length > MAX_NORMALIZER_INPUT_CHARS) {
       throw new MRPError('NORMALIZER_INPUT_TOO_LARGE', MOD, `Input exceeds ${MAX_NORMALIZER_INPUT_CHARS} characters`);
     }
     return this._normalizeWithRetry(
-      (input) => mode.extractSessionContext(input),
+      (input) => seedBundleGenerator.extractSessionContext(input),
       { rawNL, systemPrompt, requestedModel, ...extraInput },
       r => r.contextCNL,
       md => {
@@ -46,16 +45,16 @@ export class NLNormalizer {
         return this.validator.validateContextCNL(md);
       },
       'SESSION_CONTEXT_FAILED', 'SESSION_CONTEXT_VALIDATION_FAILED',
-      mode
+      seedBundleGenerator
     );
   }
 
-  async toContextCNL(chunkText, provenance, mode, requestedModel = null, extraInput = {}) {
+  async toContextCNL(chunkText, provenance, contextNormalizer, requestedModel = null, extraInput = {}) {
     if (chunkText.length > MAX_NORMALIZER_INPUT_CHARS) {
       throw new MRPError('NORMALIZER_INPUT_TOO_LARGE', MOD, `Input exceeds ${MAX_NORMALIZER_INPUT_CHARS} characters`);
     }
     return this._normalizeWithRetry(
-      (input) => mode.normalizePersistentContext(input),
+      (input) => contextNormalizer.normalizePersistentContext(input),
       { chunkText, provenance, requestedModel, ...extraInput },
       r => r.contextCNL,
       md => {
@@ -63,7 +62,7 @@ export class NLNormalizer {
         return this.validator.validateContextCNL(md);
       },
       'KB_CONTEXT_FAILED', 'KB_CONTEXT_VALIDATION_FAILED',
-      mode
+      contextNormalizer
     );
   }
 
@@ -85,14 +84,14 @@ export class NLNormalizer {
     return parts.join(' ') || cnl;
   }
 
-  async toSeedBundleCNL(rawNL, history, systemPrompt, mode, requestedModel = null, extraInput = {}) {
+  async toSeedBundleCNL(rawNL, history, systemPrompt, seedBundleGenerator, requestedModel = null, extraInput = {}) {
     if (rawNL.length > MAX_NORMALIZER_INPUT_CHARS) {
       throw new MRPError('NORMALIZER_INPUT_TOO_LARGE', MOD, `Input exceeds ${MAX_NORMALIZER_INPUT_CHARS} characters`);
     }
     return this._normalizeSeedBundleWithRetry(
-      input => mode.detectSeedBundle(input),
+      input => seedBundleGenerator.detectSeedBundle(input),
       { rawNL, history, systemPrompt, requestedModel, ...extraInput },
-      mode
+      seedBundleGenerator
     );
   }
 

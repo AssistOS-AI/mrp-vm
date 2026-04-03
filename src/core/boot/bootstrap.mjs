@@ -9,9 +9,18 @@ import { TypedPluginRegistry } from '../../plugins/runtime/typed-registry.mjs';
 import { LLMRoleSettingsStore } from '../../plugins/runtime/llm-role-settings.mjs';
 import { PlannerStatsStore } from '../../plugins/runtime/planner-stats.mjs';
 import { loadBuiltInPlugins } from '../../plugins/runtime/builtin-loader.mjs';
-import { ModeRegistry } from '../../mrp-vm-sdk/modes/registry.mjs';
-import { LLMAssistedMode } from '../../mrp-vm-sdk/modes/llm-assisted-mode.mjs';
-import { RuleBasedSOPMode } from '../../mrp-vm-sdk/modes/rule-based-sop-mode.mjs';
+import {
+  LLMAssistedSeedBundleGenerator,
+  RuleBasedSOPSeedBundleGenerator
+} from '../../mrp-vm-sdk/seed-detection/builtin-helpers.mjs';
+import {
+  LLMAssistedContextNormalizer,
+  RuleBasedSOPContextNormalizer
+} from '../../mrp-vm-sdk/context-normalization/builtin-helpers.mjs';
+import {
+  LLMAssistedResponseRenderer,
+  RuleBasedSOPResponseRenderer
+} from '../../mrp-vm-sdk/response-rendering/builtin-helpers.mjs';
 import { IntentDecomposer } from '../../mrp-vm-sdk/nlp-util/intent-decomposer.mjs';
 import { AnswerSynthesizer } from '../../mrp-vm-sdk/synthesis/answer-synthesizer.mjs';
 import { LLMBridge } from '../llm/bridge.mjs';
@@ -34,7 +43,9 @@ export async function boot() {
   const kbConfig = loadConfig('kb');
   const conversationConfig = loadConfig('conversation');
 
-  const modeRegistry = new ModeRegistry();
+  const seedBundleGenerators = new Map();
+  const contextNormalizers = new Map();
+  const responseRenderers = new Map();
 
   let llmBridge = null;
   if (strategiesConfig.enabledModes.includes('llm-assisted')) {
@@ -44,10 +55,14 @@ export async function boot() {
     if (!llmBridge.agent) {
       logger.warn(MOD, 'AchillesAgentLib not available — llm-assisted mode registered but LLM calls will fail at request time');
     }
-    modeRegistry.register(new LLMAssistedMode(llmBridge));
+    seedBundleGenerators.set('llm-assisted', new LLMAssistedSeedBundleGenerator(llmBridge));
+    contextNormalizers.set('llm-assisted', new LLMAssistedContextNormalizer(llmBridge));
+    responseRenderers.set('llm-assisted', new LLMAssistedResponseRenderer(llmBridge));
   }
   if (strategiesConfig.enabledModes.includes('symbolic-only')) {
-    modeRegistry.register(new RuleBasedSOPMode());
+    seedBundleGenerators.set('symbolic-only', new RuleBasedSOPSeedBundleGenerator());
+    contextNormalizers.set('symbolic-only', new RuleBasedSOPContextNormalizer());
+    responseRenderers.set('symbolic-only', new RuleBasedSOPResponseRenderer());
   }
 
   const conversationHandler = new ConversationHandler(conversationConfig);
@@ -55,7 +70,7 @@ export async function boot() {
   const pluginManager = new PluginManager(engineConfig);
   await pluginManager.scanWrappers(pluginsConfig.wrappersDir || 'wrappers');
 
-  const normalizer = new NLNormalizer(modeRegistry);
+  const normalizer = new NLNormalizer();
   const ingestor = new SourceIngestor(normalizer, kbConfig);
   const kbRepositoryManager = new KBRepositoryManager(ingestor, retrievalConfig, kbConfig);
   logger.info(MOD, 'Loading Knowledge Base');
@@ -66,14 +81,16 @@ export async function boot() {
 
   const parser = new CNLParser();
   const decomposer = new IntentDecomposer();
-  const synthesizer = new AnswerSynthesizer(modeRegistry, engineConfig);
+  const synthesizer = new AnswerSynthesizer(engineConfig);
   const typedPluginRegistry = new TypedPluginRegistry();
   const llmRoleSettings = new LLMRoleSettingsStore(llmRoleSettingsConfig, llmBridge);
   const plannerStats = new PlannerStatsStore(pluginsConfig);
 
   conversationHandler.attachPluginRegistry(typedPluginRegistry);
   await loadBuiltInPlugins(typedPluginRegistry, pluginsConfig, {
-    modeRegistry,
+    seedBundleGenerators,
+    contextNormalizers,
+    responseRenderers,
     normalizer,
     synthesizer,
     llmBridge,

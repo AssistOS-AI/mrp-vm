@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { CNLValidator, CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
-import { SymbolicOnlyStrategy } from '../../src/mrp-vm-sdk/strategies/symbolic-only.mjs';
+import { RuleBasedSOPMode } from '../../src/mrp-vm-sdk/modes/rule-based-sop-mode.mjs';
 import { KBIndex } from '../../src/core/kb/index.mjs';
 
 describe('KU fields in CNL parser', () => {
@@ -61,7 +61,7 @@ UtilityActs: describe`;
 });
 
 describe('Symbolic ingest produces individual KUs per fact', () => {
-  const strategy = new SymbolicOnlyStrategy();
+  const strategy = new RuleBasedSOPMode();
 
   it('emits separate KUs for sentences with different symbolic facts', async () => {
     const result = await strategy.normalizePersistentContext({

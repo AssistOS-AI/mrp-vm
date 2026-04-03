@@ -1,4 +1,6 @@
-// DS022 — LLM-Assisted Mode
+// Legacy compatibility bundle for the LLM-backed helper set.
+// Active built-in plugin wiring consumes explicit helper adapters from
+// seed-detection/, context-normalization/, and response-rendering/.
 import { LanguageProcessingMode } from './registry.mjs';
 import { buildResponseDocument, extractGroupAnswerBlocks } from '../synthesis/response-document.mjs';
 import { renderResolvedIntentPayloadMarkdown } from '../synthesis/resolved-intent-payload.mjs';

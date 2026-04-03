@@ -6,7 +6,7 @@
   "knowledgeUnitsFile": "plugin.kus.md",
   "description": "Deterministic answer assembly from retrieved evidence using the in-repo lightweight NLP utilities and rule-based SOP synthesis. No LLM cost.",
   "costClass": "cheap",
-  "modeId": "symbolic-only",
+  "responseRendererId": "symbolic-only",
   "plannerHints": {
     "expectedLatencyMs": 25,
     "expectedLLMCalls": 0,

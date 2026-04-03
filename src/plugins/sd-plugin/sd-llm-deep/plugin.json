@@ -6,7 +6,8 @@
   "knowledgeUnitsFile": "plugin.kus.md",
   "description": "Thorough LLM extraction of problem seeds and session knowledge units in one pass for ambiguous or multi-part requests.",
   "costClass": "expensive",
-  "modeId": "llm-assisted",
+  "seedBundleGeneratorId": "llm-assisted",
+  "contextNormalizerId": "llm-assisted",
   "modelRole": "seed-deep",
   "ingestModelRole": "kb-ingest",
   "plannerHints": {

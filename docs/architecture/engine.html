@@ -40,7 +40,7 @@
   <text x="120" y="97" font-weight="600" fill="#475569">2. Prepare Turn</text><text x="370" y="97" fill="#64748b" font-size="11">Session</text>
 
   <rect x="110" y="130" width="300" height="44" rx="6" fill="#86efac" opacity=".25" stroke="#16a34a"/>
-  <text x="120" y="157" font-weight="600" fill="#166534">3. Resolve Strategy</text><text x="370" y="157" fill="#16a34a" font-size="11">Symbolic</text>
+  <text x="120" y="157" font-weight="600" fill="#166534">3. Resolve Helpers</text><text x="370" y="157" fill="#16a34a" font-size="11">SDK helper maps</text>
 
   <rect x="110" y="190" width="300" height="44" rx="6" fill="#93c5fd" opacity=".25" stroke="#2563eb"/>
   <text x="120" y="217" font-weight="600" fill="#1e40af">4. NL → Intent CNL</text><text x="370" y="217" fill="#2563eb" font-size="11">LLM #1</text>
@@ -101,7 +101,7 @@
 <tr><th>#</th><th>Phase</th><th>What Happens</th><th>Module</th><th>LLM?</th><th>Status</th></tr>
 <tr><td>1</td><td>Receive Request</td><td>Server passes <code>{ sessionId?, model?, processingMode?, retrievalProfile?, messages[] }</code></td><td>DS013 Server</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
 <tr><td>2</td><td>Prepare Turn</td><td>Resolve/create session, check expiry, build history, extract current message</td><td>DS019 ConversationHandler</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
-<tr><td>3</td><td>Resolve Strategy</td><td><code>strategyRegistry.resolve()</code> returns the active <code>LanguageProcessingStrategy</code></td><td>DS022 StrategyRegistry</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
+<tr><td>3</td><td>Resolve Helpers</td><td>Built-in manifests resolve explicit seed generators, context normalizers, and response renderers from the SDK helper maps.</td><td>DS022 SDK helpers</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
 <tr><td>4</td><td>NL → Intent CNL</td><td>Normalize current message + history + system prompt into Intent CNL</td><td>DS006 Normalizer</td><td>Yes</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
 <tr><td>5</td><td>Validate Intent CNL</td><td>Structural validation and enum verification of produced Intent CNL</td><td>DS007 Validator</td><td>No</td><td><span class="badge done">IMPLEMENTED</span></td></tr>
 <tr><td>6</td><td>NL → Session Context CNL</td><td>Extract facts, preferences, constraints from current message into Context CNL</td><td>DS006 Normalizer</td><td>Yes</td><td><span class="badge done">IMPLEMENTED</span></td></tr>

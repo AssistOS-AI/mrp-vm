@@ -4,8 +4,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { loadConfig } from '../../src/core/platform/config.mjs';
-import { StrategyRegistry } from '../../src/mrp-vm-sdk/strategies/registry.mjs';
-import { SymbolicOnlyStrategy } from '../../src/mrp-vm-sdk/strategies/symbolic-only.mjs';
+import {
+  RuleBasedSOPSeedBundleGenerator
+} from '../../src/mrp-vm-sdk/seed-detection/builtin-helpers.mjs';
+import {
+  RuleBasedSOPContextNormalizer
+} from '../../src/mrp-vm-sdk/context-normalization/builtin-helpers.mjs';
+import {
+  RuleBasedSOPResponseRenderer
+} from '../../src/mrp-vm-sdk/response-rendering/builtin-helpers.mjs';
 import { TypedPluginRegistry } from '../../src/plugins/runtime/typed-registry.mjs';
 import { PlannerStatsStore } from '../../src/plugins/runtime/planner-stats.mjs';
 import { NLNormalizer } from '../../src/core/normalizer/nl-normalizer.mjs';
@@ -43,18 +50,24 @@ describe('Built-in plugin loader', () => {
     const pluginsConfig = loadConfig('plugins');
     const engineConfig = loadConfig('engine');
 
-    const strategyRegistry = new StrategyRegistry();
+    const seedBundleGenerators = new Map();
+    const contextNormalizers = new Map();
+    const responseRenderers = new Map();
     if (strategiesConfig.enabledModes.includes('symbolic-only')) {
-      strategyRegistry.register(new SymbolicOnlyStrategy());
+      seedBundleGenerators.set('symbolic-only', new RuleBasedSOPSeedBundleGenerator());
+      contextNormalizers.set('symbolic-only', new RuleBasedSOPContextNormalizer());
+      responseRenderers.set('symbolic-only', new RuleBasedSOPResponseRenderer());
     }
 
-    const normalizer = new NLNormalizer(strategyRegistry);
+    const normalizer = new NLNormalizer();
     const typedPluginRegistry = new TypedPluginRegistry();
     const plannerStats = new PlannerStatsStore(pluginsConfig);
-    const synthesizer = new AnswerSynthesizer(strategyRegistry, engineConfig);
+    const synthesizer = new AnswerSynthesizer(engineConfig);
 
     await loadBuiltInPlugins(typedPluginRegistry, pluginsConfig, {
-      strategyRegistry,
+      seedBundleGenerators,
+      contextNormalizers,
+      responseRenderers,
       normalizer,
       synthesizer,
       plannerStats

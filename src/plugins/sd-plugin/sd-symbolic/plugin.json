@@ -6,7 +6,8 @@
   "knowledgeUnitsFile": "plugin.kus.md",
   "description": "Rule-based extraction of problem seeds and session knowledge units using the in-repo lightweight NLP utilities and SOP builders. Fast, deterministic, no LLM cost.",
   "costClass": "cheap",
-  "modeId": "symbolic-only",
+  "seedBundleGeneratorId": "symbolic-only",
+  "contextNormalizerId": "symbolic-only",
   "plannerHints": {
     "expectedLatencyMs": 30,
     "expectedLLMCalls": 0,

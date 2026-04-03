@@ -5,7 +5,7 @@ import { KBIndex } from '../../src/core/kb/index.mjs';
 import { ContextMatcher } from '../../src/plugins/kb-plugin/kb-thinkingdb/retrieval/context-matcher.mjs';
 import { RetrievalStrategyRegistry, BM25LexicalStrategy } from '../../src/plugins/kb-plugin/kb-thinkingdb/retrieval/strategies/registry.mjs';
 import { ThinkingDBSymbolicStrategy } from '../../src/plugins/kb-plugin/kb-thinkingdb/retrieval/strategies/thinkingdb.mjs';
-import { SymbolicOnlyStrategy } from '../../src/mrp-vm-sdk/strategies/symbolic-only.mjs';
+import { RuleBasedSOPMode } from '../../src/mrp-vm-sdk/modes/rule-based-sop-mode.mjs';
 import { CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
 
 const RULES = [
@@ -240,9 +240,9 @@ describe('ContextMatcher with ThinkingDB', () => {
   });
 });
 
-describe('SymbolicOnlyStrategy symbolic fields', () => {
+describe('RuleBasedSOPMode symbolic fields', () => {
   it('emits Subject/Relation/Object for simple persistent facts', async () => {
-    const strategy = new SymbolicOnlyStrategy();
+    const strategy = new RuleBasedSOPMode();
     const { contextCNL } = await strategy.normalizePersistentContext({
       chunkText: 'AchillesIDE uses Ploinky. Ploinky provides sandboxing.',
       provenance: { sourceId: 'src-1', chunkId: 'src-1::chunk-000', chunkIndex: 0 }
@@ -256,7 +256,7 @@ describe('SymbolicOnlyStrategy symbolic fields', () => {
   });
 
   it('keeps all symbolic fact sentences in a chunk instead of truncating after five units', async () => {
-    const strategy = new SymbolicOnlyStrategy();
+    const strategy = new RuleBasedSOPMode();
     const { contextCNL } = await strategy.normalizePersistentContext({
       chunkText: [
         'AchillesIDE uses Ploinky.',
@@ -278,7 +278,7 @@ describe('SymbolicOnlyStrategy symbolic fields', () => {
   });
 
   it('renders explain answers as synthesized prose by default', async () => {
-    const strategy = new SymbolicOnlyStrategy();
+    const strategy = new RuleBasedSOPMode();
     const response = await strategy.synthesizeResponse({
       sessionId: 'sess-1',
       resolvedIntents: [{
@@ -313,7 +313,7 @@ describe('SymbolicOnlyStrategy symbolic fields', () => {
   });
 
   it('renders counterfactual answers as explicit alternative outcomes', async () => {
-    const strategy = new SymbolicOnlyStrategy();
+    const strategy = new RuleBasedSOPMode();
     const response = await strategy.synthesizeResponse({
       sessionId: 'sess-2',
       resolvedIntents: [{

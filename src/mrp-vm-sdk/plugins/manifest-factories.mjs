@@ -1,7 +1,7 @@
 import {
-  ModeSeedDetectorPlugin,
+  SeedDetectorHelperPlugin,
   RetrievalKBPlugin,
-  ModeGoalSolverPlugin,
+  GoalSolverRendererPlugin,
   LLMValidationPlugin
 } from './builtin-adapters.mjs';
 import { ToolBackedGoalSolverPlugin } from './tool-backed-goal-solver.mjs';
@@ -29,22 +29,50 @@ function adapterOptions(manifest = {}) {
   };
 }
 
-export function buildModeSeedDetector(manifest, { modeRegistry, strategyRegistry, normalizer }) {
-  const modeId = manifest.modeId || manifest.strategyId;
-  const mode = modeRegistry?.get?.(modeId) || strategyRegistry?.get?.(modeId);
-  if (!mode) return null;
-  return new ModeSeedDetectorPlugin(manifest.id, mode, normalizer, adapterOptions(manifest));
+export function buildSeedDetectorHelperPlugin(manifest, {
+  seedBundleGenerators,
+  contextNormalizers,
+  modeRegistry,
+  strategyRegistry,
+  normalizer
+}) {
+  const seedBundleGeneratorId = manifest.seedBundleGeneratorId || manifest.modeId || manifest.strategyId;
+  const contextNormalizerId = manifest.contextNormalizerId || manifest.modeId || manifest.strategyId;
+  const seedBundleGenerator =
+    seedBundleGenerators?.get?.(seedBundleGeneratorId) ||
+    modeRegistry?.get?.(seedBundleGeneratorId) ||
+    strategyRegistry?.get?.(seedBundleGeneratorId);
+  const contextNormalizer =
+    contextNormalizers?.get?.(contextNormalizerId) ||
+    modeRegistry?.get?.(contextNormalizerId) ||
+    strategyRegistry?.get?.(contextNormalizerId);
+  if (!seedBundleGenerator || !contextNormalizer) return null;
+  return new SeedDetectorHelperPlugin(
+    manifest.id,
+    seedBundleGenerator,
+    contextNormalizer,
+    normalizer,
+    adapterOptions(manifest)
+  );
 }
 
 export function buildRetrievalKBPlugin(manifest, { retrieval }) {
   return new RetrievalKBPlugin(manifest.id, retrieval, manifest.profileId, adapterOptions(manifest));
 }
 
-export function buildModeGoalSolverPlugin(manifest, { modeRegistry, strategyRegistry, synthesizer }) {
-  const modeId = manifest.modeId || manifest.strategyId;
-  const mode = modeRegistry?.get?.(modeId) || strategyRegistry?.get?.(modeId);
-  if (!mode) return null;
-  return new ModeGoalSolverPlugin(manifest.id, mode, synthesizer, adapterOptions(manifest));
+export function buildGoalSolverRendererPlugin(manifest, {
+  responseRenderers,
+  modeRegistry,
+  strategyRegistry,
+  synthesizer
+}) {
+  const responseRendererId = manifest.responseRendererId || manifest.modeId || manifest.strategyId;
+  const responseRenderer =
+    responseRenderers?.get?.(responseRendererId) ||
+    modeRegistry?.get?.(responseRendererId) ||
+    strategyRegistry?.get?.(responseRendererId);
+  if (!responseRenderer) return null;
+  return new GoalSolverRendererPlugin(manifest.id, responseRenderer, synthesizer, adapterOptions(manifest));
 }
 
 export function buildToolBackedGoalSolverPlugin(manifest, { llmBridge }) {
@@ -61,5 +89,7 @@ export function buildValidationPlugin(manifest, { llmBridge }) {
   return new LLMValidationPlugin(manifest.id, llmBridge, adapterOptions(manifest));
 }
 
-export { buildModeSeedDetector as buildStrategySeedDetector };
-export { buildModeGoalSolverPlugin as buildStrategyGoalSolverPlugin };
+export { buildSeedDetectorHelperPlugin as buildModeSeedDetector };
+export { buildGoalSolverRendererPlugin as buildModeGoalSolverPlugin };
+export { buildSeedDetectorHelperPlugin as buildStrategySeedDetector };
+export { buildGoalSolverRendererPlugin as buildStrategyGoalSolverPlugin };

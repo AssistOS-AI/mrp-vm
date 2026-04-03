@@ -1,4 +1,6 @@
-// DS022 — Processing Modes
+// Legacy compatibility surface for older SDK integrations.
+// Active built-in plugin wiring now resolves explicit helper families
+// (seed detection, context normalization, response rendering) instead.
 import { SDKError } from '../platform/errors.mjs';
 
 // ── Mode Interface ──
