@@ -118,10 +118,10 @@ Each entry includes:
 - `assistantPreview`
 - selected planner/sd/kb/gs plugin IDs
 - `responseDocument`
-- `executionTrace`
+- `executionTrace` (structured as a Directed Acyclic Graph to reflect parallel seed execution and backtracking)
 
 This is the canonical API used by the UI
-Explainability panel and per-response deep links.
+Explainability panel and per-response deep links to correctly render non-linear execution frames.
 
 ## Session Context Endpoint
 

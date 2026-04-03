@@ -97,6 +97,11 @@ Minimum behavior:
 - show request metadata and selected plugin IDs
 - show captured execution trace and response document
   for the selected turn
+- The execution trace MUST be rendered as a Directed
+  Acyclic Graph (DAG) that correctly represents
+  parallel seed executions, subproblem decompositions,
+  and backtracking on failure, rather than a linear
+  execution list.
 - provide per-response deep navigation so each
   assistant answer can jump directly to its matching
   explainability turn

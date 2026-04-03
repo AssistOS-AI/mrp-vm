@@ -43,17 +43,56 @@
 <section class="hero">
   <div class="hero-copy">
     <h1>MRP-VM Documentation</h1>
-    <p>MRP-VM is a thin execution kernel for typed plugins. The VM owns session state, execution frames, request-global budgets, tracing, and the AchillesAgentLib bridge.</p>
-    <p>Everything that looks like "reasoning policy" belongs to plugins: seed extraction, KB indexing, retrieval, solver choice, answer shaping, and validation. The VM glues plugin stages together and remains agnostic to the payload semantics beyond plugin-type boundaries.</p>
-    <p>The default system still speaks natural-language CNL between plugins, but the architecture is intentionally open to more formal IRs for domains such as logic or mathematics without changing the VM's orchestration role.</p>
+    <p>MRP-VM is a plugin-centered recursive interpretation and resolution runtime operating over natural language and heterogeneous knowledge units. It uses a selective Controlled Natural Language (CNL) acting as a control membrane (<strong>SOP Lang Control</strong>).</p>
+    <p>The architecture is pluralistic: it supports parallel epistemic views, overlapping knowledge structures, and execution frames that form a true Directed Acyclic Graph (DAG) for parallel seed execution. Heterogeneous KUs remain rich, but their metadata is strictly controlled for rapid pruning, routing, and backtracking.</p>
+    <p>The system transforms initial problems through recursive interpretive search, deploying multiple interpretation regimes via specialized plugins, utilizing backtracking when a branch fails or becomes implausible.</p>
+    <svg viewBox="0 0 500 200" xmlns="http://www.w3.org/2000/svg" style="width:100%; height:auto; margin-top: 1rem; border-radius: 8px; background: rgba(255,255,255,0.05);">
+        <text x="20" y="30" fill="#f8fafc" font-family="system-ui" font-size="14" font-weight="bold">Pluralistic Architecture &amp; Selective CNL</text>
+        <rect x="20" y="50" width="100" height="40" rx="4" fill="#38bdf8" />
+        <text x="70" y="75" fill="#0f172a" font-family="system-ui" font-size="12" text-anchor="middle" font-weight="bold">Raw Input</text>
+        
+        <path d="M120 70 L150 50" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+        <path d="M120 70 L150 90" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+        
+        <rect x="160" y="30" width="100" height="30" rx="4" fill="#818cf8" />
+        <text x="210" y="50" fill="#fff" font-family="system-ui" font-size="12" text-anchor="middle">Seed 1 (Parallel)</text>
+        
+        <rect x="160" y="75" width="100" height="30" rx="4" fill="#818cf8" />
+        <text x="210" y="95" fill="#fff" font-family="system-ui" font-size="12" text-anchor="middle">Seed 2 (Parallel)</text>
+
+        <rect x="290" y="30" width="180" height="100" rx="4" fill="none" stroke="#f8fafc" stroke-dasharray="4" />
+        <text x="380" y="45" fill="#f8fafc" font-family="system-ui" font-size="10" text-anchor="middle">Recursive Interpretive Search</text>
+
+        <rect x="300" y="55" width="70" height="25" rx="4" fill="#f472b6" />
+        <text x="335" y="72" fill="#fff" font-family="system-ui" font-size="10" text-anchor="middle">Heterogeneous</text>
+        <rect x="300" y="85" width="70" height="25" rx="4" fill="#f472b6" />
+        <text x="335" y="102" fill="#fff" font-family="system-ui" font-size="10" text-anchor="middle">Multi-View</text>
+        
+        <rect x="390" y="55" width="70" height="55" rx="4" fill="#4ade80" />
+        <text x="425" y="75" fill="#0f172a" font-family="system-ui" font-size="10" text-anchor="middle" font-weight="bold">SOP Lang</text>
+        <text x="425" y="90" fill="#0f172a" font-family="system-ui" font-size="10" text-anchor="middle" font-weight="bold">Control</text>
+        <text x="425" y="105" fill="#0f172a" font-family="system-ui" font-size="9" text-anchor="middle">(Membrane)</text>
+
+        <path d="M260 45 L290 60" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+        <path d="M260 90 L290 80" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+        
+        <path d="M380 130 C380 170 170 170 170 115" stroke="#f87171" stroke-width="2" fill="none" stroke-dasharray="4" marker-end="url(#arrow)" />
+        <text x="275" y="165" fill="#f87171" font-family="system-ui" font-size="10" text-anchor="middle">Backtracking on failure</text>
+
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 Z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+    </svg>
   </div>
   <aside class="hero-panel">
     <h2>Responsibility Boundary</h2>
     <div class="hero-list">
-      <div><strong>VM owns:</strong> frames, loops, budgets, session/workspace state, tracing, shared LLM roles.</div>
-      <div><strong>Plugins own:</strong> KB indexing, retrieval policy, decomposition policy, solver heuristics, validation logic.</div>
-      <div><strong>KU routing:</strong> phase-aware KUs can target planner, KB, solver, decomposition, or validation.</div>
-      <div><strong>Default docs:</strong> built-in plugins have explicit DS coverage; plugin-private backends are documented at plugin level, not as VM internals.</div>
+      <div><strong>VM owns:</strong> true DAG frames, parallel seeds, backtracking over interpretations, budgets, tracing, SOP Lang Control parsing.</div>
+      <div><strong>Plugins own:</strong> KB indexing, heterogeneous views, retrieval policy, decomposition policy, validation logic.</div>
+      <div><strong>KU routing:</strong> KU bodies remain heterogeneous, but routing is constrained by SOP Lang Control metadata.</div>
+      <div><strong>Default docs:</strong> <a href="specs/DS031-sop-lang-control.md">DS031</a> documents SOP Lang Control as the selective CNL membrane.</div>
     </div>
   </aside>
 </section>

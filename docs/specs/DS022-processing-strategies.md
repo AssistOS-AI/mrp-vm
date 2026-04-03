@@ -25,12 +25,13 @@ both outputs together.
 
 The plugin detects all distinct problem seeds present
 in the input — every meaningful task or subtask that
-should be tracked separately. Each seed becomes an
-Intent Group in Intent CNL (DS004).
+should be tracked separately. Each seed becomes one
+intent/seed control object in Intent CNL (DS004)
+after SOP interpretation.
 
 Problem seed extraction MAY be fine-grained: if the
 user asks three related questions, each gets its own
-Intent Group.
+intent object.
 
 ### Session Knowledge Extraction (semantically coherent)
 

@@ -39,6 +39,16 @@ A KU may be:
   KUs at a higher abstraction level (a chapter
   summary, a source summary)
 
+The body of a KU may remain heterogeneous and
+unstructured (rich natural language, code, or other
+convenient representations) to preserve semantic
+richness. However, the metadata envelope surrounding
+the KU MUST be strictly normalized using **SOP Lang
+Control** to enable fast plugin refusal, type
+matching, compatibility checks, and symbolic pruning
+without flattening the epistemic richness of the
+knowledge itself.
+
 ## KU Structure
 
 Every KU carries the following fields:
@@ -50,7 +60,7 @@ Every KU carries the following fields:
 
 ### Content
 
-- `title` — short descriptive title (required)
+- `title` — short descriptive title (optional)
 - `role` — pragmatic role from the DS005 enum
 - `topic` — dominant subject
 - `claim` — main assertion (required unless
@@ -63,9 +73,12 @@ Every KU carries the following fields:
 
 ### Symbolic Facts
 
-- `subject` — canonical symbolic subject (optional)
-- `relation` — canonical symbolic relation (optional)
-- `object` — canonical symbolic object (optional)
+- `symbolicSubject` — canonical symbolic subject
+  (optional)
+- `symbolicRelation` — canonical symbolic relation
+  (optional)
+- `symbolicObject` — canonical symbolic object
+  (optional)
 - `confidence` — numeric confidence in `[0, 1]`
   (optional, requires complete symbolic fact block)
 
@@ -202,11 +215,13 @@ indexed by KB plugins (DS023).
 ## Relationship to Context CNL (DS005)
 
 Context CNL remains the serialization format for KUs.
-The `## Context Unit <ID>` heading in CNL corresponds
-to one KU. The CNL fields map directly to KU fields.
+One `ku` constructor plus its `set` and relation
+statements correspond to one KU metadata shell.
+Those SOP statements map directly to KU fields.
 
-DS005 is updated to reference DS030 as the semantic
-model behind the CNL format.
+DS005 defines the field-level control contract and
+DS032 defines how those statements are admitted by
+the core interpreter.
 
 ## Relationship to Intent CNL (DS004)
 
@@ -244,6 +259,8 @@ with a hierarchical, level-aware selection.
 ## Dependencies
 
 - DS005 — CNL serialization format
+- DS031 — SOP Lang Control surface
+- DS032 — SOP interpreter semantics
 - DS008 — KB storage substrate
 - DS018 — ingest produces KU trees
 - DS023 — KB plugins retrieve KUs

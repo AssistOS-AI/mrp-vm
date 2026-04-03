@@ -1,196 +1,120 @@
-# DS004 — Intent CNL (Controlled Natural Language
-# for Intents)
+# DS004 — Intent CNL
 
 ## Purpose
-Defines the controlled natural language format used
-to express user intents after normalization.
+Defines the intent-control profile within SOP Lang
+Control (DS031).
 
-## Description
+Intent CNL is a small SOP Lang Control document that
+describes one or more intent objects admitted by the
+core interpreter (DS032).
 
-Intent CNL is the form into which a raw NL request
-is transformed after normalization. It is structured
-Markdown, easy to read, validate, and process
-symbolically.
+## Intent Object Contract
 
-In the current baseline, Intent CNL is normally
-emitted together with Context CNL from the same
-seed-detection pass. Intent CNL represents problem
-seeds, not contextual facts.
+Each intent is created with:
 
-## Document Structure
-
-A document contains one or more Intent Groups.
-Each group corresponds to a distinct intent.
-
-```markdown
-## Intent Group 1
-Act: compare
-Intent: Compare BM25 and dense retrieval
-  for lexical search.
-Context: CPU-only deployment environment.
-Criterion: Fast response time, low memory.
-Output: Comparative recommendation.
+```text
+@i1 intent <act> "<target>"
 ```
 
-## Fields
+An intent MUST then receive:
 
-| Field     | Required | Description                    |
-|-----------|----------|--------------------------------|
-| Act       | Yes      | Pragmatic act (from enum)      |
-| Intent    | Yes      | The action or question         |
-| Context   | No       | Conditions, constraints        |
-| Criterion | No       | Evaluation criteria            |
-| Evidence  | No       | Observations from input        |
-| Output    | Yes      | Expected result type           |
+```text
+@ix set $i1 output <outputAtom>
+```
+
+Optional refinements:
+
+```text
+@ix set $i1 context "<context text>"
+@ix set $i1 criterion "<criterion text>"
+@ix set $i1 evidence "<evidence text>"
+@ix constrain $i1 <constraintAtomOrQuotedText>
+```
+
+## Field Model
+
+| Semantic field | Required | SOP representation |
+|----------------|----------|-------------------|
+| `Act` | Yes | `intent <act> "<target>"` |
+| `Intent` | Yes | `intent <act> "<target>"` |
+| `Context` | No | `set <intentRef> context ...` |
+| `Criterion` | No | `set <intentRef> criterion ...` |
+| `Evidence` | No | `set <intentRef> evidence ...` |
+| `Output` | Yes | `set <intentRef> output ...` |
+
+The old conceptual fields remain part of the design.
+Only the serialization changed.
 
 ## Act Invariant
 
-`Act` is mandatory in every Intent Group, with no
-exceptions.
-
-- An Intent Group without `Act` is invalid.
-- The Normalizer must always emit `Act`.
-- The Validator must reject any Intent Group that
-  omits `Act`.
-- The Parser must not produce an `IntentGroup`
-  object without `act`.
-- Downstream modules (DS011, DS012, DS003, DS017)
-  may assume `act` is always present after
-  validation.
+Every admitted intent MUST carry a pragmatic act.
+The interpreter MUST reject an intent that omits or
+invalidly encodes its act.
 
 ## Pragmatic Acts (Canonical Enum)
 
-Defined once here, referenced from DS007, DS009,
-DS011, DS012:
-
-- `compare` — comparison between entities
-- `explain` — causal explanation
-- `recommend` — recommendation
-- `diagnose` — diagnosis
-- `implement` — implementation procedure
-- `verify` — constraint verification
-- `define` — definition
-- `evaluate` — evaluation
-- `identify` — naming or locating a specific entity
-- `describe` — describing properties, traits, or
-  settings
+- `compare`
+- `explain`
+- `recommend`
+- `diagnose`
+- `implement`
+- `verify`
+- `define`
+- `evaluate`
+- `identify`
+- `describe`
 
 For yes/no questions or logical deductions, use
-`evaluate`. For "name the character" or "which one"
-questions, use `identify`.
+`evaluate`.
+For "which one" or "name the entity" tasks, use
+`identify`.
 
-The pragmatic act is emitted by the Normalizer
-(DS006) based on LLM semantic understanding.
-The Validator (DS007) only checks enum membership.
+## Canonical Act -> Preferred Roles Mapping
 
-## Canonical Act → Preferred Roles Mapping
+This table guides retrieval preference and ranking.
+It is not itself a validation schema.
 
-Defined once here. All DS files (DS009, DS011,
-DS012) reference this table. Can be externalized
-to `config/pragmatic-mappings.json`.
-
-| Act         | Preferred Context Roles               |
-|-------------|----------------------------------------|
-| compare     | Comparison, Evaluation                 |
-| explain     | Explanation, Diagnostic, Narrative     |
-| recommend   | Comparison, Evaluation, Procedure      |
-| diagnose    | Diagnostic, Explanation                |
-| implement   | Procedure, Constraint                  |
-| verify      | Constraint, Definition                 |
-| define      | Definition, Explanation                |
-| evaluate    | Evaluation, Comparison, Narrative      |
-| identify    | Narrative, Description, Definition     |
-| describe    | Description, Narrative, Explanation    |
-
-This table is a retrieval preference table, not a
-validation schema.
-
-- Missing preferred roles in retrieved evidence is
-  not a validation error.
-- The table guides retrieval weighting and ranking.
-- Unknown Context CNL roles are still invalid and
-  must be rejected by DS007.
+| Act | Preferred Context Roles |
+|------|-------------------------|
+| `compare` | `Comparison`, `Evaluation` |
+| `explain` | `Explanation`, `Diagnostic`, `Narrative` |
+| `recommend` | `Comparison`, `Evaluation`, `Procedure` |
+| `diagnose` | `Diagnostic`, `Explanation` |
+| `implement` | `Procedure`, `Constraint` |
+| `verify` | `Constraint`, `Definition` |
+| `define` | `Definition`, `Explanation` |
+| `evaluate` | `Evaluation`, `Comparison`, `Narrative` |
+| `identify` | `Narrative`, `Description`, `Definition` |
+| `describe` | `Description`, `Narrative`, `Explanation` |
 
 ## Validation Rules
 
-- Heading: `## Intent Group N` with N ascending
-  (starting from 1).
-- Fields Act, Intent, and Output are required.
-- Act must be from the enum above.
-- Allowed fields: Act, Intent, Context, Criterion,
-  Evidence, Output.
-- Unknown fields → validation error.
-- Any example or generated document that omits
-  `Act` must be treated as invalid, not as an
-  alternative abbreviated form.
-
-## Parsing Rules and Edge Cases
-
-### Field:value separator
-- The first `:` on a line separates the field name
-  from the value. Additional `:` in the value are
-  allowed.
-- Valid example: `Context: Deploy on CPU: 4 cores.`
-
-### Continuation lines
-- A line starting with 2+ spaces is a continuation
-  of the preceding field.
-- Example:
-  ```
-  Intent: Compare BM25 and dense retrieval
-    for lexical search in production.
-  ```
-
-### Group separation
-- A blank line between groups is optional but
-  recommended.
-- A new `## Intent Group N` heading always marks
-  a new group.
-
-### Forbidden characters in values
-- `##` at the start of a value line (would be
-  interpreted as a heading).
-- Blank lines inside a field (would be interpreted
-  as a group separator).
+- constructor must be `intent <act> "<target>"`
+- `act` must be from the enum above
+- `output` is required before admission
+- `context`, `criterion`, and `evidence` are optional
+- `constrain` is additive and may appear multiple
+  times
+- one document may contain multiple intent objects
 
 ## Complete Example
 
-```markdown
-## Intent Group 1
-Act: compare
-Intent: Compare BM25 and dense retrieval
-  for lexical search.
-Context: CPU-only deployment environment.
-Criterion: Fast response time, low memory.
-Output: Comparative recommendation.
+```text
+@i1 intent compare "BM25 and dense retrieval for lexical search"
+@i2 set $i1 context "CPU-only deployment environment"
+@i3 set $i1 criterion "Fast response time and low memory"
+@i4 set $i1 output comparative_recommendation
 
-## Intent Group 2
-Act: explain
-Intent: Explain why latency degrades
-  on long documents.
-Context: CPU text-processing pipeline.
-Evidence: Latency increases as document
-  length grows.
-Output: Causal explanation.
+@i5 intent explain "why latency degrades on long documents"
+@i6 set $i5 context "CPU text-processing pipeline"
+@i7 set $i5 evidence "Latency rises as document length grows"
+@i8 set $i5 output causal_explanation
 ```
-
-## Invalid Example
-
-The following is invalid and MUST be rejected:
-
-```markdown
-## Intent Group 1
-Intent: What is the capital of France?
-Output: Short factual answer.
-```
-
-Reason: missing required field `Act`.
 
 ## Related DS Files
 
-- DS006 (Normalizer) — produces Intent CNL,
-  including the Act field.
-- DS007 (Validator) — validates structure and
-  Act enum membership.
-- DS011 (Decomposition) — parses and extracts
-  internal structures from Intent CNL.
+- DS006 — normalizer helpers
+- DS007 — tokenizer/parser/validator contract
+- DS011 — decomposition and shared intent helpers
+- DS031 — language surface
+- DS032 — interpreter semantics

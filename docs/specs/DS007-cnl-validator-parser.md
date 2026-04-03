@@ -1,46 +1,67 @@
-# DS007 — CNL Validator & Parser
+# DS007 — SOP Validator and Parser
 
 ## Purpose
-Validates and parses CNL Markdown documents (both
-Intent CNL and Context CNL). Fully symbolic — does
-not use LLM.
+Defines the deterministic tokenizer, parser, and
+validator for SOP Lang Control documents.
+
+This module is fully symbolic. It MUST NOT use an
+LLM.
+
+DS007 covers:
+
+- tokenization
+- statement parsing
+- command signature validation
+- field validation for `set`
+- document-kind validation for intent/context/mixed
+  control documents
+
+DS032 covers semantic interpretation after parsing.
 
 ## Separate Responsibilities
 
-Three distinct functions, implemented separately:
+The implementation MUST keep these functions
+distinct:
 
-1. **Structural validation** — checks Markdown
-   conformance with CNL rules.
-2. **Parsing** — transforms the validated document
-   into an internal data structure.
-3. **Enum verification** — checks that Act and Role
-   values belong to the canonical enums from DS004
-   and DS005.
+1. lexical tokenization
+2. structural parsing into statements
+3. command and field validation
+4. document-kind validation
 
-Pragmatic act classification is NOT done here.
-The act is emitted by the Normalizer (DS006) and
-only verified by the Validator.
+Semantic admission into typed runtime objects is not
+part of DS007. That belongs to DS032.
 
-Implementation invariant:
-- after successful `validateIntentCNL`, every parsed
-  `IntentGroup` must contain `act`
-- `parseIntentCNL` must never return an `IntentGroup`
-  with missing `act`
-- if parser is called directly on malformed input
-  that omits `Act`, it must fail, not synthesize a
-  default act
-
-## Main Interface
+## Main Interfaces
 
 ```javascript
-class CNLValidator {
-  validateIntentCNL(markdown) → ValidationResult
-  validateContextCNL(markdown) → ValidationResult
+class SOPTokenizer {
+  tokenize(sourceText) -> Token[]
 }
 
-class CNLParser {
-  parseIntentCNL(markdown) → IntentGroup[]
-  parseContextCNL(markdown) → ContextUnit[]
+class SOPParser {
+  parseDocument(sourceText) -> ParsedStatement[]
+}
+
+class SOPValidator {
+  validate(parsedStatements, options) -> ValidationResult
+}
+```
+
+`options.documentKind` MUST support:
+
+- `intent`
+- `context`
+- `mixed`
+
+## ParsedStatement
+
+```javascript
+{
+  id: "@i1",
+  command: "intent",
+  args: unknown[],
+  line: 1,
+  column: 1
 }
 ```
 
@@ -50,154 +71,105 @@ class CNLParser {
 {
   valid: boolean,
   errors: [{
-    code: "MISSING_REQUIRED_FIELD",
-    line: 3,
-    column: 1,
-    field: "Act",
-    message: "Required field 'Act' is missing
-      in Intent Group 1"
+    code: "UNKNOWN_COMMAND",
+    line: 1,
+    column: 5,
+    message: "Unsupported command 'intnt'"
   }]
 }
 ```
 
-Validator error codes:
-- `MISSING_REQUIRED_FIELD`
+## Minimum Error Codes
+
+- `INVALID_STATEMENT_ID`
+- `MALFORMED_LINE`
+- `UNKNOWN_COMMAND`
+- `INVALID_ARGUMENT_KIND`
+- `INVALID_ARGUMENT_COUNT`
+- `DUPLICATE_STATEMENT_ID`
+- `CONSTRUCTOR_REQUIRED_FIRST`
 - `UNKNOWN_FIELD`
-- `INVALID_HEADING_FORMAT`
-- `INVALID_GROUP_NUMBER`
+- `INVALID_FIELD_FOR_OBJECT`
+- `UNRESOLVED_REFERENCE`
+- `MISSING_REQUIRED_FIELD`
 - `INVALID_ACT_VALUE`
 - `INVALID_ROLE_VALUE`
 - `INVALID_RELATION_VALUE`
-- `INVALID_CONFIDENCE_VALUE`
 - `INCOMPLETE_SYMBOLIC_FACT`
 - `CLAIM_AND_PROCEDURE_CONFLICT`
-- `MISSING_CLAIM_FOR_ROLE`
-- `MISSING_PROCEDURE_FOR_ROLE`
-- `MALFORMED_LINE`
-
-## IntentGroup (Internal Structure)
-
-```javascript
-{
-  groupNumber: number,
-  act: string,
-  intent: string,
-  context: string | null,
-  criterion: string | null,
-  evidence: string | null,
-  output: string
-}
-```
-
-`act` is required in this internal structure.
-
-## ContextUnit (Internal Structure)
-
-```javascript
-{
-  id: string,
-  kuType: string | null,
-  title: string | null,
-  sourceId: string,
-  sourceName: string | null,
-  sourceType: string | null,
-  author: string | null,
-  ingestedAt: string | null,
-  knowledgeDate: string | null,
-  chunkId: string,
-  chunkIndex: number | null,
-  unitIndex: number | null,
-  unitType: string | null,
-  textBody: string | null,
-  role: string,
-  topic: string,
-  claim: string | null,
-  condition: string | null,
-  procedure: string | null,
-  subject: string | null,
-  relation: string | null,
-  object: string | null,
-  confidence: number | null,
-  utilityActs: string[],
-  utilityNote: string | null,
-  hash: string | null,
-  parentUnitIds: string[],
-  childUnitIds: string[],
-  derivedFromUnitIds: string[],
-  charStart: number | null,
-  charEnd: number | null,
-  createdAt: string | null,
-  chunkType: string | null,
-  sectionTitle: string | null
-}
-```
-
-## Intent CNL Validation Rules
-
-- Heading: `## Intent Group N` with N ascending
-  starting from 1.
-- Required fields: Act, Intent, Output.
-- Allowed fields: Act, Intent, Context, Criterion,
-  Evidence, Output.
-- Act must be from the DS004 enum.
-- Unknown fields → `UNKNOWN_FIELD`.
-- Continuation lines (2+ space indent) are
-  concatenated to the preceding field.
-- Missing `Act` → `MISSING_REQUIRED_FIELD`.
-- Empty `Act:` value → `INVALID_ACT_VALUE`.
-
-## Context CNL Validation Rules
-
-- Heading: `## Context Unit <ID>`.
-- Required fields: SourceId, ChunkId, Role,
-  Topic.
-- Allowed fields: SourceId, ChunkId, KUType, Title,
-  Role, Topic, Claim, Condition, Procedure, Subject,
-  Relation, Object, Confidence, UtilityActs,
-  UtilityNote, Hash, SourceName, SourceType, Author,
-  IngestedAt, KnowledgeDate, ChunkIndex, UnitIndex,
-  UnitType, TextBody, ParentUnitIds, ChildUnitIds,
-  DerivedFromUnitIds, CharStart, CharEnd, CreatedAt,
-  ChunkType, SectionTitle.
-- Claim required if Role ≠ Procedure.
-- Procedure required if Role = Procedure.
-- Claim and Procedure cannot coexist →
-  `CLAIM_AND_PROCEDURE_CONFLICT`.
-- Role must be from the DS005 enum.
-- UtilityActs, when present, is a CSV of acts from
-  the DS004 enum.
-- If UtilityActs is absent, the parser MUST derive a
-  default list from Role using the canonical mapping:
-  - Comparison -> compare
-  - Explanation -> explain
-  - Procedure -> implement
-  - Definition -> define
-  - Evaluation -> evaluate
-  - Diagnostic -> diagnose
-  - Constraint -> verify
-  - Narrative -> explain, describe
-  - Description -> describe
-- `Subject`, `Relation`, and `Object` are optional
-  as a single block. Partial symbolic facts are
-  rejected with `INCOMPLETE_SYMBOLIC_FACT`.
-- `Relation` must belong to the runtime symbolic
-  relation vocabulary.
-- `Confidence`, when present, must be numeric in
-  `[0, 1]`.
-- Unknown `Role` is a hard validation error
-  (`INVALID_ROLE_VALUE`), not a warning.
-- DS007 does not infer or auto-correct roles.
+- `INVALID_CONFIDENCE_VALUE`
+- `INVALID_STATUS_TRANSITION`
 
 ## Common Parsing Rules
 
-- First `:` on a line separates field from value.
-- Continuation lines: 2+ leading spaces →
-  concatenated to the preceding field with a space.
-- Blank lines separate groups/units.
-- `##` at the start of a value line →
-  `MALFORMED_LINE` error.
+- one statement per logical line
+- first token is the statement id
+- second token is the command
+- remaining tokens are arguments
+- free text must be quoted
+- lists use square brackets
+- references start with `$`
+- blank lines are ignored
+- constructors must appear before statements that
+  reference them
+
+## Command Validation Rules
+
+The validator MUST:
+
+- reject unknown commands
+- reject wrong arity for any constructor or relation
+- validate that `set` uses a legal field for the
+  referenced object kind
+- validate that list-valued fields actually receive
+  lists
+- validate enum atoms against DS004 and DS005 when
+  they are present
+
+## Intent Document Rules
+
+For `documentKind: "intent"`:
+
+- at least one `intent` constructor must exist
+- every intent must have an `output`
+- `act` must be from DS004
+- only intent/seed/subproblem/validation-related
+  commands are allowed unless the document is
+  explicitly mixed
+
+## Context Document Rules
+
+For `documentKind: "context"`:
+
+- at least one `ku` constructor must exist
+- every KU must have `sourceId`, `chunkId`, `role`,
+  and `topic`
+- every KU must have exactly one of `claim` or
+  `procedure`
+- `role` must be from DS005
+- `confidence` is valid only with a complete
+  symbolic triple
+
+## Mixed Document Rules
+
+For `documentKind: "mixed"`:
+
+- any constructor family may appear
+- all object-specific invariants still apply
+
+## Output of Validation
+
+After successful validation:
+
+- the parser output is safe to hand to the
+  interpreter
+- the interpreter may still reject semantic
+  conflicts, but it should not need to re-check
+  lexical syntax or command arity
 
 ## Dependencies
 
-- DS004 (Intent CNL) — act enum, format.
-- DS005 (Context CNL) — role enum, format.
+- DS004 — pragmatic act enum
+- DS005 — KU role enum and KU field semantics
+- DS031 — language surface
+- DS032 — semantic interpreter

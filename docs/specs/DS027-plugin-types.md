@@ -78,13 +78,14 @@ class SeedDetectorPlugin {
 `detectSeeds` produces two outputs with different
 granularity:
 
-- `intentCNL` — fine-grained problem/task seeds.
-  Each distinct task or subtask gets its own Intent
-  Group.
-- `currentTurnContextCNL` — semantically coherent
-  Knowledge Units. Related information is grouped
-  into useful knowledge objects, not fragmented per
-  sentence.
+- `intentCNL` — a SOP Lang Control document for
+  fine-grained problem/task seeds. Each distinct
+  task or subtask gets its own admitted intent/seed
+  object.
+- `currentTurnContextCNL` — a SOP Lang Control
+  document for semantically coherent Knowledge
+  Units. Related information is grouped into useful
+  knowledge objects, not fragmented per sentence.
 
 Those KUs SHOULD classify phase relevance through
 `PhaseScopes` whenever the detector can do so
@@ -103,7 +104,8 @@ plus at most a corrective validation retry.
 
 After a successful `detectSeeds(...)`, the core MUST:
 
-1. parse the returned current-turn KUs
+1. admit the returned current-turn KUs through the
+   SOP interpreter
 2. stage them into the current session's transient
    turn context
 3. notify all enabled `kb-plugin`s before retrieval
@@ -304,7 +306,7 @@ class MRPPlanPlugin {
 structured state to make an intent-aware and
 KB-aware decision. The input SHOULD include:
 
-- parsed intent groups
+- admitted intent objects
 - decomposed intents and context profiles
 - current-turn KUs staged in the session
 - mounted KB identity and session KB metadata

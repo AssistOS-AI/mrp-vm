@@ -50,6 +50,8 @@ languages.
 | DS004 | [DS004-intent-cnl.md](docs/specs/DS004-intent-cnl.md) | Intent CNL schema. |
 | DS005 | [DS005-context-cnl.md](docs/specs/DS005-context-cnl.md) | Context CNL schema. |
 | DS007 | [DS007-cnl-validator-parser.md](docs/specs/DS007-cnl-validator-parser.md) | Validator and parser for the shared CNL formats. |
+| DS031 | [DS031-sop-lang-control.md](docs/specs/DS031-sop-lang-control.md) | SOP Lang Control surface syntax and command catalog. |
+| DS032 | [DS032-sop-interpreter.md](docs/specs/DS032-sop-interpreter.md) | Deterministic SOP interpreter semantics, frame admission, and trace integration. |
 
 ## NL ↔ CNL Normalization
 
@@ -144,6 +146,7 @@ DS002 Core Kernel (frames + loop)
       |      +--> DS018 KU tree extraction
       |
       +--> DS006 / DS007 / DS011 shared helpers
+      +--> DS031 / DS032 control language + interpreter
       +--> DS010 persistence
       +--> DS015 Achilles bridge
       |

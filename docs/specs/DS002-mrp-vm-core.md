@@ -1,98 +1,100 @@
 # DS002 — MRP-VM Core Kernel
 
 ## Purpose
-Defines the lightweight orchestration kernel of the
-VM, including the execution frame stack and the
-standard execution loop.
+Defines the lightweight orchestration kernel of
+MRP-VM:
 
-## Responsibility Boundary
+- session-scoped execution
+- deterministic admission of SOP control documents
+- execution frames
+- bounded parallel seed scheduling
+- backtracking
+- DAG explainability
 
-The core owns only:
+## Core Responsibility Boundary
+
+The core owns:
 
 - request lifecycle
 - session/workspace lifecycle
-- execution frame stack
-- budget enforcement (per-request and per-frame)
+- execution frames
+- request and frame budgets
 - typed plugin resolution
+- deterministic SOP interpretation
+- branch/backtracking orchestration
 - execution tracing
-- shared utility injection
 - commit/rollback semantics
 
-The core does not own retrieval algorithms, indexing
-structures, solver heuristics, or KB sufficiency
-logic. Those remain plugin responsibilities even when
-the core passes shared parsers, LLM settings, or
-execution traces.
+The core does not own:
 
-The core does NOT own concrete retrieval profiles,
-processing modes, or reasoning algorithms.
+- retrieval algorithms
+- KB indexing internals
+- goal-solving heuristics
+- plugin-specific ranking logic
 
-## Implementation Layout
+## Core Directory Boundary
 
-The reference implementation SHOULD keep VM-kernel
-code under `src/core/**`.
+The repository MUST keep the core split explicit:
 
-Typical subfolders:
+```text
+src/core/
+  engine/        # orchestration loop and stage execution
+  interpreter/   # SOP tokenizer/parser/validator/interpreter
+```
 
-- `src/core/boot/**`
-- `src/core/conversation/**`
-- `src/core/engine/**`
-- `src/core/ingest/**`
-- `src/core/intent/**`
-- `src/core/kb/**`
-- `src/core/normalizer/**`
-- `src/core/parser/**`
-
-Compatibility re-exports MAY exist temporarily while
-the tree is being migrated, but the authoritative
-kernel layout is `src/core/**`.
+`src/core/interpreter/**` is the long-term home of
+SOP language semantics. The engine consumes admitted
+objects from that directory rather than re-parsing
+ad hoc text inside stage execution.
 
 ## Standard Execution Loop
 
 Each execution frame MUST run the following loop:
 
-1. **Seed generation** — an `sd-plugin` extracts
-   problem seeds (Intent CNL) and current-turn
-   knowledge (Context CNL / KUs) from the incoming
-   text.
-2. **Session staging** — the core parses the
-   returned KUs, stages them in the current session,
-   and notifies every enabled `kb-plugin` before any
-   retrieval step.
-3. **Plan generation** — `mrp-plan-plugin` builds an
-   execution plan from parsed intents, decomposed
-   intents, current-turn KUs, session state, mounted
-   KB identity, and available plugin metadata. The
-   planner decides whether the request may proceed
-   directly to solver dispatch or whether it first
-   requires strategy guidance, more retrieval, or a
-   child frame.
-4. **Strategy/evidence retrieval** — `kb-plugin`
-   retrieves both task evidence and any
-   procedure/evaluation guidance needed to justify
-   solver selection.
-5. **Goal solving** — `gs-plugin` solves the goal
-   only after the planner has justified direct
-   dispatch or after KB guidance has established an
-   appropriate solving method.
-6. **Result composition** — results are assembled,
-   validated, and committed to the session.
+1. run `sd-plugin` candidates to produce problem
+   seeds and current-turn KUs as SOP Lang Control
+2. admit those control documents through the core
+   interpreter
+3. stage admitted current-turn KUs into the session
+   and notify enabled `kb-plugin`s
+4. build a plan with `mrp-plan-plugin`
+5. create runnable branch candidates for admitted
+   seeds
+6. execute independent runnable seeds in parallel,
+   bounded by frame budget and engine limits
+7. run KB retrieval and goal solving in planner
+   order for each branch
+8. backtrack on weak evidence, plugin failure,
+   validation rejection, or decomposition demand
+9. assemble, validate, and commit the final result
 
-The root frame receives the original user request.
-Child frames receive decomposed sub-tasks.
+## ExecutionFrame
 
-## Execution Frames
+The canonical frame shape is:
 
 ```javascript
 {
   frameId: string,
   parentFrameId: string | null,
+  requestId: string,
   depth: number,
   maxDepth: number,
+  status: "active" | "succeeded" | "failed",
+  seedIds: string[],
+  activeBranchIds: string[],
+  completedBranchIds: string[],
+  failureMemory: Array<{
+    branchId: string,
+    seedId: string,
+    pluginId: string,
+    reason: string,
+    evidenceProfileHash: string | null
+  }>,
   localState: {
-    seeds: IntentGroup[],
-    plan: ExecutionPlan | null,
-    evidence: ResolvedIntent[],
+    intents: object[],
+    currentTurnKUs: object[],
+    retrievedKUs: object[],
+    plan: object | null,
     partialResults: object[]
   },
   budgets: {
@@ -102,52 +104,84 @@ Child frames receive decomposed sub-tasks.
 }
 ```
 
-### Frame Creation
+## Branch Attempt Model
+
+The core schedules and records explicit branch
+attempts:
+
+```javascript
+{
+  branchId: string,
+  frameId: string,
+  intentId: string,
+  seedId: string,
+  pluginId: string,
+  validationId: string | null,
+  status: "queued" | "active" | "succeeded" | "failed",
+  resultId: string | null
+}
+```
+
+A branch is the unit of retry and failure memory.
+The runtime does not backtrack by vaguely
+"trying again". It moves to the next valid branch
+candidate.
+
+## Frame Creation
 
 A child frame is created when:
 
-- The planner explicitly requests decomposition
-  because the solver path is not yet justified.
-- The planner explicitly requests a strategy-guidance
-  frame because the KB or current context may define
-  how the task must be solved.
-- A `gs-plugin` returns `status: "needs-decomposition"`
-  indicating the task is too broad or complex.
-- All goal solver candidates produce only weak
-  `no-context` results and the planner determines
-  decomposition may help.
+- the planner explicitly requests decomposition
+- a goal solver returns `needs-decomposition`
+- direct solving produced only weak `no-context`
+  outcomes and the planner authorizes decomposition
+- strategy guidance must be gathered in a separate
+  bounded frame
 
-### Frame Budget
+Child frames inherit the remaining request budget
+minus already consumed resources.
 
-Child frames inherit the remaining budget from the
-parent frame minus already consumed resources. The
-core enforces `maxDepth` (default: 3) to prevent
+The core MUST enforce `maxDepth` to prevent
 unbounded recursion.
 
-`maxLLMCalls` is request-global across the entire
-frame stack. Child frames are not allowed to spend
-LLM budget that the root frame has already consumed.
+## Parallel Seed Scheduling
 
-### Frame Result Flow
+Seeds are evaluated in parallel only when they are
+independent and runnable.
 
-When a child frame completes:
+A seed is runnable when:
 
-1. Its result (response or partial evidence) is
-   returned to the parent frame.
-2. The parent frame integrates the result into its
-   own `localState.partialResults`.
-3. The parent frame continues its loop from the
-   task resolution phase.
+- it is active
+- its intent is admitted in the current frame
+- any `split_from` dependency has been satisfied
+- failure memory does not rule out the same
+  seed/plugin/evidence tuple
+
+The engine MUST bound concurrency with configuration
+such as `maxParallelSeeds`. Parallelism is not
+unbounded fan-out.
+
+## Backtracking Semantics
+
+Backtracking order is:
+
+1. next plugin candidate within the current stage
+2. next evidence or knowledge view
+3. next decomposition branch
+4. heavier planner or planner-directed fallback
+
+Validation rejection is a retryable branch failure.
+It MUST NOT erase earlier branch records from the
+trace.
+
+If frame depth is exhausted, the frame returns the
+best available weak result or a structured failure
+according to planner policy.
 
 ## Main Interface
 
 ```javascript
 class MRPEngine {
-  constructor(config, pluginRegistry,
-    conversationHandler, parser, decomposer,
-    externalPluginManager, modelSettings,
-    kbIndex, plannerStatsStore)
-
   async processChatTurn(request) -> {
     sessionId,
     responseMarkdown,
@@ -160,71 +194,11 @@ class MRPEngine {
 }
 ```
 
-## Internal Pipeline (Root Frame)
-
-1. Resolve/create session.
-2. Create root execution frame.
-3. Resolve explicit plugin selections, session
-   preferences, the initial seed detector policy,
-   and the planner plugin.
-   If no planner is explicitly pinned by the request,
-   the core MAY rank available planner candidates
-   through the shared planner statistics store.
-4. Build a plugin execution context containing:
-   - parser helpers
-   - decomposer helpers
-   - session/conversation handles
-   - external helper manager
-   - shared model-role settings
-   - logging/budget helpers
-   - current frame reference
-5. Execute the seed-detection stage:
-   - choose an initial `sd-plugin` from explicit
-     request pin, session preference, or default seed
-     routing policy
-   - stop at first valid seed bundle
-6. Parse seed output and derive decomposition/context
-   metadata.
-7. Stage current-turn KUs into the session and notify
-   all enabled `kb-plugin`s.
-8. Invoke one or more `mrp-plan-plugin` candidates
-   until one produces an executable plan from the
-   parsed intents and staged session context.
-9. If the planner returns `decompose: true`, create a
-   child frame before direct solver dispatch.
-10. Execute the KB stage:
-   - try `kb-plugin` candidates in planner order
-   - retrieve both strategy guidance and task
-     evidence at the appropriate abstraction level
-   - stop when the planner's guidance/evidence
-     requirements are satisfied
-11. Execute the goal-solving stage:
-   - try `gs-plugin` candidates in planner order
-   - stop at first grounded answer
-   - if a goal solver returns `needs-decomposition`,
-     the core MUST create a child frame when depth
-     budget allows
-   - keep a weak `no-context` result only as a
-     fallback while heavier solvers remain
-12. Execute validation stage:
-    - if a `val-plugin` is registered and the goal
-      solver produced a successful answer, run
-      validation
-    - if the validator rejects the answer, throw
-      `VALIDATION_REJECTED` so the planner
-      backtracking loop can attempt an alternative
-13. Record planner outcome/trace.
-14. Commit the successful turn, including the plugin
-    IDs actually used.
-
-When a child frame is opened, it MUST run the same
-planning loop on the child-frame state. The parent's
-KB/goal plugin order is only a prior, not a fixed
-order that bypasses child-frame replanning.
-
-## Canonical Stage Outputs
+## Stage Outputs
 
 ### Seed stage
+
+The `sd-plugin` contract remains:
 
 ```javascript
 {
@@ -238,10 +212,9 @@ order that bypasses child-frame replanning.
 }
 ```
 
-The seed stage produces two distinct outputs:
-- `intentCNL` — fine-grained intent/task seeds
-- `currentTurnContextCNL` — semantically coherent
-  Knowledge Units extracted from the input
+`intentCNL` and `currentTurnContextCNL` now carry
+SOP Lang Control documents defined by DS004/DS005,
+not Markdown heading blocks.
 
 ### KB stage
 
@@ -268,150 +241,40 @@ The seed stage produces two distinct outputs:
   responseMarkdown: string,
   responseDocument: object,
   metadata: {
-    llmCalls: 1
+    llmCalls: number
   }
 }
 ```
 
-## Planner Interaction
-
-The planner returns an `ExecutionPlan`:
-
-```javascript
-{
-  plannerPluginId: "planner-default",
-  kbPluginOrder: ["kb-balanced", "kb-thinkingdb"],
-  goalSolverOrder: ["gs-symbolic", "gs-llm-fast"],
-  decompose: false,
-  framePurpose: null,
-  notes: ["guidance-before-direct-dispatch"]
-}
-```
-
-When `decompose` is `true`, the core MUST create a
-child frame before direct solver dispatch.
-
-`framePurpose` MUST distinguish whether the new frame
-exists to:
-
-- gather strategy guidance
-- decompose into narrower sub-problems
-
-The current retryable planner failures include:
-
-- `PLUGIN_STAGE_EXHAUSTED`
-- `PLAN_INSUFFICIENT_EVIDENCE`
-- `VALIDATION_REJECTED`
-
-## Operational Budget
-
-Budgets remain enforced centrally:
-
-- max LLM attempts per request (shared across frames)
-- request timeout (shared across frames)
-- maximum plugin candidates per stage
-- maximum frame depth (default: 3)
-- conservative pre-invocation budget checks using the
-  plugin descriptor's `maxLLMCalls`
-
-If the remaining LLM budget is lower than a plugin's
-declared `maxLLMCalls`, the core MUST skip that
-plugin, record a `skipped-budget` stage outcome, and
-continue with cheaper candidates when available.
-
-## Failure Handling
-
-### Seed detector failure
-
-- One plugin failure is non-fatal if more candidates
-  remain.
-- If all fail, return `PLUGIN_STAGE_EXHAUSTED` with
-  `stage: "seed-detector"`.
-
-### KB plugin failure
-
-- One failure is non-fatal if more candidates remain.
-- If all fail, return `PLUGIN_STAGE_EXHAUSTED` with
-  `stage: "kb"`.
-
-### No evidence
-
-- No evidence is valid only if the goal solver can
-  render deterministic `no-context` output.
-- A `no-context` answer is a weak outcome. The core
-  SHOULD try a heavier planner or open a child frame
-  before committing the weak answer.
-
-### Goal solver failure
-
-- One failure is non-fatal if more candidates remain.
-- `no-context` from one solver is non-fatal if more
-  remain.
-- `needs-decomposition` triggers child frame creation
-  if frame depth budget allows.
-- If all fail, return `PLUGIN_STAGE_EXHAUSTED` with
-  `stage: "goal-solver"`.
-
-### Validation rejection
-
-- If a `val-plugin` returns `rejected`, the core
-  MUST throw `VALIDATION_REJECTED`.
-- This is a retryable error that enters the planner
-  backtracking loop.
-
-### Frame depth exceeded
-
-- If a child frame would exceed `maxDepth`, the core
-  returns `FRAME_DEPTH_EXCEEDED` and the parent frame
-  falls back to the best available weak result.
-
 ## Execution Trace
 
-The kernel trace MUST record:
+The canonical trace MUST be a DAG rather than a flat
+stage list.
 
-- `plannerPluginId` for the final planner
-- `plannerAttempts` in attempted order
-- per-stage `plannerPluginId`, `pluginId`, `status`,
-  `durationMs`, `llmCalls`, `sufficient`, `model`,
-  and `modelRole`
-- `finalStatus`
-- `finalAnswerStatus` with `answered` or `no-context`
-- `frameDepth` and `frameTransitions`
+It MUST record:
 
-## Boot Sequence
+- root frame id
+- frame nodes
+- seed nodes
+- branch nodes
+- plugin execution nodes
+- result/failure nodes
+- edges for parentage, usage, retries, and produced
+  results
+- planner attempts
+- final answer status
 
-1. Validate config.
-2. Initialize shared services.
-3. Initialize the typed plugin registry.
-4. Register built-in plugins.
-5. Scan external wrappers and register them.
-6. Load KB repositories/workspaces.
-7. Initialize planner statistics/settings stores.
-8. Mark readiness.
-
-## Configuration
-
-`config/engine.json`:
-
-```json
-{
-  "maxLLMAttemptsPerRequest": 5,
-  "requestTimeoutMs": 60000,
-  "pluginTimeoutMs": 30000,
-  "maxPluginsPerStage": 4,
-  "maxFrameDepth": 3,
-  "defaultPlannerPlugin": "planner-default",
-  "plannerFallbackOrder": ["planner-default",
-    "planner-depth"],
-  "pluginAllowlist": ["z3-solver"]
-}
-```
+The trace may still include a flat `stages` summary
+for convenience, but the DAG is the canonical
+explainability structure.
 
 ## Dependencies
 
 - DS003 — plugin registry/runtime
 - DS019 — session state
 - DS027 — typed plugin contracts
-- DS028 — shared LLM role settings
+- DS028 — model-role settings
 - DS029 — planner plugins
 - DS030 — Knowledge Unit model
+- DS031 — SOP Lang Control
+- DS032 — SOP interpreter

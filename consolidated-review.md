@@ -1,114 +1,116 @@
-# consolidated-review.md — Consolidated Implementation + Spec Review
+# consolidated-review.md — Remaining Implementation Backlog
 
-Date: 2026-03-31 (updated 2026-04-02)
-Scope: current `src/` implementation and DS001–DS030, with emphasis on the recent ingest / KU / child-frame changes.
+Date: 2026-04-03
+Scope: remaining implementation work required to
+align runtime behavior with the active DS set.
 
-*Note: This checklist is the current authoritative status for remaining work. Completed items are checked and intentionally kept for traceability.*
+This file tracks only open work. Completed work is
+removed rather than retained as history.
 
-## 1. P0 Structural Refactor Program
+## 1. SOP Interpreter in Core
 
-The repository needs a **structure refactor** to match the architectural boundary claimed by the DS set:
-- **VM core** should live under `src/core/**` as a thin execution kernel.
-- Concrete plugins should live under `src/plugins/<plugin-type>/<plugin-id>/**`.
-- Shared code should live under `src/mrp-vm-sdk/**`.
-- Plugin activation should be **config-driven** instead of hard-coded in `src/server/index.mjs`.
+- [ ] Create the `src/core/interpreter/**`
+  subsystem as the canonical home for SOP Lang
+  Control tokenization, parsing, validation,
+  interpretation, and interpreter-specific errors.
+- [ ] Implement deterministic tokenization for SOP
+  statements, references, quoted strings, and lists.
+- [ ] Implement statement parsing with source
+  positions for diagnostics.
+- [ ] Implement command-signature validation for all
+  constructors, `set`, relation commands, and status
+  commands defined in DS031.
+- [ ] Implement field validation for `set`, keyed by
+  object kind, as defined in DS031/DS005.
+- [ ] Implement semantic interpretation that emits
+  typed intent, seed, subproblem, plugin, KU,
+  validation, branch, and result objects.
+- [ ] Implement structured interpreter errors for
+  malformed syntax, duplicate ids, invalid fields,
+  unresolved references, missing required fields,
+  and semantic conflicts.
 
-**Target Layout:**
-```text
-src/
-  core/
-  mrp-vm-sdk/
-  plugins/
-    runtime/
-    sd-plugin/
-    kb-plugin/
-    gs-plugin/
-    mrp-plan-plugin/
-    val-plugin/
-```
+## 2. Migrate Seed and KU Flows to SOP
 
-**Tasks (Open Functional Work):**
-- [x] Implement config-driven built-in plugin catalog loading (`config/plugins.json`).
-- [x] Migrate default plugins into self-describing packages (`index.mjs`, `plugin.json`, `plugin.kus.md`).
-- [x] Ensure `test/evaluation/run.mjs` (eval stability) is stable after the structural shift.
+- [ ] Update `sd-plugin` implementations to emit SOP
+  Lang Control in `intentCNL` and
+  `currentTurnContextCNL`.
+- [ ] Update persistent-context normalization to
+  emit SOP-based KU metadata shells rather than the
+  legacy Markdown block format.
+- [ ] Remove runtime dependence on
+  `parseIntentCNL()` and `parseContextCNL()` from
+  the legacy Markdown parser path once the
+  interpreter is in place.
+- [ ] Align seed-detector prompts, examples, and
+  validation retries with the DS031 command syntax.
 
----
+## 3. Frame Runtime and Branch Scheduling
 
-## 2. Confirmed Specification Issues (Open)
+- [ ] Introduce explicit `ExecutionFrame` and
+  `BranchAttempt` runtime structures matching DS002
+  and DS032.
+- [ ] Materialize branch creation from admitted
+  intent/seed/plugin objects rather than implicit
+  stage-local loops.
+- [ ] Implement bounded parallel execution for
+  independent runnable seeds.
+- [ ] Implement `split_from`-aware seed scheduling so
+  derived seeds respect lineage constraints.
+- [ ] Implement frame-local failure memory keyed by
+  seed, plugin, and evidence profile.
+- [ ] Implement backtracking over plugin candidates,
+  knowledge views, decomposition branches, and
+  validation rejection without collapsing to a
+  linear retry loop.
+- [ ] Route child-frame creation through explicit
+  subproblem and branch records.
 
-These issues leave important contracts ambiguous or internally inconsistent:
+## 4. Execution Trace and Explainability DAG
 
-- [x] **B1. Wrapper plugin visibility is internally consistent:** DS001 / DS003 / DS016 now align wrappers as helper subprocesses, not planner-visible typed stage plugins.
-- [x] **B2. Canonical `Role -> UtilityActs` fallback table is now specified:** DS005/DS007 define the mapping explicitly.
-- [x] **B3. `kb-plugin.onSessionEvent(...)` envelope is specified:** DS027/DS026 now define a discriminated payload contract.
-- [x] **B4. Retrieval `purpose` is explicit in schemas:** DS023 / DS027 / DS012 all carry purpose placement.
-- [x] **B5. Artifact staleness ownership/propagation specified:** DS010/DS023/DS026 now define detection ownership and propagation channel.
+- [ ] Replace the current flat/partial
+  `executionTrace` model with a canonical DAG that
+  records frames, seeds, branches, plugin attempts,
+  results, and failures.
+- [ ] Emit stable ids and typed edges so the UI can
+  render parent/child frame relationships, parallel
+  seed paths, and backtracking.
+- [ ] Update planner outcome recording to consume the
+  DAG trace rather than only flat stage summaries.
+- [ ] Update `GET /sessions/:id/explainability` and
+  related server serialization to expose the DAG
+  trace cleanly.
+- [ ] Update the explainability UI to render the DAG
+  rather than a linear execution list.
 
----
+## 5. Documentation and Surface Alignment
 
-## 3. Undocumented Heuristics & Magic Routing (Open)
+- [ ] Align `docs/index.html` with the active DS
+  story around SOP Lang Control,
+  `src/core/interpreter/**`, recursive frames, and
+  DAG explainability.
+- [ ] Align linked overview pages
+  (`docs/concepts/cnl-formats.html`,
+  `docs/overview/PIPELINE.html`,
+  `docs/overview/ARCH-VM.html`) with DS031 and
+  DS032.
+- [ ] Update any remaining DS documents that still
+  describe seed or KU control payloads as Markdown
+  heading blocks instead of SOP statements.
+- [ ] Update code comments and developer-facing notes
+  that still refer to the legacy sequential
+  Markdown-CNL pipeline.
 
-The following issues represent undocumented heuristics, magic routing, and test-specific hardcoding that MUST be removed or formally documented:
+## 6. Test and Evaluation Coverage
 
-- [x] **L1. Magic Routing removed:** `inferPhaseScopes` now uses explicit/default behavior only.
-- [x] **L2. Test-cheating hardcodes removed:** decomposer no longer injects legacy special tokens.
-- [x] **L3. Confidence-gap pruning removed:** no undocumented gap-threshold pruning remains.
-- [x] **L4. Undocumented focus-phrase lexical boost removed:** retrieval scoring no longer uses that hidden heuristic.
-- [x] **L5. Aggregate extrapolation hacks removed:** `_buildAggregateUnits` and `_expandAggregateKUs` no longer exist in runtime paths.
-
----
-
-## 4. Structured Plugin Communication (Object-based) (Open)
-
-**Requirement:** Plugins MUST NOT communicate via compacted Markdown/text. Communication payloads to plugins must be passed as an explicit **object structure**:
-```javascript
-{
-  prompt: "The current intent or request to be solved...",
-  context: [
-    {
-      title: "Short title of the KU",
-      sourceLink: "Link or reference to bibliographic source",
-      text: "The actual content of the KU"
-    }
-  ]
-}
-```
-
-**Tasks:**
-- [x] Refactor VM-to-Plugin calls (in `engine.mjs` and plugins) to pass this explicit object structure instead of concatenated strings.
-- [x] Ensure all `kb-plugin` implementations return KUs in a format that maps cleanly to this array structure.
-- [x] Audit the codebase to ensure no plugin receives raw concatenated Markdown for processing.
-- [x] Update DS files (e.g., DS003, DS016, DS027) to mandate this object structure for plugin inputs and clarify that Markdown string passing is an anti-pattern.
-- [x] **Verify Wrapper Plugin Adapter:** Wrapper invocation serializes JSON object payloads over `stdin`.
-- [x] **Ensure `mrp-plan-plugin`s Receive Objects:** planners receive structured planner-input objects.
-- [x] **Fully Remove Markdown Interfaces:** runtime plugin communication no longer depends on `resolvedMarkdown`; DS012 now declares `resolvedPayload`.
-
----
-
-## 5. Code Cleanup: Unused, Redundant, and Legacy Code (Open)
-
-**Tasks:**
-- [x] **Legacy Aliases removed:** runtime/API/chat use explicit typed plugin IDs.
-- [x] **Unused Imports removed:** stale imports (`loadConfig`, `bind`, `MRPError`) cleaned where applicable.
-- [x] **Unused Exports removed:** dead exports (`clearConfigCache`, `hasPhaseScope`, `isValidRelation`, `resetTokenizerCache`) removed.
-- [x] **Redundant Aggregate Extrapolation removed:** no `_buildAggregateUnits` / `_expandAggregateKUs` runtime leftovers.
-
----
-
-## 6. SDK vs. Plugin Boundary Violations (Open)
-
-**Issue:** `mrp-vm-sdk` contains highly specific, implementation-heavy logic (like HDC/VSA and KB indexing) that should belong inside individual plugins.
-
-**Tasks:**
-- [x] **Relocate HDC/VSA Logic:** algorithm implementations now live under plugin-owned retrieval modules.
-- [x] **Relocate KB Indexing Logic:** KB indexing/thinkingdb logic moved out of SDK retrieval path into plugin/core ownership.
-- [x] **Audit ContextMatcher & IntentDecomposer:** plugin-specific routing removed from shared SDK path; generic decomposition remains in core.
-- [x] **Update DS Specifications (SDK boundaries):** DS003/DS016/DS027/DS001 now reflect strict SDK boundaries.
-
----
-
-## 7. Explainability & Testing (Open)
-
-- [x] Add session-level **Explainability** view with per-request execution registry.
-- [x] Include per-response jump entry into the exact explainability segment.
-- [x] Restore `npm run eval` and chat behavior confirming it works with the fully refactored payload objects and plugin boundaries.
+- [ ] Add unit tests for SOP tokenization, parsing,
+  validation, and interpretation.
+- [ ] Add fixture coverage for valid and invalid
+  intent documents, KU documents, mixed control
+  documents, and branch/result records.
+- [ ] Add integration coverage for session staging,
+  child-frame creation, backtracking, and bounded
+  parallel seed execution.
+- [ ] Re-run evaluation suites after the migration
+  and update failing fixtures to the SOP syntax
+  where required.
