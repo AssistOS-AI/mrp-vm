@@ -4,9 +4,9 @@
   "name": "Symbolic Goal Solver",
   "version": "1.0.0",
   "knowledgeUnitsFile": "plugin.kus.md",
-  "description": "Deterministic answer assembly from retrieved evidence. No LLM cost. Produces structured answers from KB claims.",
+  "description": "Deterministic answer assembly from retrieved evidence using the in-repo lightweight NLP utilities and rule-based SOP synthesis. No LLM cost.",
   "costClass": "cheap",
-  "strategyId": "symbolic-only",
+  "modeId": "symbolic-only",
   "plannerHints": {
     "expectedLatencyMs": 25,
     "expectedLLMCalls": 0,
@@ -18,4 +18,3 @@
     "confidenceWhenMatched": 0.78
   }
 }
-

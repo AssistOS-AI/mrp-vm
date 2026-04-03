@@ -6,7 +6,7 @@
   "knowledgeUnitsFile": "plugin.kus.md",
   "description": "Thorough LLM synthesis with richer reasoning. Best for complex, nuanced, or multi-faceted answers.",
   "costClass": "expensive",
-  "strategyId": "llm-assisted",
+  "modeId": "llm-assisted",
   "modelRole": "goal-deep",
   "plannerHints": {
     "expectedLatencyMs": 2200,
@@ -19,4 +19,3 @@
     "confidenceWhenMatched": 0.82
   }
 }
-

@@ -515,13 +515,13 @@ base plugin-family taxonomy.
 
 ## Temporary Backlog for DS033 Implementation
 
-- [ ] Add request-level `deliberation_level` input
+- [x] Add request-level `deliberation_level` input
   for the root frame.
-- [ ] Extend frame state with `deliberationPolicy`,
+- [x] Extend frame state with `deliberationPolicy`,
   `candidateSet`, `explorationFrontier`,
   `suspendedSet`, `comparisonState`, and
   `branchFamilies`.
-- [ ] Implement branch-family derivation from
+- [x] Implement branch-family derivation from
   structural signatures.
 - [ ] Teach planner/control logic to keep multiple
   branch families alive when policy requires it.
@@ -531,11 +531,20 @@ base plugin-family taxonomy.
 - [ ] Implement candidate promotion and dominance
   filtering.
 - [ ] Implement comparative frame-closure rules.
-- [ ] Add explainability trace nodes/edges for
+- [x] Add explainability trace nodes/edges for
   candidates, comparisons, and challenges.
 - [ ] Decide whether the reference implementation
   ships with `comparativeDeliberationEnabled`
   defaulting to `false` or `true`.
+
+The current reference implementation now covers the
+request/session/UI surface, frame-state foundation,
+branch-family signatures, interpreter support for
+`policy` / `objective` / `candidate` / `compare` /
+`challenge`, and graph-level explainability nodes.
+What remains open is stronger comparative scheduling,
+multi-candidate dominance filtering, and explicit
+proposal generation for compare/challenge control.
 
 ## Dependencies
 

@@ -1,6 +1,6 @@
 // DS009 — BM25 Index (internal, no external deps)
-import { tokenize } from './tokenizer.mjs';
-import { ACT_TO_ROLES } from '../knowledge/pragmatics.mjs';
+import { tokenize } from '../../../../mrp-vm-sdk/nlp-util/lexical-tokenizer.mjs';
+import { ACT_TO_ROLES } from '../../../../mrp-vm-sdk/knowledge/pragmatics.mjs';
 
 const INDEXED_FIELDS = ['role', 'topic', 'claim', 'condition', 'procedure', 'utilityActs', 'phaseScopes', 'utilityNote'];
 const DEFAULT_WEIGHTS = { topic: 1.5, claim: 1.0, procedure: 1.0, role: 0.5, utilityActs: 0.8, phaseScopes: 0.5, utilityNote: 0.6, condition: 0.6 };

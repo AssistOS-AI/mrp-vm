@@ -1,5 +1,16 @@
-// DS004 canonical enums and mappings
-import { SYMBOLIC_RELATIONS } from './symbolic-facts.mjs';
+export const SYMBOLIC_RELATIONS = [
+  'uses',
+  'provides',
+  'has_capability',
+  'depends_on',
+  'part_of',
+  'instance_of',
+  'relevant_for',
+  'supports',
+  'mentions',
+  'about',
+  'causes'
+];
 
 export const PRAGMATIC_ACTS = [
   'compare', 'explain', 'recommend', 'diagnose',
@@ -42,25 +53,9 @@ const PHASE_SCOPE_ALIASES = {
   'val-plugin': 'val-plugin'
 };
 
-// DS004: Act → Preferred Context Roles
-export const ACT_TO_ROLES = {
-  compare:   ['Comparison', 'Evaluation'],
-  explain:   ['Explanation', 'Diagnostic', 'Narrative'],
-  recommend: ['Comparison', 'Evaluation', 'Procedure'],
-  diagnose:  ['Diagnostic', 'Explanation'],
-  implement: ['Procedure', 'Constraint'],
-  verify:    ['Constraint', 'Definition'],
-  define:    ['Definition', 'Explanation'],
-  evaluate:  ['Evaluation', 'Comparison', 'Narrative'],
-  identify:  ['Narrative', 'Description', 'Definition'],
-  describe:  ['Description', 'Narrative', 'Explanation']
-};
-
-// Intent CNL fields
 export const INTENT_REQUIRED_FIELDS = ['Act', 'Intent', 'Output'];
 export const INTENT_ALLOWED_FIELDS = ['Act', 'Intent', 'Context', 'Criterion', 'Evidence', 'Output'];
 
-// Context CNL fields
 export const CONTEXT_REQUIRED_FIELDS = ['SourceId', 'ChunkId', 'Role', 'Topic'];
 export const CONTEXT_ALLOWED_FIELDS = [
   'SourceId', 'ChunkId', 'KUType', 'Title', 'Role', 'Topic', 'Claim',
@@ -73,8 +68,6 @@ export const CONTEXT_ALLOWED_FIELDS = [
   'DerivedFromUnitIds', 'CharStart', 'CharEnd',
   'CreatedAt', 'ChunkType', 'SectionTitle'
 ];
-
-export { SYMBOLIC_RELATIONS };
 
 export function normalizePhaseScopes(values = []) {
   const normalized = [];
@@ -91,6 +84,5 @@ export function inferPhaseScopes(unit = {}) {
   const explicit = normalizePhaseScopes(unit.phaseScopes || []);
   const scopes = new Set(explicit);
   if (scopes.size === 0) scopes.add('kb-plugin');
-
   return [...scopes];
 }

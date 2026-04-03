@@ -16,6 +16,7 @@ explainability.
   "seed_detector_plugin": "sd-llm-fast",
   "kb_plugin": "kb-balanced",
   "goal_solver_plugin": "gs-llm-fast",
+  "deliberation_level": 2,
   "model": "provider/model-name",
   "messages": [
     { "role": "user", "content": "..." }
@@ -32,6 +33,8 @@ Rules:
   fallback order apply
 - `model` is a generic override only; plugins SHOULD
   prefer DS028 role-based settings
+- `deliberation_level` is optional and initializes the
+  root frame deliberation policy defined by DS033
 - legacy request aliases (`processing_mode`,
   `retrieval_profile`) are not part of active runtime
   contract and must not be required by clients
@@ -60,6 +63,7 @@ Success payload includes:
   "seed_detector_plugin": "sd-symbolic",
   "kb_plugin": "kb-fast",
   "goal_solver_plugin": "gs-symbolic",
+  "deliberation_level": 2,
   "response_document": {},
   "execution_trace": {}
 }
@@ -96,12 +100,13 @@ aliases are removed from active runtime API.
 - `DELETE /sessions/:id`
 - `GET /sessions/:id/explainability`
 
-`POST /sessions` may accept typed plugin selections
-and `kb_id`.
+`POST /sessions` may accept typed plugin selections,
+`kb_id`, and `deliberation_level`.
 
 Session metadata includes selected plugin IDs and
 workspace metadata (dirty state, source/unit counts,
-save timestamp), plus `explainability_turn_count`.
+save timestamp), `deliberation_level`, and
+`explainability_turn_count`.
 
 ## Explainability Endpoint
 
@@ -117,11 +122,31 @@ Each entry includes:
 - `userMessage`
 - `assistantPreview`
 - selected planner/sd/kb/gs plugin IDs
+- selected `deliberationLevel`
 - `responseDocument`
-- `executionTrace` (structured as a Directed Acyclic Graph to reflect parallel seed execution and backtracking)
+- `executionTrace`
 
 This is the canonical API used by the UI
-Explainability panel and per-response deep links to correctly render non-linear execution frames.
+Explainability panel and per-response deep links to
+render non-linear execution frames.
+
+`executionTrace.graph` is the graph-first explainability
+payload defined by DS034.
+
+The API MUST expose enough data to render:
+
+- frame containers
+- frame policy/candidate/comparison/challenge nodes
+- plugin execution boxes
+- directed edges between executions
+- node status and duration badges
+- click-to-inspect input/output details per plugin
+  execution
+
+The API MUST NOT assume that the UI will render the
+raw user message as a large text block before the
+graph. In the graph view, the root user message is
+treated as the input of the first plugin execution.
 
 ## Session Context Endpoint
 
@@ -178,6 +203,7 @@ This is a draft operation until explicit save/fork.
 ## Dependencies
 
 - DS014 — UI
+- DS034 — execution graph explainability
 - DS019 — session state
 - DS026 — repositories/workspaces
 - DS028 — role settings

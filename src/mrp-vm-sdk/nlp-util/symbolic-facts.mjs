@@ -1,4 +1,4 @@
-import { isStopword } from '../vendor/stopwords.mjs';
+import { isStopword } from './stopwords.mjs';
 
 export const SYMBOLIC_RELATIONS = [
   'uses',
@@ -53,8 +53,8 @@ export function tokenizeSymbolText(text) {
   if (!normalized) return [];
   return normalized
     .split(/\s+/)
-    .map(t => t.trim())
-    .filter(t => t && !isStopword(t));
+    .map(token => token.trim())
+    .filter(token => token && !isStopword(token));
 }
 
 export function buildFactKey(subject, relation, object) {

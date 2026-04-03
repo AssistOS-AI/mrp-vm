@@ -118,6 +118,11 @@ similar to:
   plugins: Map<string, PluginDescriptorObject>,
   kus: Map<string, KUControlObject>,
   validations: Map<string, ValidationObject>,
+  policies: Map<string, PolicyObject>,
+  objectives: Map<string, ObjectiveObject>,
+  candidates: Map<string, CandidateObject>,
+  comparisons: Map<string, ComparisonObject>,
+  challenges: Map<string, ChallengeObject>,
   branches: Map<string, BranchAttemptObject>,
   results: Map<string, ResultObject>,
   relationEdges: Array<{
@@ -217,6 +222,22 @@ A validation object is admitted only if it has:
 - `partialAllowed`
 - `preserveConstraints`
 
+### Comparative-control objects
+
+The interpreter also admits the DS033 control family:
+
+- `policy`
+- `objective`
+- `candidate`
+- `compare`
+- `challenge`
+
+These objects may reference runtime frame ids such as
+`$f1` / `$frame-...` through the interpreter's
+external-reference surface. They are admitted as
+typed control objects without requiring the frame to
+be declared inside the same SOP document.
+
 ### Branch objects
 
 A branch object records a single attempt over:
@@ -267,6 +288,13 @@ The core execution model MUST maintain an
   activeBranchIds: string[],
   completedBranchIds: string[],
   failureMemory: object[],
+  deliberationPolicy: object,
+  candidateSet: object[],
+  explorationFrontier: string[],
+  suspendedSet: string[],
+  comparisonState: object,
+  branchFamilies: Record<string, string>,
+  deliberationStatus: string,
   localState: {
     intents: Map<string, IntentObject>,
     currentTurnKUs: Map<string, KUControlObject>,
@@ -333,10 +361,12 @@ flat list of stage logs.
 
 The canonical trace graph SHOULD support:
 
-- node types: `frame`, `seed`, `branch`, `plugin`,
-  `result`, `failure`
+- node types: `frame`, `policy`, `seed`, `branch`,
+  `plugin`, `result`, `candidate`, `comparison`,
+  `challenge`, `failure`
 - edge types: `contains`, `spawned_from`, `uses`,
-  `needs`, `produced`, `failed_as`
+  `needs`, `produced`, `failed_as`, `derived_from`,
+  `compares`, `challenges`
 
 The interpreter MUST emit stable object ids so the
 engine and UI can reference the same branch/frame

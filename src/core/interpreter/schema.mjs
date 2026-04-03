@@ -4,7 +4,7 @@ import {
   PRAGMATIC_ROLES,
   SYMBOLIC_RELATIONS,
   normalizePhaseScopes
-} from '../../mrp-vm-sdk/knowledge/pragmatics.mjs';
+} from './pragmatics.mjs';
 
 export const PLUGIN_TYPES = [
   'sd-plugin',
@@ -21,6 +21,11 @@ export const COMMAND_SIGNATURES = {
   plugin: ['atom', 'atom'],
   ku: ['atom', 'string'],
   validate: ['atom'],
+  policy: ['ref', 'atom', 'atom', 'atom', 'atom', 'atom', 'atom'],
+  objective: ['ref', 'list'],
+  candidate: ['ref', 'ref', 'ref', 'atom'],
+  compare: ['ref', 'list', 'string'],
+  challenge: ['ref', 'ref', 'string', 'atom'],
   branch: ['ref', 'ref', 'ref'],
   result_record: ['atom'],
   set: ['ref', 'atom', 'value'],
@@ -46,6 +51,11 @@ export const CONSTRUCTOR_COMMANDS = new Set([
   'plugin',
   'ku',
   'validate',
+  'policy',
+  'objective',
+  'candidate',
+  'compare',
+  'challenge',
   'branch',
   'result_record'
 ]);
@@ -120,6 +130,11 @@ export const FIELD_ALLOWLIST = {
     'sectionTitle'
   ]),
   validate: new Set(['strength', 'partialAllowed', 'preserveConstraints']),
+  policy: new Set(['validationFloor']),
+  objective: new Set([]),
+  candidate: new Set(['score', 'selected']),
+  compare: new Set(['status', 'summary', 'criterion']),
+  challenge: new Set(['status', 'resolution', 'severity']),
   branch: new Set(['status', 'failureReason']),
   result_record: new Set(['validationStatus', 'preservesConstraints', 'structuralComplete', 'body'])
 };
@@ -142,7 +157,8 @@ export const NUMERIC_FIELDS = new Set([
   'chunkIndex',
   'unitIndex',
   'charStart',
-  'charEnd'
+  'charEnd',
+  'score'
 ]);
 
 export const KU_REQUIRED_FIELDS = ['sourceId', 'chunkId', 'role', 'topic'];
@@ -216,4 +232,3 @@ export function validateEnum(fieldName, value) {
   }
   return null;
 }
-

@@ -3,7 +3,7 @@ import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, rename
 import { join, resolve } from 'node:path';
 import { CNLValidator, CNLParser } from '../parser/cnl-validator-parser.mjs';
 import { logger } from '../platform/logger.mjs';
-import { createSOPBuilder, renderSOPValue, sopRef } from '../../mrp-vm-sdk/control/sop.mjs';
+import { createSOPBuilder, renderSOPValue, sopRef } from '../../mrp-vm-sdk/slc/sop.mjs';
 
 const MOD = 'persistence';
 

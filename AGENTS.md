@@ -97,6 +97,7 @@ languages.
 |----|------|------|
 | DS013 | [DS013-server-api.md](docs/specs/DS013-server-api.md) | API surface for chat, typed plugin selection, plugin catalogs, and settings. |
 | DS014 | [DS014-chat-ui.md](docs/specs/DS014-chat-ui.md) | Static chat UI with plugin selectors and settings page/panel. |
+| DS034 | [DS034-execution-graph-explainability.md](docs/specs/DS034-execution-graph-explainability.md) | Graph-first explainability and observability contract for per-turn execution debugging. |
 | DS028 | [DS028-llm-role-settings.md](docs/specs/DS028-llm-role-settings.md) | Shared role-based LLM settings visible to all plugins. |
 
 ## Conversation

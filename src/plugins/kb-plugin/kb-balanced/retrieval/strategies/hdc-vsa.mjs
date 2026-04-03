@@ -2,7 +2,7 @@
 // Per-field structural matching with weighted fusion
 import { RetrievalStrategy } from './registry.mjs';
 import { randomHV, bind, encodeNgrams, encodeTokens, similarity } from '../hdc.mjs';
-import { tokenize } from '../tokenizer.mjs';
+import { tokenize } from '../../../../../mrp-vm-sdk/nlp-util/lexical-tokenizer.mjs';
 
 // Field weights for final score
 const FIELD_WEIGHTS = { role: 0.20, topic: 0.35, claim: 0.35, acts: 0.10 };

@@ -1,6 +1,5 @@
-// DS011 — Intent Decomposition & Context Profiles
-import { ACT_TO_ROLES } from '../../mrp-vm-sdk/knowledge/pragmatics.mjs';
-import { isStopword } from '../../mrp-vm-sdk/vendor/stopwords.mjs';
+import { ACT_TO_ROLES } from '../knowledge/pragmatics.mjs';
+import { isStopword } from './stopwords.mjs';
 
 const GENERIC_QUERY_TERMS = new Set([
   'single', 'one', 'word', 'whose', 'character', 'someone',
@@ -10,35 +9,32 @@ const GENERIC_QUERY_TERMS = new Set([
 
 export class IntentDecomposer {
   decompose(intentGroups) {
-    return intentGroups.map(g => {
-      if (!g.act) throw new Error(`Intent Group ${g.groupNumber} missing act`);
-      // Extract target: remove first word (act verb) from intent
-      const words = g.intent.split(/\s+/);
+    return intentGroups.map(group => {
+      if (!group.act) throw new Error(`Intent Group ${group.groupNumber} missing act`);
+      const words = group.intent.split(/\s+/);
       const targetWords = words.slice(1);
       const target = targetWords.join(' ').replace(/[.?!]+$/, '');
-      // Extract criteria
-      const criteria = g.criterion ? g.criterion.split(/,\s*/).map(c => c.trim()).filter(Boolean) : [];
-      const evidence = g.evidence ? g.evidence.split(/,\s*/).map(e => e.trim()).filter(Boolean) : [];
+      const criteria = group.criterion ? group.criterion.split(/,\s*/).map(item => item.trim()).filter(Boolean) : [];
+      const evidence = group.evidence ? group.evidence.split(/,\s*/).map(item => item.trim()).filter(Boolean) : [];
       return {
-        groupNumber: g.groupNumber,
-        act: g.act,
-        intent: g.intent,
+        groupNumber: group.groupNumber,
+        act: group.act,
+        intent: group.intent,
         target,
         criteria,
         evidence,
-        explicitContext: g.context || null,
-        outputType: g.output
+        explicitContext: group.context || null,
+        outputType: group.output
       };
     });
   }
 
   deriveContextProfile(decomposed) {
     const neededRoles = ACT_TO_ROLES[decomposed.act] || [];
-    // Extract query terms from target + criteria + explicit context
     const textParts = [decomposed.target, ...decomposed.criteria];
     if (decomposed.explicitContext) textParts.push(decomposed.explicitContext);
     const queryText = textParts.join(' ').trim();
-    const queryTerms = this._deriveQueryTerms(decomposed, textParts);
+    const queryTerms = this._deriveQueryTerms(textParts);
     const focusPhrases = this._extractFocusPhrases(textParts.join(' '));
     const focusTerms = [...new Set(
       focusPhrases
@@ -64,7 +60,7 @@ export class IntentDecomposer {
     };
   }
 
-  _deriveQueryTerms(decomposed, textParts) {
+  _deriveQueryTerms(textParts) {
     return textParts.join(' ')
       .split(/\s+/)
       .map(word => word.replace(/[^\w-]/g, '').toLowerCase())

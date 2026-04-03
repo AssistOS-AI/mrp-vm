@@ -16,6 +16,7 @@
   const seedSelect = $('#seed-select');
   const kbPluginSelect = $('#kb-plugin-select');
   const goalSelect = $('#goal-select');
+  const deliberationSelect = $('#deliberation-select');
   const settingsPanel = $('#settings-panel');
   const settingsToggle = $('#settings-toggle');
   const explainabilityBtn = $('#explainability-btn');
@@ -56,6 +57,7 @@
     localStorage.setItem('mrp_seed', seedSelect.value);
     localStorage.setItem('mrp_kb_plugin', kbPluginSelect.value);
     localStorage.setItem('mrp_goal', goalSelect.value);
+    localStorage.setItem('mrp_deliberation', deliberationSelect.value);
     localStorage.setItem('mrp_kb', kbSelect.value);
   }
 
@@ -64,11 +66,13 @@
     const seed = localStorage.getItem('mrp_seed');
     const kbPlugin = localStorage.getItem('mrp_kb_plugin');
     const goal = localStorage.getItem('mrp_goal');
+    const deliberation = localStorage.getItem('mrp_deliberation');
     const kb = localStorage.getItem('mrp_kb');
     if (planner) plannerSelect.value = planner;
     if (seed) seedSelect.value = seed;
     if (kbPlugin) kbPluginSelect.value = kbPlugin;
     if (goal) goalSelect.value = goal;
+    if (deliberation) deliberationSelect.value = deliberation;
     if (kb && [...kbSelect.options].some(option => option.value === kb)) kbSelect.value = kb;
   }
 
@@ -179,28 +183,38 @@
       plugin: 'Plugin',
       branch: 'Branch',
       result: 'Result',
-      failure: 'Failure'
+      failure: 'Failure',
+      policy: 'Policy',
+      candidate: 'Candidate',
+      comparison: 'Comparison',
+      challenge: 'Challenge'
     };
     return labels[stage] || stage || 'stage';
   }
 
   function statusClass(status) {
     const normalized = String(status || '').toLowerCase();
-    if (normalized === 'success' || normalized === 'accepted' || normalized === 'answered' || normalized === 'succeeded') return 'success';
-    if (normalized === 'insufficient' || normalized === 'no-context' || normalized === 'active') return 'warning';
-    if (normalized === 'skipped-budget' || normalized === 'retry' || normalized === 'queued' || normalized === 'unknown') return 'neutral';
+    if (normalized === 'success' || normalized === 'accepted' || normalized === 'answered' || normalized === 'succeeded' || normalized === 'settled' || normalized === 'strong') return 'success';
+    if (normalized === 'insufficient' || normalized === 'no-context' || normalized === 'active' || normalized === 'exploring' || normalized === 'fallback' || normalized === 'sufficient' || normalized === 'weak') return 'warning';
+    if (normalized === 'skipped-budget' || normalized === 'retry' || normalized === 'queued' || normalized === 'unknown' || normalized === 'configured' || normalized === 'single-shot' || normalized === 'idle') return 'neutral';
     return 'error';
   }
 
   function statusIcon(status) {
     const normalized = String(status || '').toLowerCase();
     if (normalized === 'success' || normalized === 'accepted' || normalized === 'answered' || normalized === 'succeeded') return '✅';
-    if (normalized === 'insufficient') return '⚠️';
+    if (normalized === 'insufficient' || normalized === 'sufficient') return '⚠️';
     if (normalized === 'no-context') return '🔸';
+    if (normalized === 'weak') return '🟠';
+    if (normalized === 'strong') return '💪';
     if (normalized === 'active') return '🟡';
     if (normalized === 'retry') return '🔄';
     if (normalized === 'queued') return '⏳';
     if (normalized === 'skipped-budget') return '⏭️';
+    if (normalized === 'configured' || normalized === 'single-shot' || normalized === 'idle') return '⚙️';
+    if (normalized === 'exploring') return '🧭';
+    if (normalized === 'settled') return '🏁';
+    if (normalized === 'fallback') return '🔎';
     return '❌';
   }
 
@@ -225,7 +239,10 @@
       uses: 'uses',
       produced: 'produces',
       failed_as: 'fails as',
-      needs: 'needs'
+      needs: 'needs',
+      derived_from: 'derived from',
+      compares: 'compares',
+      challenges: 'challenges'
     };
     return labels[type] || type || 'relates to';
   }
@@ -420,28 +437,29 @@
     return { nodes, edges: [], hasCanonicalGraph: false };
   }
 
-  function normalizeNodeIndex(nodes, selectedNodeIndex) {
+  function normalizeNodeIndex(nodes, selectedNodeIndex, preferredId = null) {
     if (!nodes.length) return -1;
-    if (selectedNodeIndex == null || selectedNodeIndex < 0 || selectedNodeIndex >= nodes.length) {
-      return nodes.length - 1;
+    if (selectedNodeIndex != null && selectedNodeIndex >= 0 && selectedNodeIndex < nodes.length) {
+      return selectedNodeIndex;
     }
-    return selectedNodeIndex;
+    if (preferredId) {
+      const preferredIndex = nodes.findIndex(node => node.id === preferredId);
+      if (preferredIndex >= 0) return preferredIndex;
+    }
+    const firstFrame = nodes.findIndex(node => node.type === 'frame');
+    if (firstFrame >= 0) return firstFrame;
+    return 0;
   }
 
-  function renderNodeCard(node, isActive = false) {
-    const active = isActive ? ' active' : '';
-    const subtitleParts = [nodeTypeLabel(node.type)];
-    if (node.type === 'plugin' && node.stage && node.stage !== node.type) subtitleParts.push(stageLabel(node.stage));
-    if (node.type !== 'frame' && node.frameId) subtitleParts.push(node.frameId);
-    const relationText = `${node.incoming?.length || 0} in · ${node.outgoing?.length || 0} out`;
-    return `
-      <button type="button" class="graph-node graph-node-${statusClass(node.status)}${active}" data-node-index="${node.index}">
-        <div class="graph-node-title">${statusIcon(node.status)} <code>${esc(node.title || node.pluginId || node.id)}</code></div>
-        <div class="graph-node-subtitle">${esc(subtitleParts.join(' · '))}</div>
-        <div class="graph-node-status-text">${esc(node.status || 'unknown')}</div>
-        <div class="graph-node-relations">${esc(relationText)}</div>
-      </button>
-    `;
+  function truncateGraphLabel(text, max = 28) {
+    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) return 'node';
+    return normalized.length <= max ? normalized : `${normalized.slice(0, max - 1)}…`;
+  }
+
+  function formatDurationCompact(ms) {
+    if (!Number.isFinite(ms)) return '';
+    return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)} s`;
   }
 
   function renderRelationList(relations = []) {
@@ -452,19 +470,24 @@
   }
 
   function renderGraphNodeDetail(node) {
-    if (!node) return '<div class="explainability-empty">Select a graph node to inspect input/output.</div>';
+    if (!node) return '<div class="explainability-empty">Select a frame or plugin to inspect details.</div>';
     const metaParts = [];
     metaParts.push(`type: ${nodeTypeLabel(node.type)}`);
-    if (node.frameId) metaParts.push(`frame: ${node.frameId}`);
+    if (node.frameId && node.type !== 'frame') metaParts.push(`frame: ${node.frameId}`);
     if (node.depth != null && node.type === 'frame') metaParts.push(`depth: ${node.depth}`);
-    if (node.durationMs != null) metaParts.push(`duration: ${node.durationMs}ms`);
+    if (node.durationMs != null) metaParts.push(`duration: ${formatDurationCompact(node.durationMs)}`);
     if (node.llmCalls != null) metaParts.push(`llm: ${node.llmCalls}`);
     if (node.model) metaParts.push(`model: ${node.model}`);
-    if (node.evidenceCount != null) metaParts.push(`evidence: ${node.evidenceCount}`);
-    if (node.kbPluginId) metaParts.push(`kb-source: ${node.kbPluginId}`);
-    if (node.metadata?.maxDepth != null) metaParts.push(`max-depth: ${node.metadata.maxDepth}`);
+    if (node.kbPluginId) metaParts.push(`kb: ${node.kbPluginId}`);
+    if (node.metadata?.deliberationLevel != null) metaParts.push(`deliberation: L${node.metadata.deliberationLevel}`);
+    if (node.metadata?.closureMode) metaParts.push(`closure: ${node.metadata.closureMode}`);
+    if (node.metadata?.familySignature) metaParts.push(`family: ${node.metadata.familySignature}`);
+    if (node.metadata?.strength) metaParts.push(`strength: ${node.metadata.strength}`);
+    if (node.metadata?.selected != null) metaParts.push(`selected: ${node.metadata.selected ? 'yes' : 'no'}`);
     if (node.metadata?.preservesConstraints) metaParts.push(`constraints: ${node.metadata.preservesConstraints}`);
     if (node.metadata?.structuralComplete) metaParts.push(`structure: ${node.metadata.structuralComplete}`);
+    if (node.metadata?.seedCount != null && node.type === 'frame') metaParts.push(`seeds: ${node.metadata.seedCount}`);
+    if (node.metadata?.candidates != null && node.type === 'frame') metaParts.push(`candidates: ${node.metadata.candidates}`);
 
     const errorText = node.error
       ? `${node.error.code || 'ERROR'}: ${node.error.message || ''}`.trim()
@@ -488,11 +511,11 @@
         <pre>${esc(node.output || node.contextCNL || '(none)')}</pre>
       </div>
       <div class="graph-node-io">
-        <h5>Inbound edges</h5>
+        <h5>Inbound</h5>
         <pre>${esc(renderRelationList(node.incoming))}</pre>
       </div>
       <div class="graph-node-io">
-        <h5>Outbound edges</h5>
+        <h5>Outbound</h5>
         <pre>${esc(renderRelationList(node.outgoing))}</pre>
       </div>
       ${errorText ? `
@@ -503,9 +526,368 @@
     `;
   }
 
-  function renderExplainabilityGraph(trace, selectedNodeIndex) {
-    const { nodes, edges, hasCanonicalGraph } = buildTraceGraphNodes(trace || {});
-    const normalizedIndex = normalizeNodeIndex(nodes, selectedNodeIndex);
+  function buildGraphCanvasModel(trace, nodes, edges) {
+    const nodeById = new Map(nodes.map(node => [node.id, node]));
+    const frames = nodes
+      .filter(node => node.type === 'frame')
+      .sort((left, right) => (left.depth ?? 0) - (right.depth ?? 0) || left.id.localeCompare(right.id));
+    const rootFrameId = trace?.graph?.rootFrameId || frames[0]?.id || null;
+    if (!frames.length) {
+      const pluginNodes = nodes
+        .filter(node => node.type === 'plugin')
+        .sort((left, right) => {
+          const leftOrder = Number.parseInt(String(left.id).split(':').pop() || '0', 10);
+          const rightOrder = Number.parseInt(String(right.id).split(':').pop() || '0', 10);
+          return leftOrder - rightOrder;
+        });
+      const pluginWidth = 196;
+      const pluginHeight = 74;
+      const gap = 42;
+      const margin = 32;
+      return {
+        width: margin * 2 + Math.max(pluginWidth, pluginNodes.length * pluginWidth + Math.max(0, pluginNodes.length - 1) * gap),
+        height: 180,
+        frames: [],
+        plugins: pluginNodes.map((node, index) => ({
+          node,
+          x: margin + index * (pluginWidth + gap),
+          y: 56,
+          width: pluginWidth,
+          height: pluginHeight
+        })),
+        connectors: pluginNodes.slice(1).map((node, index) => {
+          const prev = pluginNodes[index];
+          return {
+            fromX: margin + index * (pluginWidth + gap) + pluginWidth,
+            fromY: 56 + pluginHeight / 2,
+            toX: margin + (index + 1) * (pluginWidth + gap),
+            toY: 56 + pluginHeight / 2,
+            kind: 'sequence'
+          };
+        }),
+        rootFrameId
+      };
+    }
+
+    const pluginsByFrame = new Map(frames.map(frame => [frame.id, []]));
+    const auxNodesByFrame = new Map(frames.map(frame => [frame.id, []]));
+    for (const node of nodes.filter(item => item.type === 'plugin')) {
+      const owner = node.frameId || rootFrameId;
+      if (!pluginsByFrame.has(owner)) pluginsByFrame.set(owner, []);
+      pluginsByFrame.get(owner).push(node);
+    }
+    const auxPriority = ['policy', 'seed', 'branch', 'result', 'candidate', 'comparison', 'challenge', 'failure'];
+    for (const node of nodes) {
+      if (!node.frameId || ['frame', 'plugin'].includes(node.type)) continue;
+      if (!auxNodesByFrame.has(node.frameId)) auxNodesByFrame.set(node.frameId, []);
+      auxNodesByFrame.get(node.frameId).push(node);
+    }
+    for (const entries of pluginsByFrame.values()) {
+      entries.sort((left, right) => {
+        const leftOrder = Number.parseInt(String(left.id).split(':').pop() || '0', 10);
+        const rightOrder = Number.parseInt(String(right.id).split(':').pop() || '0', 10);
+        return leftOrder - rightOrder || String(left.title || left.id).localeCompare(String(right.title || right.id));
+      });
+    }
+    for (const entries of auxNodesByFrame.values()) {
+      entries.sort((left, right) => {
+        const leftRank = auxPriority.indexOf(left.type);
+        const rightRank = auxPriority.indexOf(right.type);
+        return (leftRank < 0 ? auxPriority.length : leftRank) - (rightRank < 0 ? auxPriority.length : rightRank)
+          || String(left.title || left.id).localeCompare(String(right.title || right.id));
+      });
+    }
+
+    const childFramesByParent = new Map(frames.map(frame => [frame.id, []]));
+    for (const edge of edges || []) {
+      if (edge.type !== 'spawned_from') continue;
+      const fromNode = nodeById.get(edge.from);
+      const toNode = nodeById.get(edge.to);
+      if (fromNode?.type !== 'frame' || toNode?.type !== 'frame') continue;
+      if (!childFramesByParent.has(fromNode.id)) childFramesByParent.set(fromNode.id, []);
+      childFramesByParent.get(fromNode.id).push(toNode.id);
+    }
+    for (const childIds of childFramesByParent.values()) {
+      childIds.sort((leftId, rightId) => {
+        const left = nodeById.get(leftId);
+        const right = nodeById.get(rightId);
+        return (left?.depth ?? 0) - (right?.depth ?? 0) || leftId.localeCompare(rightId);
+      });
+    }
+
+    const constants = {
+      frameHeaderHeight: 52,
+      framePaddingX: 24,
+      framePaddingY: 20,
+      pluginWidth: 196,
+      pluginHeight: 74,
+      auxWidth: 168,
+      auxHeight: 58,
+      nodeGap: 38,
+      auxGap: 18,
+      childFrameGap: 28,
+      childFrameIndent: 32,
+      minFrameWidth: 280
+    };
+    const measures = new Map();
+    const shapes = [];
+    const connectors = [];
+
+    const measureFrame = frameId => {
+      if (measures.has(frameId)) return measures.get(frameId);
+      const plugins = pluginsByFrame.get(frameId) || [];
+      const auxNodes = auxNodesByFrame.get(frameId) || [];
+      const childIds = childFramesByParent.get(frameId) || [];
+      const childMeasures = childIds.map(childId => ({ frameId: childId, ...measureFrame(childId) }));
+      const pluginStripWidth = plugins.length
+        ? plugins.length * constants.pluginWidth + Math.max(0, plugins.length - 1) * constants.nodeGap
+        : 0;
+      const auxStripWidth = auxNodes.length
+        ? auxNodes.length * constants.auxWidth + Math.max(0, auxNodes.length - 1) * constants.auxGap
+        : 0;
+      const childWidth = childMeasures.length
+        ? Math.max(...childMeasures.map(child => child.width + constants.childFrameIndent))
+        : 0;
+      const innerWidth = Math.max(constants.minFrameWidth, pluginStripWidth, auxStripWidth, childWidth);
+      let innerHeight = 0;
+      if (plugins.length) innerHeight += constants.pluginHeight + constants.childFrameGap;
+      if (auxNodes.length) innerHeight += constants.auxHeight + constants.childFrameGap;
+      if (childMeasures.length) {
+        innerHeight += childMeasures.reduce((sum, child) => sum + child.height, 0);
+        innerHeight += constants.childFrameGap * Math.max(0, childMeasures.length - 1);
+      }
+      const measure = {
+        width: innerWidth + constants.framePaddingX * 2,
+        height: constants.frameHeaderHeight + constants.framePaddingY * 2 + Math.max(innerHeight, 24)
+      };
+      measures.set(frameId, measure);
+      return measure;
+    };
+
+    const placeFrame = (frameId, x, y) => {
+      const frameNode = nodeById.get(frameId);
+      const measure = measureFrame(frameId);
+      const plugins = pluginsByFrame.get(frameId) || [];
+      const auxNodes = auxNodesByFrame.get(frameId) || [];
+      const childIds = childFramesByParent.get(frameId) || [];
+      shapes.push({
+        kind: 'frame',
+        node: frameNode,
+        x,
+        y,
+        width: measure.width,
+        height: measure.height
+      });
+
+      let cursorY = y + constants.frameHeaderHeight + constants.framePaddingY;
+      let lastPluginShape = null;
+      if (plugins.length) {
+        const stripWidth = plugins.length * constants.pluginWidth + Math.max(0, plugins.length - 1) * constants.nodeGap;
+        let cursorX = x + constants.framePaddingX + Math.max(0, (measure.width - constants.framePaddingX * 2 - stripWidth) / 2);
+        for (const pluginNode of plugins) {
+          const pluginShape = {
+            kind: 'plugin',
+            node: pluginNode,
+            x: cursorX,
+            y: cursorY,
+            width: constants.pluginWidth,
+            height: constants.pluginHeight
+          };
+          shapes.push(pluginShape);
+          if (!lastPluginShape) {
+            connectors.push({
+              fromX: x + measure.width / 2,
+              fromY: y + constants.frameHeaderHeight,
+              toX: pluginShape.x + pluginShape.width / 2,
+              toY: pluginShape.y,
+              kind: 'entry'
+            });
+          } else {
+            connectors.push({
+              fromX: lastPluginShape.x + lastPluginShape.width,
+              fromY: lastPluginShape.y + lastPluginShape.height / 2,
+              toX: pluginShape.x,
+              toY: pluginShape.y + pluginShape.height / 2,
+              kind: 'sequence'
+            });
+          }
+          lastPluginShape = pluginShape;
+          cursorX += constants.pluginWidth + constants.nodeGap;
+        }
+        cursorY += constants.pluginHeight + constants.childFrameGap;
+      }
+
+      if (auxNodes.length) {
+        const stripWidth = auxNodes.length * constants.auxWidth + Math.max(0, auxNodes.length - 1) * constants.auxGap;
+        let cursorX = x + constants.framePaddingX + Math.max(0, (measure.width - constants.framePaddingX * 2 - stripWidth) / 2);
+        for (const auxNode of auxNodes) {
+          shapes.push({
+            kind: 'aux',
+            node: auxNode,
+            x: cursorX,
+            y: cursorY,
+            width: constants.auxWidth,
+            height: constants.auxHeight
+          });
+          cursorX += constants.auxWidth + constants.auxGap;
+        }
+        cursorY += constants.auxHeight + constants.childFrameGap;
+      }
+
+      for (const childId of childIds) {
+        const childMeasure = measureFrame(childId);
+        const childX = x + constants.framePaddingX + constants.childFrameIndent;
+        placeFrame(childId, childX, cursorY);
+        connectors.push({
+          fromX: lastPluginShape
+            ? lastPluginShape.x + lastPluginShape.width / 2
+            : x + measure.width / 2,
+          fromY: lastPluginShape
+            ? lastPluginShape.y + lastPluginShape.height
+            : y + constants.frameHeaderHeight,
+          toX: childX + childMeasure.width / 2,
+          toY: cursorY,
+          kind: 'spawn'
+        });
+        cursorY += childMeasure.height + constants.childFrameGap;
+      }
+    };
+
+    const roots = frames.filter(frame => frame.id === rootFrameId || !frames.some(candidate => (childFramesByParent.get(candidate.id) || []).includes(frame.id)));
+    let canvasY = 24;
+    for (const root of roots) {
+      placeFrame(root.id, 24, canvasY);
+      canvasY += measureFrame(root.id).height + constants.childFrameGap;
+    }
+
+    const visibleShapeById = new Map(
+      shapes
+        .filter(shape => shape?.node?.id)
+        .map(shape => [shape.node.id, shape])
+    );
+    for (const edge of edges || []) {
+      if (!edge?.type || edge.type === 'contains') continue;
+      const fromShape = visibleShapeById.get(edge.from);
+      const toShape = visibleShapeById.get(edge.to);
+      if (!fromShape || !toShape) continue;
+      if (fromShape.kind === 'frame' && toShape.kind === 'frame') continue;
+      connectors.push({
+        fromX: fromShape.kind === 'frame' ? fromShape.x + fromShape.width / 2 : fromShape.x + fromShape.width / 2,
+        fromY: fromShape.kind === 'frame' ? fromShape.y + constants.frameHeaderHeight : fromShape.y + fromShape.height / 2,
+        toX: toShape.kind === 'frame' ? toShape.x + toShape.width / 2 : toShape.x + toShape.width / 2,
+        toY: toShape.kind === 'frame' ? toShape.y : toShape.y + toShape.height / 2,
+        kind: edge.type
+      });
+    }
+
+    return {
+      width: Math.max(...roots.map(root => measureFrame(root.id).width), constants.minFrameWidth) + 64,
+      height: canvasY,
+      frames: shapes.filter(shape => shape.kind === 'frame'),
+      plugins: shapes.filter(shape => shape.kind === 'plugin'),
+      auxNodes: shapes.filter(shape => shape.kind === 'aux'),
+      connectors,
+      rootFrameId
+    };
+  }
+
+  function renderGraphLegend() {
+    const items = [
+      ['success', 'success'],
+      ['warning', 'limited'],
+      ['error', 'failed'],
+      ['neutral', 'idle']
+    ];
+    return `
+      <div class="graph-legend">
+        ${items.map(([tone, label]) => `<span class="graph-legend-item"><span class="graph-legend-swatch graph-tone-${tone}"></span>${esc(label)}</span>`).join('')}
+      </div>
+    `;
+  }
+
+  function renderGraphSvg(trace, nodes, edges, selectedNodeIndex, zoom = 1) {
+    const canvas = buildGraphCanvasModel(trace, nodes, edges);
+    const selectedNode = nodes[selectedNodeIndex] || null;
+    const selectedId = selectedNode?.id || null;
+    const svgParts = [];
+
+    svgParts.push(`
+      <defs>
+        <marker id="graph-arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+          <path d="M 0 0 L 10 5 L 0 10 z" class="graph-arrowhead"></path>
+        </marker>
+      </defs>
+    `);
+
+    for (const connector of canvas.connectors) {
+      const path = connector.kind === 'sequence'
+        ? `M ${connector.fromX} ${connector.fromY} L ${connector.toX} ${connector.toY}`
+        : `M ${connector.fromX} ${connector.fromY} C ${connector.fromX} ${connector.fromY + 24}, ${connector.toX} ${connector.toY - 24}, ${connector.toX} ${connector.toY}`;
+      svgParts.push(`<path class="graph-edge graph-edge-${connector.kind}" d="${path}" marker-end="url(#graph-arrowhead)"></path>`);
+    }
+
+    for (const frame of canvas.frames) {
+      const selected = frame.node.id === selectedId ? ' graph-svg-selected' : '';
+      svgParts.push(`
+        <g class="graph-svg-node graph-svg-frame graph-status-${statusClass(frame.node.status)}${selected}" data-node-index="${frame.node.index}">
+          <rect class="graph-frame-rect" x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}" rx="14" ry="14"></rect>
+          <rect class="graph-frame-header-band" x="${frame.x}" y="${frame.y}" width="${frame.width}" height="52" rx="14" ry="14"></rect>
+          <text class="graph-frame-title-text" x="${frame.x + 18}" y="${frame.y + 24}">${esc(truncateGraphLabel(frame.node.title || frame.node.id, 36))}</text>
+          <text class="graph-frame-meta-text" x="${frame.x + 18}" y="${frame.y + 42}">${esc(`status ${frame.node.status || 'unknown'} · ${nodeTypeLabel(frame.node.type)}`)}</text>
+        </g>
+      `);
+    }
+
+    for (const plugin of canvas.plugins) {
+      const node = plugin.node;
+      const selected = node.id === selectedId ? ' graph-svg-selected' : '';
+      const subtitle = [stageLabel(node.stage), formatDurationCompact(node.durationMs)].filter(Boolean).join(' · ');
+      svgParts.push(`
+        <g class="graph-svg-node graph-svg-plugin graph-status-${statusClass(node.status)}${selected}" data-node-index="${node.index}">
+          <rect class="graph-plugin-rect" x="${plugin.x}" y="${plugin.y}" width="${plugin.width}" height="${plugin.height}" rx="12" ry="12"></rect>
+          <text class="graph-plugin-title-text" x="${plugin.x + 14}" y="${plugin.y + 24}">${esc(truncateGraphLabel(node.title || node.pluginId || node.id, 26))}</text>
+          <text class="graph-plugin-meta-text" x="${plugin.x + 14}" y="${plugin.y + 44}">${esc(subtitle || nodeTypeLabel(node.type))}</text>
+          <text class="graph-plugin-status-text" x="${plugin.x + 14}" y="${plugin.y + 62}">${esc(`${statusIcon(node.status)} ${node.status || 'unknown'}`)}</text>
+        </g>
+      `);
+    }
+
+    for (const aux of canvas.auxNodes || []) {
+      const node = aux.node;
+      const selected = node.id === selectedId ? ' graph-svg-selected' : '';
+      svgParts.push(`
+        <g class="graph-svg-node graph-svg-aux graph-status-${statusClass(node.status)}${selected}" data-node-index="${node.index}">
+          <rect class="graph-aux-rect" x="${aux.x}" y="${aux.y}" width="${aux.width}" height="${aux.height}" rx="10" ry="10"></rect>
+          <text class="graph-aux-title-text" x="${aux.x + 12}" y="${aux.y + 22}">${esc(truncateGraphLabel(node.title || node.label || node.id, 24))}</text>
+          <text class="graph-aux-type-text" x="${aux.x + 12}" y="${aux.y + 40}">${esc(`${nodeTypeLabel(node.type)} · ${node.status || 'unknown'}`)}</text>
+        </g>
+      `);
+    }
+
+    return `
+      <div class="graph-canvas-shell">
+        <div class="explainability-graph-toolbar">
+          <div class="explainability-graph-summary">${esc(`${nodes.length} nodes · ${edges.length} edges · root ${canvas.rootFrameId || 'n/a'} · L${trace?.deliberationLevel ?? 0}`)}</div>
+          ${renderGraphLegend()}
+          <div class="graph-zoom-controls">
+            <button type="button" class="graph-zoom-out" aria-label="Zoom out">−</button>
+            <span class="graph-zoom-readout">${esc(`${Math.round(zoom * 100)}%`)}</span>
+            <button type="button" class="graph-zoom-in" aria-label="Zoom in">+</button>
+            <button type="button" class="graph-zoom-reset" aria-label="Reset zoom">Reset</button>
+          </div>
+        </div>
+        <div class="graph-canvas-scroll">
+          <svg class="graph-canvas" viewBox="0 0 ${canvas.width} ${canvas.height}" style="width:${Math.round(canvas.width * zoom)}px;height:${Math.round(canvas.height * zoom)}px" role="img" aria-label="Execution graph">
+            ${svgParts.join('')}
+          </svg>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderExplainabilityGraph(trace, selectedNodeIndex, zoom = 1) {
+    const { nodes, edges } = buildTraceGraphNodes(trace || {});
+    const normalizedIndex = normalizeNodeIndex(nodes, selectedNodeIndex, trace?.graph?.rootFrameId || null);
     if (!nodes.length) {
       return {
         nodes,
@@ -513,89 +895,12 @@
         html: '<div class="explainability-empty">No execution trace captured.</div>'
       };
     }
-
-    let graphBodyHtml = '';
-    if (hasCanonicalGraph) {
-      const frameNodes = nodes.filter(node => node.type === 'frame');
-      const frameGroups = new Map(frameNodes.map(node => [node.id, { frame: node, nodes: [] }]));
-      const ungrouped = [];
-      for (const node of nodes) {
-        if (node.type === 'frame') continue;
-        const group = node.frameId ? frameGroups.get(node.frameId) : null;
-        if (group) group.nodes.push(node);
-        else ungrouped.push(node);
-      }
-      const laneOrder = ['seed', 'plugin', 'branch', 'result', 'failure'];
-      const renderLane = (type, laneNodes) => {
-        if (!laneNodes.length) return '';
-        return `
-          <div class="graph-lane">
-            <div class="graph-lane-label">${esc(nodeTypeLabel(type))}</div>
-            <div class="graph-lane-nodes">
-              ${laneNodes.map(node => renderNodeCard(node, node.index === normalizedIndex)).join('')}
-            </div>
-          </div>
-        `;
-      };
-      const frameSections = frameNodes.map(frameNode => {
-        const group = frameGroups.get(frameNode.id);
-        const laneHtml = laneOrder
-          .map(type => renderLane(type, group.nodes.filter(node => node.type === type)))
-          .filter(Boolean)
-          .join('');
-        return `
-          <section class="graph-frame">
-            <div class="graph-frame-head">
-              ${renderNodeCard(frameNode, frameNode.index === normalizedIndex)}
-              <div class="graph-frame-meta">
-                depth ${esc(String(frameNode.depth ?? 0))} ·
-                seeds ${esc(String(frameNode.metadata?.seedCount ?? 0))} ·
-                status ${esc(frameNode.status || 'unknown')}
-              </div>
-            </div>
-            <div class="graph-frame-lanes">
-              ${laneHtml || '<div class="graph-lane-empty">No child nodes recorded for this frame.</div>'}
-            </div>
-          </section>
-        `;
-      }).join('');
-      const ungroupedHtml = ungrouped.length
-        ? `
-          <section class="graph-frame graph-frame-ungrouped">
-            <div class="graph-frame-head">
-              <div class="graph-frame-title">Ungrouped nodes</div>
-              <div class="graph-frame-meta">${esc(String(ungrouped.length))} nodes without frame ownership</div>
-            </div>
-            <div class="graph-lane-nodes">
-              ${ungrouped.map(node => renderNodeCard(node, node.index === normalizedIndex)).join('')}
-            </div>
-          </section>
-        `
-        : '';
-      graphBodyHtml = `
-        <div class="explainability-graph-summary">
-          ${esc(`${nodes.length} nodes · ${edges.length} edges · root ${trace?.graph?.rootFrameId || 'n/a'}`)}
-        </div>
-        <div class="explainability-graph-grid">
-          ${frameSections || ''}
-          ${ungroupedHtml}
-        </div>
-      `;
-    } else {
-      const trackHtml = nodes.map((node, index) => {
-        const nodeHtml = renderNodeCard({ ...node, index }, index === normalizedIndex);
-        if (index >= nodes.length - 1) return nodeHtml;
-        return `${nodeHtml}<span class="graph-arrow">→</span>`;
-      }).join('');
-      graphBodyHtml = `<div class="explainability-graph-track">${trackHtml}</div>`;
-    }
-
     return {
       nodes,
       selectedNodeIndex: normalizedIndex,
       html: `
         <div class="explainability-graph-wrap">
-          ${graphBodyHtml}
+          ${renderGraphSvg(trace, nodes, edges, normalizedIndex, zoom)}
           <div class="explainability-node-detail">
             ${renderGraphNodeDetail(nodes[normalizedIndex])}
           </div>
@@ -650,6 +955,7 @@
     let turns = [];
     let selectedIndex = -1;
     let selectedNodeIndex = -1;
+    let graphZoom = 1;
     let loading = true;
     let errorMessage = '';
 
@@ -657,27 +963,65 @@
       if (!turns.length) {
         selectedIndex = -1;
         selectedNodeIndex = -1;
+        graphZoom = 1;
         return;
       }
       const bounded = Math.max(0, Math.min(nextIndex, turns.length - 1));
       selectedIndex = bounded;
       selectedNodeIndex = -1;
+      graphZoom = 1;
     };
 
     const selectByRequestId = (targetRequestId = null) => {
       if (!turns.length) {
         selectedIndex = -1;
         selectedNodeIndex = -1;
+        graphZoom = 1;
         return;
       }
       if (!targetRequestId) {
         selectedIndex = Math.max(0, turns.length - 1);
         selectedNodeIndex = -1;
+        graphZoom = 1;
         return;
       }
       const idx = turns.findIndex(turn => turn.requestId === targetRequestId);
       selectedIndex = idx >= 0 ? idx : Math.max(0, turns.length - 1);
       selectedNodeIndex = -1;
+      graphZoom = 1;
+    };
+
+    const bindGraphCanvasInteractions = () => {
+      const scroller = overlay.querySelector('.graph-canvas-scroll');
+      if (!scroller || scroller.dataset.bound === 'true') return;
+      scroller.dataset.bound = 'true';
+      let dragging = false;
+      let startX = 0;
+      let startY = 0;
+      let originLeft = 0;
+      let originTop = 0;
+
+      scroller.addEventListener('mousedown', event => {
+        dragging = true;
+        startX = event.clientX;
+        startY = event.clientY;
+        originLeft = scroller.scrollLeft;
+        originTop = scroller.scrollTop;
+        scroller.classList.add('dragging');
+      });
+      scroller.addEventListener('mouseleave', () => {
+        dragging = false;
+        scroller.classList.remove('dragging');
+      });
+      scroller.addEventListener('mouseup', () => {
+        dragging = false;
+        scroller.classList.remove('dragging');
+      });
+      scroller.addEventListener('mousemove', event => {
+        if (!dragging) return;
+        scroller.scrollLeft = originLeft - (event.clientX - startX);
+        scroller.scrollTop = originTop - (event.clientY - startY);
+      });
     };
 
     const render = () => {
@@ -708,9 +1052,8 @@
         const statusBadge = selectedTurn.answerStatus
           ? `<span class="status-badge status-${selectedTurn.answerStatus}">${esc(selectedTurn.answerStatus)}</span>`
           : '';
-        const graph = renderExplainabilityGraph(selectedTurn.executionTrace || null, selectedNodeIndex);
+        const graph = renderExplainabilityGraph(selectedTurn.executionTrace || null, selectedNodeIndex, graphZoom);
         selectedNodeIndex = graph.selectedNodeIndex;
-        const outputPreview = selectedTurn.assistantPreview || selectedTurn.error?.message || '(empty)';
         const errorSection = selectedTurn.error
           ? `
             <div class="explainability-detail-section">
@@ -721,34 +1064,26 @@
           : '';
 
         detailHtml = `
-          <div class="explainability-detail-head">
-            <div>
-              <h3>Turn ${selectedTurn.turnIndex || selectedIndex + 1} ${statusBadge}</h3>
+          ${graph.html}
+          <div class="explainability-detail-section explainability-turn-meta-block">
+            <div class="explainability-detail-head">
+              <div>
+                <h3>Turn ${selectedTurn.turnIndex || selectedIndex + 1} ${statusBadge}</h3>
+                <div class="explainability-detail-meta">
+                  ${selectedTurn.requestId ? `request: <code>${esc(selectedTurn.requestId)}</code> · ` : ''}
+                  ${esc(when)}
+                </div>
+              </div>
               <div class="explainability-detail-meta">
-                ${selectedTurn.requestId ? `request: <code>${esc(selectedTurn.requestId)}</code> · ` : ''}
-                ${esc(when)}
+                planner: <code>${esc(selectedTurn.plannerPlugin || 'auto')}</code><br>
+                sd: <code>${esc(selectedTurn.seedDetectorPlugin || 'auto')}</code> ·
+                kb: <code>${esc(selectedTurn.kbPlugin || 'auto')}</code> ·
+                gs: <code>${esc(selectedTurn.goalSolverPlugin || 'auto')}</code><br>
+                deliberation: <code>L${esc(String(selectedTurn.deliberationLevel ?? selectedTurn.executionTrace?.deliberationLevel ?? 0))}</code>
               </div>
             </div>
-            <div class="explainability-detail-meta">
-              planner: <code>${esc(selectedTurn.plannerPlugin || 'auto')}</code><br>
-              sd: <code>${esc(selectedTurn.seedDetectorPlugin || 'auto')}</code> ·
-              kb: <code>${esc(selectedTurn.kbPlugin || 'auto')}</code> ·
-              gs: <code>${esc(selectedTurn.goalSolverPlugin || 'auto')}</code>
-            </div>
-          </div>
-          <div class="explainability-detail-section">
-            <h4>User input</h4>
-            <div class="explainability-detail-msg">${esc(selectedTurn.userMessage || '(empty)')}</div>
-          </div>
-          <div class="explainability-detail-section">
-            <h4>Assistant output</h4>
-            <div class="explainability-detail-msg">${esc(snipText(outputPreview, 600))}</div>
           </div>
           ${errorSection}
-          <div class="explainability-detail-section">
-            <h4>Execution graph</h4>
-            ${graph.html}
-          </div>
         `;
       }
 
@@ -769,6 +1104,7 @@
           </div>
         </div>
       `;
+      bindGraphCanvasInteractions();
     };
 
     const loadTurns = async (force = false) => {
@@ -820,7 +1156,22 @@
         render();
         return;
       }
-      const graphNode = event.target.closest('.graph-node[data-node-index]');
+      if (event.target.closest('.graph-zoom-in')) {
+        graphZoom = Math.min(2.25, Number((graphZoom + 0.15).toFixed(2)));
+        render();
+        return;
+      }
+      if (event.target.closest('.graph-zoom-out')) {
+        graphZoom = Math.max(0.7, Number((graphZoom - 0.15).toFixed(2)));
+        render();
+        return;
+      }
+      if (event.target.closest('.graph-zoom-reset')) {
+        graphZoom = 1;
+        render();
+        return;
+      }
+      const graphNode = event.target.closest('.graph-svg-node[data-node-index]');
       if (graphNode) {
         selectedNodeIndex = Number(graphNode.dataset.nodeIndex);
         render();
@@ -937,6 +1288,9 @@
     workspaceState.sourceCount = meta.workspace_source_count ?? workspaceState.sourceCount ?? 0;
     workspaceState.unitCount = meta.workspace_unit_count ?? workspaceState.unitCount ?? 0;
     workspaceState.lastSavedAt = meta.workspace_last_saved_at || workspaceState.lastSavedAt || null;
+    if (meta.deliberation_level != null) {
+      deliberationSelect.value = String(meta.deliberation_level);
+    }
     if (workspaceState.kbId && [...kbSelect.options].some(option => option.value === workspaceState.kbId)) {
       kbSelect.value = workspaceState.kbId;
     }
@@ -948,6 +1302,7 @@
     if (seedSelect.value) body.seed_detector_plugin = seedSelect.value;
     if (kbPluginSelect.value) body.kb_plugin = kbPluginSelect.value;
     if (goalSelect.value) body.goal_solver_plugin = goalSelect.value;
+    body.deliberation_level = Number.parseInt(deliberationSelect.value || '0', 10) || 0;
   }
 
   function buildSessionCreateBody() {
@@ -1346,6 +1701,7 @@
   seedSelect.addEventListener('change', savePrefs);
   kbPluginSelect.addEventListener('change', savePrefs);
   goalSelect.addEventListener('change', savePrefs);
+  deliberationSelect.addEventListener('change', savePrefs);
   kbSelect.addEventListener('change', savePrefs);
 
   form.addEventListener('submit', async event => {
@@ -1378,6 +1734,7 @@
     localStorage.removeItem('mrp_seed');
     localStorage.removeItem('mrp_kb_plugin');
     localStorage.removeItem('mrp_goal');
+    localStorage.removeItem('mrp_deliberation');
     localStorage.removeItem('mrp_kb');
     loadConfig();
   });

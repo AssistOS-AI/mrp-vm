@@ -3,12 +3,21 @@ import { SDKError } from '../platform/errors.mjs';
 import { buildResponseDocument } from './response-document.mjs';
 
 export class AnswerSynthesizer {
-  constructor(strategyRegistry, config = {}) {
-    this.strategyRegistry = strategyRegistry;
+  constructor(modeRegistry, config = {}) {
+    this.modeRegistry = modeRegistry;
     this.config = config;
   }
 
-  async synthesize(sessionId, resolvedIntents, pluginOutputs, systemPrompt, strategy, requestedModel = null, guidanceUnits = []) {
+  async synthesize(
+    sessionId,
+    resolvedIntents,
+    pluginOutputs,
+    systemPrompt,
+    mode,
+    requestedModel = null,
+    guidanceUnits = [],
+    options = {}
+  ) {
     const hasEvidence = resolvedIntents.some(ri =>
       ri.currentTurnContextUnits.length > 0 || ri.sessionUnits.length > 0 || ri.kbUnits.length > 0
     );
@@ -16,8 +25,14 @@ export class AnswerSynthesizer {
       return this._renderNoContext(sessionId, resolvedIntents, pluginOutputs);
     }
     try {
-      const result = await strategy.synthesizeResponse({
-        sessionId, resolvedIntents, pluginOutputs, systemPrompt, requestedModel, guidanceUnits
+      const result = await mode.synthesizeResponse({
+        sessionId,
+        resolvedIntents,
+        pluginOutputs,
+        systemPrompt,
+        requestedModel,
+        guidanceUnits,
+        ...options
       });
       return {
         status: result.status || 'answered',

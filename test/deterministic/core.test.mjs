@@ -2,12 +2,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CNLValidator, CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
-import { IntentDecomposer } from '../../src/core/intent/decomposer.mjs';
-import { tokenize } from '../../src/core/kb/tokenizer.mjs';
 import { KBIndex } from '../../src/core/kb/index.mjs';
+import { IntentDecomposer } from '../../src/mrp-vm-sdk/nlp-util/intent-decomposer.mjs';
+import { tokenize } from '../../src/mrp-vm-sdk/nlp-util/lexical-tokenizer.mjs';
 import { TypedPluginRegistry } from '../../src/plugins/runtime/typed-registry.mjs';
 import { DefaultPlannerPlugin } from '../../src/plugins/runtime/default-planner-plugin.mjs';
 import { MRPEngine } from '../../src/core/engine/engine.mjs';
+import { ConversationHandler } from '../../src/core/conversation/handler.mjs';
+import { LLMValidationPlugin } from '../../src/mrp-vm-sdk/plugins/builtin-adapters.mjs';
 
 // ── Validator ──
 
@@ -123,6 +125,30 @@ describe('CNLParser', () => {
   it('throws on missing Act in parser', () => {
     const md = '## Intent Group 1\nIntent: X.\nOutput: Y.';
     assert.throws(() => p.parseIntentCNL(md), /missing Act/);
+  });
+
+  it('interprets DS033 comparative SOP control objects with external frame refs', () => {
+    const doc = p.interpretDocument(`
+@i1 intent explain "Explain Aurora"
+@i2 set $i1 output "Short answer"
+@s1 seed $i1 direct explain "Aurora"
+@p1 plugin gs-plugin gs-symbolic
+@b1 branch $i1 $s1 $p1
+@r1 result_record answer
+@b2 result $b1 $r1
+@pol1 policy $f1 2 comparative 4 2 2 sufficient
+@c1 candidate $f1 $b1 $r1 strong
+@cmp1 compare $f1 [$c1] "prefer stronger evidence"
+@ch1 challenge $f1 $c1 "look for counter-evidence" high
+@obj1 objective $f1 [$c1]
+`, { documentKind: 'mixed' });
+
+    assert.equal(doc.policies.get('pol1').frameId, 'f1');
+    assert.equal(doc.policies.get('pol1').level, 2);
+    assert.equal(doc.candidates.get('c1').branchId, 'b1');
+    assert.equal(doc.comparisons.get('cmp1').candidateIds[0], 'c1');
+    assert.equal(doc.challenges.get('ch1').targetId, 'c1');
+    assert.deepStrictEqual(doc.objectives.get('obj1').targetIds, ['c1']);
   });
 });
 
@@ -273,6 +299,99 @@ describe('TypedPluginRegistry', () => {
   });
 });
 
+describe('ConversationHandler turn guidance persistence', () => {
+  it('does not promote turn-local guidance into durable session memory by default', async () => {
+    const handler = new ConversationHandler();
+    const session = {
+      sessionId: 'sess-test',
+      messageLog: [],
+      sessionContextUnits: [],
+      sessionIndex: new KBIndex(),
+      pendingTurnContextUnits: [],
+      pendingTurnIndex: new KBIndex(),
+      workspace: { dirty: false },
+      explainabilityLog: [],
+      preferredDeliberationLevel: 0,
+      lastActivityAt: null,
+      expiresAt: null
+    };
+
+    await handler.commitSuccessfulTurn(
+      session,
+      'Explain Alpha. Answer with one word.',
+      'Alpha',
+      [
+        {
+          id: 'fact-1',
+          hash: 'fact-1',
+          role: 'Explanation',
+          topic: 'Alpha',
+          claim: 'Alpha uses Beta.',
+          phaseScopes: ['kb-plugin'],
+          utilityActs: ['explain']
+        },
+        {
+          id: 'guide-1',
+          hash: 'guide-1',
+          role: 'Constraint',
+          topic: 'Output style',
+          claim: 'Answer with one word.',
+          phaseScopes: ['gs-plugin'],
+          utilityActs: ['recommend']
+        }
+      ],
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    );
+
+    assert.deepEqual(session.sessionContextUnits.map(unit => unit.id), ['fact-1']);
+  });
+
+  it('keeps guidance when the user explicitly makes it session-wide', async () => {
+    const handler = new ConversationHandler();
+    const session = {
+      sessionId: 'sess-test',
+      messageLog: [],
+      sessionContextUnits: [],
+      sessionIndex: new KBIndex(),
+      pendingTurnContextUnits: [],
+      pendingTurnIndex: new KBIndex(),
+      workspace: { dirty: false },
+      explainabilityLog: [],
+      preferredDeliberationLevel: 0,
+      lastActivityAt: null,
+      expiresAt: null
+    };
+
+    await handler.commitSuccessfulTurn(
+      session,
+      'From now on, for the rest of this session, answer with one word.',
+      'Alpha',
+      [{
+        id: 'guide-1',
+        hash: 'guide-1',
+        role: 'Constraint',
+        topic: 'Output style',
+        claim: 'Answer with one word.',
+        phaseScopes: ['gs-plugin'],
+        utilityActs: ['recommend']
+      }],
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    );
+
+    assert.deepEqual(session.sessionContextUnits.map(unit => unit.id), ['guide-1']);
+  });
+});
+
 describe('DefaultPlannerPlugin', () => {
   it('uses depth cues to prefer heavier plugins first', async () => {
     const planner = new DefaultPlannerPlugin(null, { rank: ids => ids }, {});
@@ -355,7 +474,353 @@ describe('DefaultPlannerPlugin', () => {
   });
 });
 
+describe('LLMValidationPlugin', () => {
+  it('auto-accepts terse boolean answers for explicit concise-output questions', async () => {
+    let llmCalls = 0;
+    const plugin = new LLMValidationPlugin('val-llm', {
+      async call() {
+        llmCalls += 1;
+        return '{"verdict":"rejected","reason":"should not be called"}';
+      }
+    });
+
+    const result = await plugin.validate({
+      originalMessage: 'Was Aura-City useful? One word only.',
+      responseMarkdown: 'Yes',
+      resolvedIntents: []
+    }, {
+      modelSettings: {
+        resolveModel() {
+          return 'test-model';
+        }
+      }
+    });
+
+    assert.equal(result.verdict, 'accepted');
+    assert.equal(result.metadata.llmCalls, 0);
+    assert.equal(llmCalls, 0);
+  });
+});
+
 describe('MRPEngine', () => {
+  it('initializes root frame deliberation policy from the request', async () => {
+    const planner = {
+      getDescriptor() {
+        return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+      },
+      async buildPlan() {
+        return {
+          plannerPluginId: 'planner-default',
+          kbPluginOrder: ['kb-fast'],
+          goalSolverOrder: ['gs-symbolic'],
+          notes: []
+        };
+      },
+      async recordOutcome() {}
+    };
+    const registry = {
+      listByType(type) {
+        if (type === 'mrp-plan-plugin') return [{ id: 'planner-default' }];
+        if (type === 'val-plugin') return [];
+        return [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin' && id === 'planner-default') return planner;
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              return {
+                status: 'success',
+                intentCNL: '@i1 intent explain "Explain Aurora"\n@i2 set $i1 output "Short answer"\n@s1 seed $i1 direct explain "Aurora"',
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve() {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: [{
+                  intentRef: 1,
+                  intentGroup: { groupNumber: 1, act: 'explain', intent: 'Explain Aurora', output: 'Short answer' },
+                  decomposed: { groupNumber: 1, act: 'explain', intent: 'Explain Aurora', outputType: 'Short answer' },
+                  currentTurnContextUnits: [],
+                  sessionUnits: [],
+                  kbUnits: [],
+                  retrievalTrace: {}
+                }],
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-symbolic', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              return {
+                status: 'success',
+                responseMarkdown: '# Aurora',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    let committedTrace = null;
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: 'planner-default',
+            preferredSeedDetectorPlugin: 'sd-symbolic',
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-symbolic',
+            preferredDeliberationLevel: 0
+          },
+          currentMessage: 'Explain Aurora.',
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedDeliberationLevel: 2,
+          explicitPlannerPlugin: null,
+          explicitSeedDetectorPlugin: null,
+          explicitKBPlugin: null,
+          explicitGoalSolverPlugin: null,
+          requestedPlannerPlugin: 'planner-default',
+          requestedSeedDetectorPlugin: 'sd-symbolic',
+          requestedKBPlugin: 'kb-fast',
+          requestedGoalSolverPlugin: 'gs-symbolic'
+        };
+      },
+      async commitSuccessfulTurn(_session, _message, _answer, _units, _model, _planner, _sd, _kb, _gs, executionRecord) {
+        committedTrace = executionRecord.executionTrace;
+      }
+    };
+    const engine = new MRPEngine(
+      {
+        maxLLMAttemptsPerRequest: 2,
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        defaultPlannerPlugin: 'planner-default',
+        defaultSeedDetectorPlugin: 'sd-symbolic'
+      },
+      registry,
+      conversationHandler,
+      new CNLParser(),
+      new IntentDecomposer(),
+      { selectPlugin() { return null; } },
+      {},
+      null
+    );
+
+    const result = await engine.processChatTurn({
+      deliberation_level: 2,
+      messages: [{ role: 'user', content: 'Explain Aurora.' }]
+    });
+
+    assert.equal(result.executionTrace.deliberationLevel, 2);
+    assert.equal(result.executionTrace.deliberationPolicy.level, 2);
+    assert.equal(result.executionTrace.frames[0].deliberationPolicy.level, 2);
+    assert.equal(result.executionTrace.frames[0].candidateSet.length, 1);
+    assert.equal(committedTrace.frames[0].deliberationPolicy.level, 2);
+  });
+
+  it('keeps multiple successful candidates alive for comparative closure at deliberation level 2', async () => {
+    const planner = {
+      getDescriptor() {
+        return { id: 'planner-default', type: 'mrp-plan-plugin', modelRoles: [], maxLLMCalls: 0 };
+      },
+      async buildPlan() {
+        return {
+          plannerPluginId: 'planner-default',
+          kbPluginOrder: ['kb-fast'],
+          goalSolverOrder: ['gs-fast', 'gs-deep'],
+          notes: []
+        };
+      },
+      async recordOutcome() {}
+    };
+    const registry = {
+      listByType(type) {
+        if (type === 'mrp-plan-plugin') return [{ id: 'planner-default' }];
+        if (type === 'val-plugin') return [];
+        return [];
+      },
+      get(type, id) {
+        if (type === 'mrp-plan-plugin' && id === 'planner-default') return planner;
+        if (type === 'sd-plugin' && id === 'sd-symbolic') {
+          return {
+            getDescriptor() {
+              return { id: 'sd-symbolic', type: 'sd-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async detectSeeds() {
+              return {
+                status: 'success',
+                intentCNL: [
+                  '@i1 intent explain "Explain Aurora\'s role"',
+                  '@i2 intent explain "Explain why the shield held"',
+                  '@i3 set $i1 output "Structured answer"',
+                  '@i4 set $i2 output "Structured answer"',
+                  '@s1 seed $i1 direct explain "Aurora role"',
+                  '@s2 seed $i2 direct explain "Shield stability"'
+                ].join('\n'),
+                currentTurnContextCNL: '',
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'kb-plugin' && id === 'kb-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'kb-fast', type: 'kb-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async retrieve() {
+              return {
+                status: 'success',
+                sufficient: true,
+                resolvedIntents: [
+                  {
+                    intentRef: 1,
+                    intentGroup: { groupNumber: 1, act: 'explain', intent: 'Explain Aurora\'s role', output: 'Structured answer' },
+                    decomposed: { groupNumber: 1, act: 'explain', intent: 'Explain Aurora\'s role', outputType: 'Structured answer' },
+                    currentTurnContextUnits: [],
+                    sessionUnits: [],
+                    kbUnits: [],
+                    retrievalTrace: {}
+                  },
+                  {
+                    intentRef: 2,
+                    intentGroup: { groupNumber: 2, act: 'explain', intent: 'Explain why the shield held', output: 'Structured answer' },
+                    decomposed: { groupNumber: 2, act: 'explain', intent: 'Explain why the shield held', outputType: 'Structured answer' },
+                    currentTurnContextUnits: [],
+                    sessionUnits: [],
+                    kbUnits: [],
+                    retrievalTrace: {}
+                  }
+                ],
+                retrievalTrace: {},
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-fast') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-fast', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              return {
+                status: 'success',
+                responseMarkdown: 'Aurora helped keep the shield active.',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        if (type === 'gs-plugin' && id === 'gs-deep') {
+          return {
+            getDescriptor() {
+              return { id: 'gs-deep', type: 'gs-plugin', maxLLMCalls: 0, modelRoles: [] };
+            },
+            async solve() {
+              return {
+                status: 'success',
+                responseMarkdown: '1. Aurora stabilized the lattice around the shield.\n2. The shield held because she kept the corridor aligned while pressure was rising.',
+                responseDocument: { sessionId: 'sess-test', groups: [] },
+                metadata: { llmCalls: 0, model: null },
+                error: null
+              };
+            }
+          };
+        }
+        return null;
+      }
+    };
+    const conversationHandler = {
+      async prepareTurn() {
+        return {
+          session: {
+            sessionId: 'sess-test',
+            preferredModel: null,
+            preferredPlannerPlugin: 'planner-default',
+            preferredSeedDetectorPlugin: 'sd-symbolic',
+            preferredKBPlugin: 'kb-fast',
+            preferredGoalSolverPlugin: 'gs-fast',
+            preferredDeliberationLevel: 0
+          },
+          currentMessage: 'Explain Aurora and explain why the shield held.',
+          historyForPrompt: [],
+          systemPrompt: null,
+          requestedModel: null,
+          requestedDeliberationLevel: 2,
+          explicitPlannerPlugin: null,
+          explicitSeedDetectorPlugin: null,
+          explicitKBPlugin: null,
+          explicitGoalSolverPlugin: null,
+          requestedPlannerPlugin: 'planner-default',
+          requestedSeedDetectorPlugin: 'sd-symbolic',
+          requestedKBPlugin: 'kb-fast',
+          requestedGoalSolverPlugin: null
+        };
+      },
+      async commitSuccessfulTurn() {}
+    };
+    const engine = new MRPEngine(
+      {
+        maxLLMAttemptsPerRequest: 4,
+        requestTimeoutMs: 1000,
+        maxPluginsPerStage: 4,
+        defaultPlannerPlugin: 'planner-default',
+        defaultSeedDetectorPlugin: 'sd-symbolic'
+      },
+      registry,
+      conversationHandler,
+      new CNLParser(),
+      new IntentDecomposer(),
+      { selectPlugin() { return null; } },
+      {},
+      null
+    );
+
+    const result = await engine.processChatTurn({
+      deliberation_level: 2,
+      messages: [{ role: 'user', content: 'Explain Aurora and explain why the shield held.' }]
+    });
+
+    const frame = result.executionTrace.frames[0];
+    assert.match(result.responseMarkdown, /^1\./);
+    assert.equal(frame.candidateSet.length, 2);
+    assert.equal(frame.candidateSet.filter(candidate => candidate.selected).length, 1);
+    assert.equal(frame.comparisonState.openComparisons.length, 1);
+    assert.equal(frame.comparisonState.challenges.length, 1);
+  });
+
   it('skips an LLM plugin when its reserved budget exceeds the remaining budget', async () => {
     let detectCalls = 0;
     const planner = {

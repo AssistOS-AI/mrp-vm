@@ -15,6 +15,7 @@ Each session stores:
   preferredSeedDetectorPlugin,
   preferredKBPlugin,
   preferredGoalSolverPlugin,
+  preferredDeliberationLevel,
   preferredModel,
   mountedKbId,
   workspace,
@@ -54,6 +55,11 @@ so the planner can distinguish:
 
 - hard pins from the current request
 - soft priors from session state
+
+The same rule applies to `deliberation_level`: the
+request MAY override the session preference for one
+turn, while the resolved effective level is stored as
+`preferredDeliberationLevel`.
 
 ## Session Context Reuse
 
@@ -145,6 +151,7 @@ After success, the session persists:
 - selected seed detector plugin
 - selected KB plugin
 - selected goal solver plugin
+- selected deliberation level
 - explainability turn entry (request id, user message,
   assistant preview, selected plugin IDs,
   `responseDocument`, and `executionTrace`)

@@ -114,6 +114,7 @@ Integration tests SHOULD assert:
 
 - success/failure code paths
 - returned plugin IDs
+- returned / stored `deliberation_level`
 - response document shape
 - weak-outcome fallback behavior (`insufficient`,
   `no-context`, cross-planner escalation)
@@ -132,6 +133,8 @@ coverage for:
   planner
 - session-level explainability registry exposure from
   committed chat turns
+- root-frame deliberation policy initialization and
+  graph-node exposure for policy/candidate objects
 
 ## Dependencies
 

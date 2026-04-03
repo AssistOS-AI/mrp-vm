@@ -264,6 +264,37 @@ It MUST record:
 - planner attempts
 - final answer status
 
+For explainability and observability, the trace MUST
+also carry enough structured data to support the
+graph contract defined in DS034.
+
+At minimum, each plugin execution node MUST expose:
+
+- `pluginId`
+- `pluginName`
+- `pluginType`
+- `frameId`
+- `status`
+- `durationMs`
+- input detail payload or detail reference
+- output detail payload or detail reference
+
+Each frame node MUST expose enough data to support a
+nested frame-container view:
+
+- `frameId`
+- `parentFrameId`
+- `purpose`
+- `status`
+- `durationMs`
+- input detail payload or detail reference
+- output detail payload or detail reference
+
+The graph label for a plugin node is the plugin
+name, not the dynamic input or output text. Payloads
+belong in node-detail inspection, not in the node
+label.
+
 The trace may still include a flat `stages` summary
 for convenience, but the DAG is the canonical
 explainability structure.
@@ -271,6 +302,7 @@ explainability structure.
 ## Dependencies
 
 - DS003 — plugin registry/runtime
+- DS034 — execution graph explainability
 - DS019 — session state
 - DS027 — typed plugin contracts
 - DS028 — model-role settings

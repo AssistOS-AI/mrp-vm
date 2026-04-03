@@ -6,7 +6,7 @@
   "knowledgeUnitsFile": "plugin.kus.md",
   "description": "Lightweight LLM synthesis from evidence. Good fluency with low latency for most questions.",
   "costClass": "moderate",
-  "strategyId": "llm-assisted",
+  "modeId": "llm-assisted",
   "modelRole": "goal-fast",
   "plannerHints": {
     "expectedLatencyMs": 900,
@@ -19,4 +19,3 @@
     "confidenceWhenMatched": 0.74
   }
 }
-

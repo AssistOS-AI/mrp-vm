@@ -1,5 +1,5 @@
 // DS009 — BM25 Index (internal, no external deps)
-import { tokenize } from './tokenizer.mjs';
+import { tokenize } from '../../mrp-vm-sdk/nlp-util/lexical-tokenizer.mjs';
 import { ACT_TO_ROLES } from '../../mrp-vm-sdk/knowledge/pragmatics.mjs';
 
 const INDEXED_FIELDS = ['role', 'topic', 'claim', 'condition', 'procedure', 'utilityActs', 'phaseScopes', 'utilityNote'];

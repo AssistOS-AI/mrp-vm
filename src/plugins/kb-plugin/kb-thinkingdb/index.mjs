@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { loadConfig } from '../../../core/platform/config.mjs';
+import { configureTokenizer } from '../../../mrp-vm-sdk/nlp-util/lexical-tokenizer.mjs';
 import { loadLocalPluginManifest } from '../../runtime/manifest-loader.mjs';
 import { ContextMatcher } from './retrieval/context-matcher.mjs';
-import { configureTokenizer } from './retrieval/tokenizer.mjs';
 import {
   BM25LexicalStrategy,
   RetrievalStrategyRegistry

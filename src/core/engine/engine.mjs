@@ -5,9 +5,11 @@ import { logger } from '../platform/logger.mjs';
 import { buildExecutionGraph } from './trace-builder.mjs';
 import {
   createBranchAttempt,
+  createDeliberationPolicy,
   createExecutionFrame,
   createTraceFailure,
-  createTraceResult
+  createTraceResult,
+  normalizeDeliberationLevel
 } from './runtime-objects.mjs';
 import { looksLikeSOPDocument } from '../parser/cnl-validator-parser.mjs';
 
@@ -15,6 +17,12 @@ const MOD = 'core';
 
 function unique(ids = []) {
   return [...new Set(ids.filter(Boolean))];
+}
+
+function snipCandidateLabel(text, max = 80) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return 'candidate';
+  return normalized.length <= max ? normalized : `${normalized.slice(0, max)}…`;
 }
 
 export class MRPEngine {
@@ -88,16 +96,37 @@ export class MRPEngine {
     return false;
   }
 
+  _guidanceEntryKey(entry = null) {
+    return entry?.unit?.hash || `${entry?.store || 'unknown'}:${entry?.unitId || entry?.unit?.id || ''}`;
+  }
+
   _dedupeGuidanceEntries(entries = []) {
     const deduped = [];
     const seen = new Set();
     for (const entry of entries) {
-      const key = entry?.unit?.hash || `${entry?.store || 'unknown'}:${entry?.unitId || entry?.unit?.id || ''}`;
+      const key = this._guidanceEntryKey(entry);
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(entry);
     }
     return deduped;
+  }
+
+  _collectCommonGuidanceEntries(resolvedIntents = [], scope = 'goalSolver') {
+    if (!resolvedIntents.length) return [];
+    const scopedMaps = resolvedIntents.map(intent => new Map(
+      (intent.guidanceUnits?.[scope] || []).map(entry => [this._guidanceEntryKey(entry), entry])
+    ));
+    if (!scopedMaps.length) return [];
+    const commonKeys = new Set(scopedMaps[0].keys());
+    for (const scopedMap of scopedMaps.slice(1)) {
+      for (const key of [...commonKeys]) {
+        if (!scopedMap.has(key)) commonKeys.delete(key);
+      }
+    }
+    return this._dedupeGuidanceEntries(
+      [...commonKeys].map(key => scopedMaps[0].get(key)).filter(Boolean)
+    );
   }
 
   _emitProgress(reporter, payload) {
@@ -123,7 +152,19 @@ export class MRPEngine {
     const childFrameId = childTrace
       ? this._allocateFrameId(parentCtx.requestId, childTrace)
       : `frame-${parentCtx.requestId}-${childDepth}`;
-    const childCtx = this._buildPluginContext(parentCtx.requestId, session, childFrameId, childDepth, childTrace);
+    const childDeliberationPolicy = this._resolveDeliberationPolicy(
+      options.deliberationLevel ?? parentCtx.deliberationPolicy?.level ?? 0,
+      parentCtx.deliberationPolicy,
+      parentPlan?.deliberationPolicy || null
+    );
+    const childCtx = this._buildPluginContext(
+      parentCtx.requestId,
+      session,
+      childFrameId,
+      childDepth,
+      childTrace,
+      childDeliberationPolicy
+    );
     const emitProgress = payload => this._emitProgress(options.onProgress, {
       requestId: parentCtx.requestId,
       sessionId: session.sessionId,
@@ -141,6 +182,8 @@ export class MRPEngine {
         status: 'active',
         purpose: parentPlan.framePurpose || 'decomposition',
         seedDetails: [],
+        deliberationPolicy: childDeliberationPolicy,
+        deliberationStatus: childDeliberationPolicy.level > 0 ? 'exploring' : 'single-shot',
         budgets: {
           remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0)),
           remainingTimeMs: null
@@ -151,7 +194,8 @@ export class MRPEngine {
           retrievedKUs: [],
           partialResults: [],
           plan: null
-        }
+        },
+        comparisonState: {}
       }));
     }
 
@@ -278,7 +322,8 @@ export class MRPEngine {
       sessionPreferences: options.sessionPreferences || {
         seedDetectorPlugin: session.preferredSeedDetectorPlugin,
         kbPlugin: session.preferredKBPlugin,
-        goalSolverPlugin: session.preferredGoalSolverPlugin
+        goalSolverPlugin: session.preferredGoalSolverPlugin,
+        deliberationLevel: session.preferredDeliberationLevel ?? childDeliberationPolicy.level
       },
       sessionState: {
         sessionId: session.sessionId,
@@ -286,7 +331,8 @@ export class MRPEngine {
         mountedKbName: session.mountedKbName || null,
         messageCount: session.messageLog?.length || 0,
         sessionContextUnitCount: session.sessionContextUnits?.length || 0,
-        pendingTurnContextUnitCount: session.pendingTurnContextUnits?.length || 0
+        pendingTurnContextUnitCount: session.pendingTurnContextUnits?.length || 0,
+        deliberationLevel: childDeliberationPolicy.level
       }
     });
 
@@ -505,15 +551,15 @@ export class MRPEngine {
     let selectedGoalSolverPlugin = null;
     let selectedKBPlugin = null;
     let selectedBranchIds = [];
+    let candidateExecutions = [];
     let weakGoalResult = null;
     let weakGoalSolverPlugin = null;
     let weakKBPlugin = null;
     let weakBranchIds = [];
+    let executionOrder = 0;
     for (const kb of kbResults) {
       const resolvedIntentsForKB = kb.result.resolvedIntents || [];
-      const guidanceUnits = this._dedupeGuidanceEntries(
-        resolvedIntentsForKB.flatMap(ri => ri.guidanceUnits?.goalSolver || [])
-      );
+      const guidanceUnits = this._collectCommonGuidanceEntries(resolvedIntentsForKB, 'goalSolver');
       for (const pluginId of goalCandidates) {
         const plugin = this.pluginRegistry.get('gs-plugin', pluginId);
         if (!plugin) continue;
@@ -550,6 +596,7 @@ export class MRPEngine {
           ? resolvedIntentsForKB.map(ri => {
             const intentGroup = intentGroups.find(group => group.groupNumber === ri.intentRef) || null;
             const seed = seedDetails.find(candidate => candidate.intentGroupNumber === ri.intentRef) || seedDetails[0] || null;
+            const familySignature = this._deriveBranchFamilySignature(seed, ri, kb.pluginId, pluginId);
             return this._recordBranchAttempt(childTrace, {
               frameId: childFrameId,
               intentId: intentGroup?.intentId || `intent-${ri.intentRef}`,
@@ -559,16 +606,33 @@ export class MRPEngine {
               plannerPluginId: refinedPlan.plannerPluginId || plannerPluginId || null,
               status: 'active',
               outputPreview: result.responseMarkdown || null,
-              evidenceProfileHash: this._resolvedIntentSignature(resolvedIntentsForKB)
+              evidenceProfileHash: this._resolvedIntentSignature(resolvedIntentsForKB),
+              familySignature
             });
           })
           : [];
         if (result.status === 'success') {
-          goalResult = result;
-          selectedGoalSolverPlugin = pluginId;
-          selectedKBPlugin = kb.pluginId;
-          selectedBranchIds = activeBranches.map(branch => branch.branchId);
-          break;
+          candidateExecutions.push({
+            order: executionOrder++,
+            goalResult: result,
+            goalSolverPlugin: pluginId,
+            kbPlugin: kb.pluginId,
+            kbSufficient: kb.sufficient,
+            branchIds: activeBranches.map(branch => branch.branchId),
+            branches: activeBranches,
+            resolvedIntents: resolvedIntentsForKB,
+            familyKey: this._summarizeExecutionFamily(activeBranches),
+            familyCount: new Set(activeBranches.map(branch => branch.familySignature || 'default')).size
+          });
+          if (!this._shouldContinueComparativeExploration(childDeliberationPolicy, candidateExecutions)) {
+            const selectedExecution = this._selectComparativeOutcome(candidateExecutions, childDeliberationPolicy);
+            goalResult = selectedExecution?.goalResult || result;
+            selectedGoalSolverPlugin = selectedExecution?.goalSolverPlugin || pluginId;
+            selectedKBPlugin = selectedExecution?.kbPlugin || kb.pluginId;
+            selectedBranchIds = selectedExecution?.branchIds || activeBranches.map(branch => branch.branchId);
+            break;
+          }
+          continue;
         }
         if (result.status === 'needs-decomposition' && childDepth < this.maxFrameDepth) {
           for (const branch of activeBranches) {
@@ -631,6 +695,13 @@ export class MRPEngine {
       }
       if (goalResult) break;
     }
+    if (!goalResult && candidateExecutions.length > 0) {
+      const selectedExecution = this._selectComparativeOutcome(candidateExecutions, childDeliberationPolicy);
+      goalResult = selectedExecution?.goalResult || null;
+      selectedGoalSolverPlugin = selectedExecution?.goalSolverPlugin || null;
+      selectedKBPlugin = selectedExecution?.kbPlugin || null;
+      selectedBranchIds = selectedExecution?.branchIds || [];
+    }
     if (!goalResult && weakGoalResult) {
       goalResult = weakGoalResult;
       selectedGoalSolverPlugin = weakGoalSolverPlugin;
@@ -682,7 +753,8 @@ export class MRPEngine {
         selectedGoalSolverPlugin,
         selectedKBPlugin,
         llmCallCount: budgetState.llmCallCount,
-        selectedBranchIds
+        selectedBranchIds,
+        candidateExecutions
       };
     }
     emitProgress({
@@ -700,7 +772,7 @@ export class MRPEngine {
     return { goalResult: null, llmCallCount: budgetState.llmCallCount };
   }
 
-  _buildPluginContext(requestId, session, frameId = null, frameDepth = 0, executionTrace = null) {
+  _buildPluginContext(requestId, session, frameId = null, frameDepth = 0, executionTrace = null, deliberationPolicy = null) {
     return {
       requestId,
       session,
@@ -718,7 +790,8 @@ export class MRPEngine {
       },
       frameId,
       frameDepth,
-      executionTrace
+      executionTrace,
+      deliberationPolicy
     };
   }
 
@@ -802,6 +875,186 @@ export class MRPEngine {
     return {
       remainingLLMCalls: Math.max(0, this.maxLLMAttempts - (budgetState?.llmCallCount || 0)),
       remainingTimeMs: Math.max(0, this.requestTimeout - (Date.now() - startTime))
+    };
+  }
+
+  _resolveDeliberationPolicy(level, parentPolicy = null, overrides = null) {
+    return createDeliberationPolicy({
+      ...(overrides || {}),
+      level: normalizeDeliberationLevel(level, parentPolicy?.level ?? 0)
+    }, parentPolicy);
+  }
+
+  _deriveBranchFamilySignature(seed = null, resolvedIntent = null, kbPluginId = null, goalSolverPluginId = null) {
+    return [
+      resolvedIntent?.decomposed?.act || resolvedIntent?.act || 'unknown',
+      seed?.mode || 'direct',
+      seed?.action || 'answer',
+      kbPluginId || 'kb-auto',
+      goalSolverPluginId || 'gs-auto'
+    ].join('::');
+  }
+
+  _buildCandidateRecord({
+    frameId,
+    branchId,
+    resultId,
+    resultBody,
+    familySignature,
+    validationStatus,
+    kbSufficient,
+    selected = true,
+    score = null,
+    strength = null,
+    branchIds = []
+  }) {
+    const resolvedStrength = strength || (
+      validationStatus === 'accepted'
+        ? (kbSufficient ? 'strong' : 'sufficient')
+        : 'weak'
+    );
+    const resolvedScore = Number.isFinite(score)
+      ? score
+      : validationStatus === 'accepted'
+        ? (kbSufficient ? 2 : 1)
+        : 0;
+    return {
+      candidateId: `cand-${resultId || branchId}`,
+      frameId,
+      branchId,
+      branchIds: [...(branchIds || []).filter(Boolean)],
+      resultId,
+      label: resultBody ? snipCandidateLabel(resultBody) : `candidate ${resultId || branchId}`,
+      familySignature: familySignature || null,
+      validationStatus: validationStatus || null,
+      strength: resolvedStrength,
+      score: resolvedScore,
+      selected
+    };
+  }
+
+  _summarizeExecutionFamily(branches = []) {
+    return [...new Set((branches || []).map(branch => branch?.familySignature || null).filter(Boolean))]
+      .sort()
+      .join('|') || 'default';
+  }
+
+  _estimateResponseCoverage(responseMarkdown = '', intentCount = 1) {
+    const text = String(responseMarkdown || '').trim();
+    if (!text) return 0;
+    const numbered = (text.match(/(?:^|\n)\s*\d+[\).\:-]\s+/g) || []).length;
+    const bullets = (text.match(/(?:^|\n)\s*[-*]\s+/g) || []).length;
+    const paragraphs = text.split(/\n{2,}/).map(part => part.trim()).filter(Boolean).length;
+    const segments = Math.max(numbered, bullets, paragraphs, 1);
+    return Math.min(Math.max(1, intentCount), segments);
+  }
+
+  _scoreExecutionOutcome(outcome = {}, policy = null) {
+    const response = outcome.goalResult?.responseMarkdown || '';
+    const intentCount = outcome.resolvedIntents?.length || 1;
+    const coverage = this._estimateResponseCoverage(response, intentCount);
+    const familyCount = outcome.familyCount || 1;
+    let score = 0;
+    if (outcome.goalResult?.status === 'success') score += 20;
+    if (outcome.kbSufficient) score += 25;
+    score += coverage * 8;
+    score += Math.min(12, Math.round(response.length / 80));
+    score += familyCount * 3;
+    if (policy?.validationFloor === 'strong' && outcome.kbSufficient) score += 4;
+    return score;
+  }
+
+  _shouldContinueComparativeExploration(policy = null, successfulOutcomes = []) {
+    const level = policy?.level ?? 0;
+    if (level <= 0) return false;
+    const maxCandidates = Math.max(
+      1,
+      Math.min(policy?.maxFrontier ?? 1, (policy?.maxComparisons ?? 0) + 1)
+    );
+    const familyCount = new Set(successfulOutcomes.map(outcome => outcome.familyKey)).size;
+    if (successfulOutcomes.length >= maxCandidates) return false;
+    if (level === 1) {
+      return successfulOutcomes.length < Math.min(2, maxCandidates) && familyCount < 2;
+    }
+    if (familyCount < Math.max(1, policy?.minFamilies ?? 1)) return true;
+    if (level >= 3) {
+      return successfulOutcomes.length < Math.min(maxCandidates, Math.max(2, policy?.minFamilies ?? 2));
+    }
+    return false;
+  }
+
+  _selectComparativeOutcome(successfulOutcomes = [], policy = null) {
+    if (!successfulOutcomes.length) return null;
+    return [...successfulOutcomes].sort((left, right) => {
+      const scoreDelta = this._scoreExecutionOutcome(right, policy) - this._scoreExecutionOutcome(left, policy);
+      if (scoreDelta) return scoreDelta;
+      const familyDelta = (right.familyCount || 0) - (left.familyCount || 0);
+      if (familyDelta) return familyDelta;
+      return (left.order ?? 0) - (right.order ?? 0);
+    })[0];
+  }
+
+  _buildComparisonState(candidateSet = [], policy = null, validationVerdict = null, validationReason = null) {
+    const selectedCandidate = candidateSet.find(candidate => candidate.selected) || candidateSet[0] || null;
+    const alternatives = candidateSet.filter(candidate => !candidate.selected);
+    const maxComparisons = Math.max(0, policy?.maxComparisons ?? 0);
+    const openComparisons = [];
+    const challenges = [];
+    if (selectedCandidate) {
+      alternatives.slice(0, maxComparisons).forEach((candidate, index) => {
+        const selectedWins = (selectedCandidate.score ?? 0) >= (candidate.score ?? 0);
+        openComparisons.push({
+          comparisonId: `${selectedCandidate.frameId || 'frame'}-cmp-${index + 1}`,
+          label: `${selectedCandidate.label} vs ${candidate.label}`,
+          status: 'resolved',
+          candidateIds: [selectedCandidate.candidateId, candidate.candidateId],
+          objectiveId: null,
+          criterion: selectedWins ? 'evidence-and-coverage' : 'alternative-strength',
+          summary: {
+            selected: selectedCandidate.label,
+            alternative: candidate.label,
+            outcome: selectedWins
+              ? 'selected candidate retained the stronger composite score'
+              : 'alternative remained competitive'
+          }
+        });
+        challenges.push({
+          challengeId: `${selectedCandidate.frameId || 'frame'}-challenge-${index + 1}`,
+          label: `Stress-test ${selectedCandidate.label}`,
+          status: selectedWins ? 'resolved' : 'open',
+          targetId: selectedCandidate.candidateId,
+          kind: 'discriminative-followup',
+          severity: selectedWins ? 'medium' : 'high',
+          prompt: selectedWins
+            ? `Confirm why ${selectedCandidate.label} outranked ${candidate.label}.`
+            : `Collect evidence that separates ${selectedCandidate.label} from ${candidate.label}.`
+        });
+      });
+    }
+
+    const resolvedDifferences = candidateSet.map(candidate => ({
+      candidateId: candidate.candidateId,
+      familySignature: candidate.familySignature || null,
+      verdict: candidate.selected ? 'selected' : 'alternative',
+      score: candidate.score ?? null
+    }));
+
+    const openQuestions = [];
+    if ((policy?.level ?? 0) >= 2) {
+      const familyCount = new Set(candidateSet.map(candidate => candidate.familySignature || 'default')).size;
+      if (familyCount < Math.max(1, policy?.minFamilies ?? 1)) {
+        openQuestions.push('Comparative closure completed before reaching the preferred family coverage.');
+      }
+    }
+    if (validationVerdict && validationVerdict !== 'accepted') {
+      openQuestions.push(validationReason || 'Selected candidate did not reach the requested validation floor.');
+    }
+
+    return {
+      openComparisons,
+      resolvedDifferences,
+      openQuestions,
+      challenges
     };
   }
 
@@ -897,6 +1150,31 @@ export class MRPEngine {
         ...patch.budgets
       };
     }
+    if (patch.deliberationPolicy) {
+      frame.deliberationPolicy = {
+        ...frame.deliberationPolicy,
+        ...patch.deliberationPolicy
+      };
+    }
+    if (patch.candidateSet) frame.candidateSet = [...patch.candidateSet];
+    if (patch.explorationFrontier) frame.explorationFrontier = [...patch.explorationFrontier];
+    if (patch.suspendedSet) frame.suspendedSet = [...patch.suspendedSet];
+    if (patch.branchFamilies) {
+      frame.branchFamilies = {
+        ...frame.branchFamilies,
+        ...patch.branchFamilies
+      };
+    }
+    if (patch.comparisonState) {
+      frame.comparisonState = {
+        ...frame.comparisonState,
+        ...patch.comparisonState,
+        openComparisons: [...(patch.comparisonState.openComparisons || frame.comparisonState.openComparisons || [])],
+        resolvedDifferences: [...(patch.comparisonState.resolvedDifferences || frame.comparisonState.resolvedDifferences || [])],
+        openQuestions: [...(patch.comparisonState.openQuestions || frame.comparisonState.openQuestions || [])],
+        challenges: [...(patch.comparisonState.challenges || frame.comparisonState.challenges || [])]
+      };
+    }
     return frame;
   }
 
@@ -909,6 +1187,12 @@ export class MRPEngine {
     const frame = executionTrace.frames.find(item => item.frameId === branch.frameId);
     if (frame && !frame.activeBranchIds.includes(branch.branchId)) {
       frame.activeBranchIds.push(branch.branchId);
+      if (!frame.explorationFrontier.includes(branch.branchId)) {
+        frame.explorationFrontier.push(branch.branchId);
+      }
+      if (branch.familySignature) {
+        frame.branchFamilies[branch.branchId] = branch.familySignature;
+      }
     }
     return branch;
   }
@@ -920,6 +1204,7 @@ export class MRPEngine {
     const frame = executionTrace.frames.find(item => item.frameId === branch.frameId);
     if (frame && ['succeeded', 'failed'].includes(branch.status)) {
       frame.activeBranchIds = frame.activeBranchIds.filter(id => id !== branchId);
+      frame.explorationFrontier = frame.explorationFrontier.filter(id => id !== branchId);
       if (!frame.completedBranchIds.includes(branchId)) frame.completedBranchIds.push(branchId);
     }
     return branch;
@@ -964,6 +1249,8 @@ export class MRPEngine {
       requestId,
       sessionId: null,
       rootFrameId: null,
+      deliberationLevel: 0,
+      deliberationPolicy: null,
       plannerPluginId: null,
       plannerAttempts: [],
       stages: [],
@@ -1062,7 +1349,8 @@ export class MRPEngine {
           request.planner_plugin || null,
           request.seed_detector_plugin || null,
           request.kb_plugin || null,
-          request.goal_solver_plugin || null
+          request.goal_solver_plugin || null,
+          request.deliberation_level ?? null
         );
 
         const {
@@ -1075,6 +1363,7 @@ export class MRPEngine {
           explicitSeedDetectorPlugin,
           explicitKBPlugin,
           explicitGoalSolverPlugin,
+          requestedDeliberationLevel,
           requestedPlannerPlugin,
           requestedSeedDetectorPlugin,
           requestedKBPlugin,
@@ -1084,8 +1373,17 @@ export class MRPEngine {
 
         executionTrace.sessionId = session.sessionId;
         executionTrace.inputMessage = snip(currentMessage, 500);
+        executionTrace.deliberationLevel = requestedDeliberationLevel ?? 0;
+        executionTrace.deliberationPolicy = this._resolveDeliberationPolicy(requestedDeliberationLevel ?? 0);
         const rootFrameId = this._allocateFrameId(requestId, executionTrace);
-        pluginCtx = this._buildPluginContext(requestId, session, rootFrameId, 0, executionTrace);
+        pluginCtx = this._buildPluginContext(
+          requestId,
+          session,
+          rootFrameId,
+          0,
+          executionTrace,
+          executionTrace.deliberationPolicy
+        );
         executionTrace.rootFrameId = rootFrameId;
         emitProgress({
           type: 'request',
@@ -1119,23 +1417,88 @@ export class MRPEngine {
           executionTrace.finalStatus = 'success';
           executionTrace.finalAnswerStatus =
             executed.goalResult.status === 'no-context' ? 'no-context' : 'answered';
-          for (const branchId of executed.selectedBranchIds || []) {
-            const branch = this._patchBranchAttempt(executionTrace, branchId, { status: 'succeeded' });
-            if (!branch) continue;
-            const resultRecord = this._recordResult(executionTrace, {
-              frameId: branch.frameId,
-              branchId,
-              kind: executed.goalResult.status === 'no-context' ? 'no-context' : 'answer',
-              validationStatus: executionTrace.finalAnswerStatus,
-              preservesConstraints: executed.goalResult.status === 'no-context' ? 'unknown' : 'yes',
-              structuralComplete: executed.goalResult.status === 'no-context' ? 'partial' : 'yes',
-              body: executed.goalResult.responseMarkdown || null
-            });
-            this._patchBranchAttempt(executionTrace, branchId, { resultId: resultRecord.resultId });
+          const resolvedFrame = this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
+            deliberationStatus: executed.goalResult.status === 'no-context' ? 'fallback' : 'settled'
+          });
+          const executionOutcomes = executed.candidateExecutions?.length
+            ? executed.candidateExecutions
+            : [{
+                order: 0,
+                goalResult: executed.goalResult,
+                goalSolverPlugin: executed.selectedGoalSolverPlugin,
+                kbPlugin: executed.selectedKBPlugin,
+                kbSufficient: executed.kbSufficient,
+                branchIds: executed.selectedBranchIds || [],
+                branches: (executed.selectedBranchIds || [])
+                  .map(branchId => executionTrace.branches.find(branch => branch.branchId === branchId))
+                  .filter(Boolean),
+                resolvedIntents: [],
+                familyKey: this._summarizeExecutionFamily(
+                  (executed.selectedBranchIds || [])
+                    .map(branchId => executionTrace.branches.find(branch => branch.branchId === branchId))
+                    .filter(Boolean)
+                ),
+                familyCount: new Set(
+                  (executed.selectedBranchIds || [])
+                    .map(branchId => executionTrace.branches.find(branch => branch.branchId === branchId)?.familySignature || 'default')
+                ).size
+              }];
+          const selectedBranchIdSet = new Set(executed.selectedBranchIds || []);
+          const candidateSet = [];
+          for (const outcome of executionOutcomes) {
+            const branchIds = outcome.branchIds || [];
+            const representativeBranch = outcome.branches?.[0]
+              || executionTrace.branches.find(branch => branch.branchId === branchIds[0])
+              || null;
+            const recordedResultIds = [];
+            for (const branchId of branchIds) {
+              const branch = this._patchBranchAttempt(executionTrace, branchId, { status: 'succeeded' });
+              if (!branch) continue;
+              const resultRecord = this._recordResult(executionTrace, {
+                frameId: branch.frameId,
+                branchId,
+                kind: outcome.goalResult?.status === 'no-context' ? 'no-context' : 'answer',
+                validationStatus: selectedBranchIdSet.has(branchId)
+                  ? (executed.validationVerdict || executionTrace.finalAnswerStatus)
+                  : 'candidate',
+                preservesConstraints: outcome.goalResult?.status === 'no-context' ? 'unknown' : 'yes',
+                structuralComplete: outcome.goalResult?.status === 'no-context' ? 'partial' : 'yes',
+                body: outcome.goalResult?.responseMarkdown || null
+              });
+              this._patchBranchAttempt(executionTrace, branchId, { resultId: resultRecord.resultId });
+              recordedResultIds.push(resultRecord.resultId);
+            }
+            if (!representativeBranch && !recordedResultIds.length) continue;
+            const selected = branchIds.some(branchId => selectedBranchIdSet.has(branchId));
+            candidateSet.push(this._buildCandidateRecord({
+              frameId: representativeBranch?.frameId || pluginCtx.frameId,
+              branchId: representativeBranch?.branchId || branchIds[0] || null,
+              branchIds,
+              resultId: recordedResultIds[0] || representativeBranch?.resultId || null,
+              resultBody: outcome.goalResult?.responseMarkdown || null,
+              familySignature: outcome.familyKey || representativeBranch?.familySignature || null,
+              validationStatus: selected
+                ? (executed.validationVerdict || executionTrace.finalAnswerStatus)
+                : 'candidate',
+              kbSufficient: !!outcome.kbSufficient,
+              selected,
+              score: this._scoreExecutionOutcome(outcome, resolvedFrame?.deliberationPolicy || executionTrace.deliberationPolicy),
+              strength: selected
+                ? (!!outcome.kbSufficient ? 'strong' : 'sufficient')
+                : (!!outcome.kbSufficient ? 'sufficient' : 'weak')
+            }));
           }
+          const comparisonState = this._buildComparisonState(
+            candidateSet,
+            resolvedFrame?.deliberationPolicy || executionTrace.deliberationPolicy,
+            executed.validationVerdict,
+            executed.validationReason
+          );
           this._patchFrameRecord(executionTrace, pluginCtx.frameId, {
             status: 'succeeded',
             budgets: this._remainingBudgetSnapshot(budgetState, startTime),
+            candidateSet,
+            comparisonState,
             localState: {
               partialResults: executionTrace.results,
               plan: executionTrace.lastPlan || null
@@ -1156,9 +1519,9 @@ export class MRPEngine {
             {
               requestId,
               createdAt: new Date().toISOString(),
-              answerStatus: executed.goalResult.status === 'no-context' ? 'no-context' : 'answered',
-              responseDocument: executed.goalResult.responseDocument || null,
-              executionTrace: executionTrace || null
+            answerStatus: executed.goalResult.status === 'no-context' ? 'no-context' : 'answered',
+            responseDocument: executed.goalResult.responseDocument || null,
+            executionTrace: executionTrace || null
             }
           );
 
@@ -1273,6 +1636,8 @@ export class MRPEngine {
           status: 'active',
           purpose: 'chat-turn',
           seedDetails,
+          deliberationPolicy: executionTrace.deliberationPolicy,
+          deliberationStatus: executionTrace.deliberationLevel > 0 ? 'exploring' : 'single-shot',
           budgets: this._remainingBudgetSnapshot(budgetState, startTime),
           localState: {
             intents: intentGroups,
@@ -1280,7 +1645,8 @@ export class MRPEngine {
             retrievedKUs: [],
             partialResults: [],
             plan: null
-          }
+          },
+          comparisonState: {}
         }));
         const decomposeNodeSnapshot = {
           type: 'decompose',
@@ -1334,7 +1700,8 @@ export class MRPEngine {
           sessionPreferences: {
             seedDetectorPlugin: session.preferredSeedDetectorPlugin,
             kbPlugin: session.preferredKBPlugin,
-            goalSolverPlugin: session.preferredGoalSolverPlugin
+            goalSolverPlugin: session.preferredGoalSolverPlugin,
+            deliberationLevel: executionTrace.deliberationLevel
           },
           sessionState: {
             sessionId: session.sessionId,
@@ -1342,7 +1709,8 @@ export class MRPEngine {
             mountedKbName: session.mountedKbName || null,
             messageCount: session.messageLog?.length || 0,
             sessionContextUnitCount: session.sessionContextUnits?.length || 0,
-            pendingTurnContextUnitCount: session.pendingTurnContextUnits?.length || 0
+            pendingTurnContextUnitCount: session.pendingTurnContextUnits?.length || 0,
+            deliberationLevel: executionTrace.deliberationLevel
           }
         });
 
@@ -1517,6 +1885,8 @@ export class MRPEngine {
           let weakKBSufficient = false;
           let selectedBranchIds = [];
           let weakBranchIds = [];
+          let candidateExecutions = [];
+          let executionOrder = 0;
           const goalCandidates = (refinedPlan.goalSolverOrder || []).slice(0, this.maxPluginsPerStage);
 
           executionTrace.lastPlan = {
@@ -1573,7 +1943,8 @@ export class MRPEngine {
                     selectedGoalSolverPlugin: childResult.selectedGoalSolverPlugin || goalCandidates[0] || null,
                     kbSufficient: bestKB.sufficient,
                     weakOutcome: false,
-                    selectedBranchIds: childResult.selectedBranchIds || []
+                    selectedBranchIds: childResult.selectedBranchIds || [],
+                    candidateExecutions: childResult.candidateExecutions || []
                   };
                 }
               } catch {
@@ -1584,9 +1955,7 @@ export class MRPEngine {
 
           for (const kb of kbResults) {
             const resolvedIntentsForKB = kb.result.resolvedIntents || [];
-            const goalSolverGuidance = this._dedupeGuidanceEntries(
-              resolvedIntentsForKB.flatMap(ri => ri.guidanceUnits?.goalSolver || [])
-            );
+            const goalSolverGuidance = this._collectCommonGuidanceEntries(resolvedIntentsForKB, 'goalSolver');
             for (const pluginId of goalCandidates) {
               const plugin = this.pluginRegistry.get('gs-plugin', pluginId);
               if (!plugin) continue;
@@ -1634,6 +2003,7 @@ export class MRPEngine {
               const activeBranches = resolvedIntentsForKB.map(ri => {
                 const intentGroup = intentGroups.find(group => group.groupNumber === ri.intentRef) || null;
                 const seed = seedDetails.find(candidate => candidate.intentGroupNumber === ri.intentRef) || seedDetails[0] || null;
+                const familySignature = this._deriveBranchFamilySignature(seed, ri, kb.pluginId, pluginId);
                 return this._recordBranchAttempt(executionTrace, {
                   frameId: pluginCtx.frameId,
                   intentId: intentGroup?.intentId || `intent-${ri.intentRef}`,
@@ -1644,14 +2014,33 @@ export class MRPEngine {
                   status: 'active',
                   stageTraceIndex,
                   outputPreview: snip(result.responseMarkdown),
-                  evidenceProfileHash: this._resolvedIntentSignature(resolvedIntentsForKB)
+                  evidenceProfileHash: this._resolvedIntentSignature(resolvedIntentsForKB),
+                  familySignature
                 });
               });
               if (result.status === 'success') {
-                goalResult = result; selectedGoalSolverPlugin = pluginId;
-                selectedKBPlugin = kb.pluginId; kbSufficient = kb.sufficient;
-                selectedBranchIds = activeBranches.map(branch => branch.branchId);
-                break;
+                candidateExecutions.push({
+                  order: executionOrder++,
+                  goalResult: result,
+                  goalSolverPlugin: pluginId,
+                  kbPlugin: kb.pluginId,
+                  kbSufficient: kb.sufficient,
+                  branchIds: activeBranches.map(branch => branch.branchId),
+                  branches: activeBranches,
+                  resolvedIntents: resolvedIntentsForKB,
+                  familyKey: this._summarizeExecutionFamily(activeBranches),
+                  familyCount: new Set(activeBranches.map(branch => branch.familySignature || 'default')).size
+                });
+                if (!this._shouldContinueComparativeExploration(executionTrace.deliberationPolicy, candidateExecutions)) {
+                  const selectedExecution = this._selectComparativeOutcome(candidateExecutions, executionTrace.deliberationPolicy);
+                  goalResult = selectedExecution?.goalResult || result;
+                  selectedGoalSolverPlugin = selectedExecution?.goalSolverPlugin || pluginId;
+                  selectedKBPlugin = selectedExecution?.kbPlugin || kb.pluginId;
+                  kbSufficient = !!selectedExecution?.kbSufficient;
+                  selectedBranchIds = selectedExecution?.branchIds || activeBranches.map(branch => branch.branchId);
+                  break;
+                }
+                continue;
               }
               if (result.status === 'needs-decomposition') {
                 for (const branch of activeBranches) {
@@ -1701,6 +2090,7 @@ export class MRPEngine {
                       selectedKBPlugin = kb.pluginId; kbSufficient = kb.sufficient;
                       executionTrace.frameTransitions = (executionTrace.frameTransitions || 0) + 1;
                       selectedBranchIds = childResult.selectedBranchIds || [];
+                      candidateExecutions = childResult.candidateExecutions || [];
                       break;
                     }
                   } catch { /* child frame failed, continue backtracking */ }
@@ -1730,6 +2120,15 @@ export class MRPEngine {
               }
             }
             if (goalResult) break; // found a good answer, stop backtracking
+          }
+
+          if (!goalResult && candidateExecutions.length > 0) {
+            const selectedExecution = this._selectComparativeOutcome(candidateExecutions, executionTrace.deliberationPolicy);
+            goalResult = selectedExecution?.goalResult || null;
+            selectedGoalSolverPlugin = selectedExecution?.goalSolverPlugin || null;
+            selectedKBPlugin = selectedExecution?.kbPlugin || null;
+            kbSufficient = !!selectedExecution?.kbSufficient;
+            selectedBranchIds = selectedExecution?.branchIds || [];
           }
 
           if (!goalResult && weakGoalResult) {
@@ -1779,9 +2178,7 @@ export class MRPEngine {
           if (valCandidates.length > 0 && goalResult.status === 'success') {
             const valNode = { type: 'stage', stage: 'validation', children: [] };
             planNode.children.push(valNode);
-            const validationGuidance = this._dedupeGuidanceEntries(
-              resolvedIntents.flatMap(ri => ri.guidanceUnits?.validation || [])
-            );
+            const validationGuidance = this._collectCommonGuidanceEntries(resolvedIntents, 'validation');
             for (const valId of valCandidates.slice(0, this.maxPluginsPerStage)) {
               const valPlugin = this.pluginRegistry.get('val-plugin', valId);
               if (!valPlugin) continue;
@@ -1855,16 +2252,19 @@ export class MRPEngine {
             );
           }
 
-          return {
-            goalResult,
-            currentTurnUnits,
-            selectedSeedDetectorPlugin,
-            selectedKBPlugin,
-            selectedGoalSolverPlugin,
-            kbSufficient,
-            weakOutcome: goalResult.status === 'no-context',
-            selectedBranchIds
-          };
+            return {
+              goalResult,
+              currentTurnUnits,
+              selectedSeedDetectorPlugin,
+              selectedKBPlugin,
+              selectedGoalSolverPlugin,
+              kbSufficient,
+              weakOutcome: goalResult.status === 'no-context',
+              selectedBranchIds,
+              candidateExecutions,
+              validationVerdict,
+              validationReason
+            };
         };
 
         let lastError = null;

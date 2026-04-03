@@ -84,6 +84,11 @@ export class SOPInterpreter {
       plugins: new Map(),
       kus: new Map(),
       validations: new Map(),
+      policies: new Map(),
+      objectives: new Map(),
+      candidates: new Map(),
+      comparisons: new Map(),
+      challenges: new Map(),
       branches: new Map(),
       results: new Map(),
       relationEdges: [],
@@ -161,6 +166,103 @@ export class SOPInterpreter {
         doc.validations.set(objectId, validationTarget);
         objectLookup.set(objectId, validationTarget);
         doc.constructorOrder.push(objectId);
+        continue;
+      }
+      if (command === 'policy') {
+        const policy = makeObject('policy', objectId, statement);
+        policy.frameId = normalizeArgValue(statement.args[0]);
+        policy.level = Number(normalizeArgValue(statement.args[1]));
+        policy.closureMode = normalizeArgValue(statement.args[2]);
+        policy.maxFrontier = Number(normalizeArgValue(statement.args[3]));
+        policy.minFamilies = Number(normalizeArgValue(statement.args[4]));
+        policy.maxComparisons = Number(normalizeArgValue(statement.args[5]));
+        policy.validationFloor = normalizeArgValue(statement.args[6]);
+        doc.policies.set(objectId, policy);
+        objectLookup.set(objectId, policy);
+        doc.constructorOrder.push(objectId);
+        doc.relationEdges.push({
+          type: 'contains',
+          from: policy.frameId,
+          to: objectId
+        });
+        continue;
+      }
+      if (command === 'objective') {
+        const objective = makeObject('objective', objectId, statement);
+        objective.frameId = normalizeArgValue(statement.args[0]);
+        objective.targetIds = normalizeArgValue(statement.args[1]);
+        doc.objectives.set(objectId, objective);
+        objectLookup.set(objectId, objective);
+        doc.constructorOrder.push(objectId);
+        doc.relationEdges.push({
+          type: 'contains',
+          from: objective.frameId,
+          to: objectId
+        });
+        continue;
+      }
+      if (command === 'candidate') {
+        const candidate = makeObject('candidate', objectId, statement);
+        candidate.frameId = normalizeArgValue(statement.args[0]);
+        candidate.branchId = normalizeArgValue(statement.args[1]);
+        candidate.resultId = normalizeArgValue(statement.args[2]);
+        candidate.strength = normalizeArgValue(statement.args[3]);
+        doc.candidates.set(objectId, candidate);
+        objectLookup.set(objectId, candidate);
+        doc.constructorOrder.push(objectId);
+        doc.relationEdges.push({
+          type: 'contains',
+          from: candidate.frameId,
+          to: objectId
+        });
+        doc.relationEdges.push({
+          type: 'derived_from',
+          from: objectId,
+          to: candidate.resultId
+        });
+        continue;
+      }
+      if (command === 'compare') {
+        const comparison = makeObject('compare', objectId, statement);
+        comparison.frameId = normalizeArgValue(statement.args[0]);
+        comparison.candidateIds = normalizeArgValue(statement.args[1]);
+        comparison.summary = normalizeArgValue(statement.args[2]);
+        doc.comparisons.set(objectId, comparison);
+        objectLookup.set(objectId, comparison);
+        doc.constructorOrder.push(objectId);
+        doc.relationEdges.push({
+          type: 'contains',
+          from: comparison.frameId,
+          to: objectId
+        });
+        for (const candidateId of comparison.candidateIds || []) {
+          doc.relationEdges.push({
+            type: 'compares',
+            from: objectId,
+            to: candidateId
+          });
+        }
+        continue;
+      }
+      if (command === 'challenge') {
+        const challenge = makeObject('challenge', objectId, statement);
+        challenge.frameId = normalizeArgValue(statement.args[0]);
+        challenge.targetId = normalizeArgValue(statement.args[1]);
+        challenge.prompt = normalizeArgValue(statement.args[2]);
+        challenge.severity = normalizeArgValue(statement.args[3]);
+        doc.challenges.set(objectId, challenge);
+        objectLookup.set(objectId, challenge);
+        doc.constructorOrder.push(objectId);
+        doc.relationEdges.push({
+          type: 'contains',
+          from: challenge.frameId,
+          to: objectId
+        });
+        doc.relationEdges.push({
+          type: 'challenges',
+          from: objectId,
+          to: challenge.targetId
+        });
         continue;
       }
       if (command === 'branch') {
@@ -407,6 +509,31 @@ export class SOPInterpreter {
       for (const fieldName of VALIDATION_REQUIRED_FIELDS) {
         validationTarget[fieldName] = validationTarget.fields[fieldName] ?? null;
       }
+    }
+
+    for (const policy of doc.policies.values()) {
+      policy.validationFloor = policy.validationFloor || policy.fields.validationFloor || null;
+    }
+
+    for (const objective of doc.objectives.values()) {
+      objective.targetIds = [...(objective.targetIds || [])];
+    }
+
+    for (const candidate of doc.candidates.values()) {
+      candidate.score = candidate.fields.score ?? null;
+      candidate.selected = candidate.fields.selected ?? null;
+    }
+
+    for (const comparison of doc.comparisons.values()) {
+      comparison.status = comparison.fields.status || null;
+      comparison.criterion = comparison.fields.criterion || null;
+      comparison.summary = comparison.fields.summary || comparison.summary || null;
+    }
+
+    for (const challenge of doc.challenges.values()) {
+      challenge.status = challenge.fields.status || null;
+      challenge.resolution = challenge.fields.resolution || null;
+      challenge.severity = challenge.fields.severity || challenge.severity || null;
     }
 
     for (const branch of doc.branches.values()) {

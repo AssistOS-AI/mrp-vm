@@ -1,5 +1,5 @@
 // DS012 — Retrieval & Context Matching
-import { ACT_TO_ROLES, inferPhaseScopes } from '../knowledge/pragmatics.mjs';
+import { ACT_TO_ROLES, inferPhaseScopes } from '../../../../mrp-vm-sdk/knowledge/pragmatics.mjs';
 import { buildResolvedIntentPayload } from '../../../../mrp-vm-sdk/synthesis/resolved-intent-payload.mjs';
 
 export class ContextMatcher {
@@ -18,13 +18,21 @@ export class ContextMatcher {
     for (let i = 0; i < decomposedIntents.length; i++) {
       const decomposed = decomposedIntents[i];
       const profile = contextProfiles[i];
-      const ri = await this._resolveOne(decomposed, profile, currentTurnUnits, session, retrievalProfile, kbIndex);
+      const ri = await this._resolveOne(
+        decomposed,
+        profile,
+        currentTurnUnits,
+        session,
+        retrievalProfile,
+        kbIndex,
+        decomposedIntents.length
+      );
       results.push(ri);
     }
     return results;
   }
 
-  async _resolveOne(decomposed, contextProfile, currentTurnUnits, session, retrievalProfile, kbIndex) {
+  async _resolveOne(decomposed, contextProfile, currentTurnUnits, session, retrievalProfile, kbIndex, intentCount = 1) {
     const intentRef = decomposed.groupNumber;
     // Get strategies for profile
     const profileConfig = typeof retrievalProfile === 'string'
@@ -156,6 +164,9 @@ export class ContextMatcher {
       currentTurnUnits: currentTurnUnits || [],
       retrievedSessionUnits: guidanceSessionEntries,
       retrievedKbUnits: guidanceKbEntries,
+      decomposed,
+      contextProfile,
+      intentCount,
       session,
       kbIndex
     });
@@ -294,11 +305,38 @@ export class ContextMatcher {
     if (scopes.includes('val-plugin')) buckets.validation.push(entry);
   }
 
-  _collectGuidanceUnits({ currentTurnUnits = [], retrievedSessionUnits = [], retrievedKbUnits = [], session = null, kbIndex = null } = {}) {
+  _guidanceMatchesIntent(unit, decomposed, contextProfile, intentCount = 1) {
+    const queryTerms = new Set((contextProfile?.queryTerms || []).map(term => String(term || '').toLowerCase()).filter(Boolean));
+    const text = `${unit?.topic || ''} ${unit?.claim || ''} ${unit?.procedure || ''} ${unit?.utilityNote || ''}`.toLowerCase();
+    if (!text) return false;
+    const overlapsIntent = [...queryTerms].some(term => text.includes(term));
+    if (intentCount <= 1 && /\b(answer|respond|reply|return|format|output|json|yaml|xml|bullet|list|table|markdown|single word|one word|yes\/no|yes or no|step-by-step|step by step)\b/.test(text)) {
+      const topicTokens = String(unit?.topic || '')
+        .toLowerCase()
+        .split(/\s+/)
+        .map(token => token.replace(/[^\w-]/g, ''))
+        .filter(token => token && !['output', 'style', 'format', 'answer', 'response', 'json', 'yaml', 'xml', 'bullet', 'list', 'table', 'markdown', 'step', 'steps', 'word', 'single', 'yes', 'no'].includes(token));
+      return overlapsIntent || topicTokens.length === 0;
+    }
+    if (queryTerms.size === 0) return true;
+    return overlapsIntent;
+  }
+
+  _collectGuidanceUnits({
+    currentTurnUnits = [],
+    retrievedSessionUnits = [],
+    retrievedKbUnits = [],
+    decomposed = null,
+    contextProfile = null,
+    intentCount = 1,
+    session = null,
+    kbIndex = null
+  } = {}) {
     const buckets = this._guidanceBuckets();
 
     for (const unit of currentTurnUnits) {
       if (!this._isGuidanceUnit(unit)) continue;
+      if (!this._guidanceMatchesIntent(unit, decomposed, contextProfile, intentCount)) continue;
       this._addGuidanceEntry(buckets, this._entryFromUnit(unit, 'current-turn', 1));
     }
     for (const entry of [...retrievedSessionUnits, ...retrievedKbUnits]) {

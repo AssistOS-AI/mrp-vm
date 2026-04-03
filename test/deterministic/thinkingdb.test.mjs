@@ -276,4 +276,67 @@ describe('SymbolicOnlyStrategy symbolic fields', () => {
     assert.equal(units[5].relation, 'provides');
     assert.equal(units[6].object, 'secure execution');
   });
+
+  it('renders explain answers as synthesized prose by default', async () => {
+    const strategy = new SymbolicOnlyStrategy();
+    const response = await strategy.synthesizeResponse({
+      sessionId: 'sess-1',
+      resolvedIntents: [{
+        intentRef: 1,
+        decomposed: {
+          act: 'explain',
+          intent: 'Explain why AchillesIDE is relevant for secure execution.',
+          outputType: 'Structured response.'
+        },
+        currentTurnContextUnits: [],
+        sessionUnits: [
+          { unitId: 'u1', unit: { claim: 'AchillesIDE uses Ploinky.' } },
+          { unitId: 'u2', unit: { claim: 'Ploinky provides sandboxing.' } },
+          { unitId: 'u3', unit: { claim: 'KernelX provides isolation.' } },
+          { unitId: 'u4', unit: { claim: 'Sandboxing is relevant for secure execution.' } },
+          { unitId: 'u5', unit: { claim: 'Isolation is relevant for secure execution.' } }
+        ],
+        kbUnits: []
+      }],
+      pluginOutputs: [],
+      guidanceUnits: []
+    });
+
+    assert.match(
+      response.responseMarkdown,
+      /Taken together, these relationships explain why AchillesIDE is relevant for secure execution\./
+    );
+    assert.doesNotMatch(
+      response.responseMarkdown,
+      /### Answer\nBased on the available evidence:\n-/
+    );
+  });
+
+  it('renders counterfactual answers as explicit alternative outcomes', async () => {
+    const strategy = new SymbolicOnlyStrategy();
+    const response = await strategy.synthesizeResponse({
+      sessionId: 'sess-2',
+      resolvedIntents: [{
+        intentRef: 1,
+        decomposed: {
+          act: 'explain',
+          intent: 'Construct a counterfactual: if Commander Vex had discovered the obelisk instead of Dr. Elara Vance, how would the outcome likely differ?',
+          outputType: 'Grounded answer.'
+        },
+        currentTurnContextUnits: [],
+        sessionUnits: [
+          { unitId: 'u1', score: 1.0, unit: { claim: 'Commander Vex was a ruthless cyborg obsessed with maintaining order and the Solar Syndicate\'s profits.' } },
+          { unitId: 'u2', score: 0.9, unit: { claim: 'Dr. Elara Vance was a courageous astro-archeologist desperate to stop the destruction.' } },
+          { unitId: 'u3', score: 0.8, unit: { claim: 'The ancient atmospheric shield of the Eons reactivated and gradually terraformed the planet into a safe and stable paradise.' } }
+        ],
+        kbUnits: []
+      }],
+      pluginOutputs: [],
+      guidanceUnits: []
+    });
+
+    assert.match(response.responseMarkdown, /If Commander Vex had discovered the obelisk instead of Dr\. Elara Vance, the outcome would likely have been much harsher and less cooperative\./);
+    assert.match(response.responseMarkdown, /asset to control or exploit/);
+    assert.match(response.responseMarkdown, /successful ending described in the evidence much less likely/);
+  });
 });

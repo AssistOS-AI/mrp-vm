@@ -1,3 +1,67 @@
+const DELIBERATION_DEFAULTS = {
+  0: {
+    closureMode: 'first-valid',
+    maxFrontier: 1,
+    minFamilies: 1,
+    maxComparisons: 0,
+    validationFloor: 'sufficient'
+  },
+  1: {
+    closureMode: 'best-effort',
+    maxFrontier: 2,
+    minFamilies: 1,
+    maxComparisons: 1,
+    validationFloor: 'sufficient'
+  },
+  2: {
+    closureMode: 'comparative',
+    maxFrontier: 4,
+    minFamilies: 2,
+    maxComparisons: 2,
+    validationFloor: 'sufficient'
+  },
+  3: {
+    closureMode: 'comparative',
+    maxFrontier: 6,
+    minFamilies: 2,
+    maxComparisons: 4,
+    validationFloor: 'strong'
+  }
+};
+
+export function normalizeDeliberationLevel(value, fallback = 0) {
+  const numeric = Number.parseInt(value, 10);
+  if (!Number.isFinite(numeric)) return Math.max(0, Math.min(3, fallback));
+  return Math.max(0, Math.min(3, numeric));
+}
+
+export function createDeliberationPolicy(policy = {}, parentPolicy = null) {
+  const parentLevel = parentPolicy?.level ?? 0;
+  const level = normalizeDeliberationLevel(policy.level, parentLevel);
+  const defaults = DELIBERATION_DEFAULTS[level] || DELIBERATION_DEFAULTS[0];
+  const maxFrontier = Math.max(1, Number.parseInt(policy.maxFrontier ?? defaults.maxFrontier, 10) || defaults.maxFrontier);
+  const minFamilies = Math.max(1, Number.parseInt(policy.minFamilies ?? defaults.minFamilies, 10) || defaults.minFamilies);
+  const maxComparisons = Math.max(0, Number.parseInt(policy.maxComparisons ?? defaults.maxComparisons, 10) || defaults.maxComparisons);
+  return {
+    level,
+    closureMode: policy.closureMode || defaults.closureMode,
+    maxFrontier,
+    minFamilies: Math.min(minFamilies, maxFrontier),
+    maxComparisons,
+    validationFloor: policy.validationFloor || defaults.validationFloor,
+    inheritedLevel: parentPolicy?.level ?? null
+  };
+}
+
+function cloneComparisonState(state = {}) {
+  return {
+    openComparisons: [...(state.openComparisons || [])],
+    resolvedDifferences: [...(state.resolvedDifferences || [])],
+    openQuestions: [...(state.openQuestions || [])],
+    challenges: [...(state.challenges || [])]
+  };
+}
+
 export function createExecutionFrame({
   frameId,
   parentFrameId = null,
@@ -8,7 +72,14 @@ export function createExecutionFrame({
   seedDetails = [],
   budgets = {},
   localState = {},
-  purpose = null
+  purpose = null,
+  deliberationPolicy = null,
+  candidateSet = [],
+  explorationFrontier = [],
+  suspendedSet = [],
+  comparisonState = {},
+  branchFamilies = {},
+  deliberationStatus = null
 }) {
   return {
     frameId,
@@ -23,6 +94,13 @@ export function createExecutionFrame({
     activeBranchIds: [],
     completedBranchIds: [],
     failureMemory: [],
+    deliberationPolicy: createDeliberationPolicy(deliberationPolicy || {}),
+    candidateSet: [...(candidateSet || [])],
+    explorationFrontier: [...(explorationFrontier || [])],
+    suspendedSet: [...(suspendedSet || [])],
+    comparisonState: cloneComparisonState(comparisonState),
+    branchFamilies: { ...(branchFamilies || {}) },
+    deliberationStatus: deliberationStatus || 'idle',
     localState: {
       intents: [...(localState.intents || [])],
       currentTurnKUs: [...(localState.currentTurnKUs || [])],
@@ -51,7 +129,8 @@ export function createBranchAttempt({
   stageTraceIndex = null,
   error = null,
   outputPreview = null,
-  evidenceProfileHash = null
+  evidenceProfileHash = null,
+  familySignature = null
 }) {
   return {
     branchId,
@@ -67,7 +146,8 @@ export function createBranchAttempt({
     stageTraceIndex,
     error,
     outputPreview,
-    evidenceProfileHash
+    evidenceProfileHash,
+    familySignature
   };
 }
 
@@ -116,4 +196,3 @@ export function createTraceFailure({
     evidenceProfileHash
   };
 }
-

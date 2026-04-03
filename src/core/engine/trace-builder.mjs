@@ -45,11 +45,16 @@ export function buildExecutionGraph(trace = {}) {
       input: safePreview(frame.localState?.intents || []),
       output: safePreview({
         plan: frame.localState?.plan || null,
-        partialResults: frame.localState?.partialResults || []
+        partialResults: frame.localState?.partialResults || [],
+        candidateCount: frame.candidateSet?.length || 0
       }),
       metadata: {
         maxDepth: frame.maxDepth,
-        seedCount: frame.seedIds?.length || 0
+        seedCount: frame.seedIds?.length || 0,
+        deliberationLevel: frame.deliberationPolicy?.level ?? 0,
+        closureMode: frame.deliberationPolicy?.closureMode || null,
+        frontier: frame.explorationFrontier?.length || 0,
+        candidates: frame.candidateSet?.length || 0
       }
     });
     if (frame.parentFrameId) {
@@ -97,6 +102,29 @@ export function buildExecutionGraph(trace = {}) {
         });
       }
     }
+
+    const policyNodeId = `${frame.frameId}:policy`;
+    pushNode(nodes, seenNodes, {
+      id: policyNodeId,
+      type: 'policy',
+      label: `deliberation L${frame.deliberationPolicy?.level ?? 0}`,
+      status: frame.deliberationStatus || 'configured',
+      frameId: frame.frameId,
+      input: safePreview(frame.deliberationPolicy || {}),
+      output: safePreview({
+        frontier: frame.explorationFrontier || [],
+        suspended: frame.suspendedSet || []
+      }),
+      metadata: {
+        closureMode: frame.deliberationPolicy?.closureMode || null,
+        validationFloor: frame.deliberationPolicy?.validationFloor || null
+      }
+    });
+    pushEdge(edges, seenEdges, {
+      type: 'contains',
+      from: frame.frameId,
+      to: policyNodeId
+    });
   }
 
   stages.forEach((stage, index) => {
@@ -142,7 +170,10 @@ export function buildExecutionGraph(trace = {}) {
         validationId: branch.validationId
       }),
       output: branch.outputPreview || null,
-      error: branch.error || null
+      error: branch.error || null,
+      metadata: {
+        familySignature: branch.familySignature || null
+      }
     });
     pushEdge(edges, seenEdges, {
       type: 'contains',
@@ -225,10 +256,120 @@ export function buildExecutionGraph(trace = {}) {
     });
   }
 
+  for (const frame of frames) {
+    for (const candidate of frame.candidateSet || []) {
+      const candidateNodeId = `candidate:${candidate.candidateId}`;
+      pushNode(nodes, seenNodes, {
+        id: candidateNodeId,
+        type: 'candidate',
+        label: candidate.label || candidate.candidateId,
+        status: candidate.validationStatus || candidate.strength || 'candidate',
+        frameId: frame.frameId,
+        input: safePreview({
+          resultId: candidate.resultId || null,
+          branchId: candidate.branchId || null,
+          familySignature: candidate.familySignature || null
+        }),
+        output: safePreview({
+          score: candidate.score ?? null,
+          selected: !!candidate.selected,
+          strength: candidate.strength || null
+        }),
+        metadata: {
+          selected: !!candidate.selected,
+          strength: candidate.strength || null,
+          familySignature: candidate.familySignature || null
+        }
+      });
+      pushEdge(edges, seenEdges, {
+        type: 'contains',
+        from: frame.frameId,
+        to: candidateNodeId
+      });
+      if (candidate.resultId) {
+        pushEdge(edges, seenEdges, {
+          type: 'derived_from',
+          from: candidateNodeId,
+          to: `result:${candidate.resultId}`
+        });
+      }
+      if (candidate.branchId) {
+        pushEdge(edges, seenEdges, {
+          type: 'spawned_from',
+          from: `branch:${candidate.branchId}`,
+          to: candidateNodeId
+        });
+      }
+    }
+
+    for (const comparison of frame.comparisonState?.openComparisons || []) {
+      const comparisonNodeId = `comparison:${comparison.comparisonId}`;
+      pushNode(nodes, seenNodes, {
+        id: comparisonNodeId,
+        type: 'comparison',
+        label: comparison.label || comparison.comparisonId,
+        status: comparison.status || 'open',
+        frameId: frame.frameId,
+        input: safePreview({
+          candidateIds: comparison.candidateIds || [],
+          objectiveId: comparison.objectiveId || null
+        }),
+        output: safePreview(comparison.summary || null),
+        metadata: {
+          criterion: comparison.criterion || null
+        }
+      });
+      pushEdge(edges, seenEdges, {
+        type: 'contains',
+        from: frame.frameId,
+        to: comparisonNodeId
+      });
+      for (const candidateId of comparison.candidateIds || []) {
+        pushEdge(edges, seenEdges, {
+          type: 'compares',
+          from: comparisonNodeId,
+          to: `candidate:${candidateId}`
+        });
+      }
+    }
+
+    for (const challenge of frame.comparisonState?.challenges || []) {
+      const challengeNodeId = `challenge:${challenge.challengeId}`;
+      pushNode(nodes, seenNodes, {
+        id: challengeNodeId,
+        type: 'challenge',
+        label: challenge.label || challenge.challengeId,
+        status: challenge.status || 'open',
+        frameId: frame.frameId,
+        input: safePreview({
+          targetId: challenge.targetId || null,
+          kind: challenge.kind || null
+        }),
+        output: safePreview(challenge.prompt || challenge.resolution || null),
+        metadata: {
+          severity: challenge.severity || null
+        }
+      });
+      pushEdge(edges, seenEdges, {
+        type: 'contains',
+        from: frame.frameId,
+        to: challengeNodeId
+      });
+      if (challenge.targetId) {
+        pushEdge(edges, seenEdges, {
+          type: 'challenges',
+          from: challengeNodeId,
+          to: challenge.targetId.startsWith('candidate:')
+            ? challenge.targetId
+            : `candidate:${challenge.targetId}`
+        });
+      }
+    }
+  }
+
   return {
     rootFrameId: trace.rootFrameId || frames[0]?.frameId || null,
     nodes,
     edges
   };
 }
-

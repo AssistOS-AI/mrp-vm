@@ -5,6 +5,7 @@ import { join, resolve, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MRPError, httpStatusForCode } from '../core/platform/errors.mjs';
 import { logger } from '../core/platform/logger.mjs';
+import { normalizeDeliberationLevel } from '../core/engine/runtime-objects.mjs';
 
 const __dirname = import.meta.dirname || new URL('.', import.meta.url).pathname;
 const UI_DIR = resolve(__dirname, './ui');
@@ -112,6 +113,10 @@ export class MRPServer {
     return plugin;
   }
 
+  _readDeliberationLevel(body = {}) {
+    return normalizeDeliberationLevel(body.deliberation_level, 0);
+  }
+
   async _chatCompletions(req, res, reqId) {
     const body = JSON.parse(await this._readBody(req));
     if (body.session_id === 'null' || body.session_id === 'undefined') body.session_id = null;
@@ -152,6 +157,7 @@ export class MRPServer {
       seed_detector_plugin: session?.preferredSeedDetectorPlugin || body.seed_detector_plugin || null,
       kb_plugin: session?.preferredKBPlugin || body.kb_plugin || null,
       goal_solver_plugin: session?.preferredGoalSolverPlugin || body.goal_solver_plugin || null,
+      deliberation_level: session?.preferredDeliberationLevel ?? result.executionTrace?.deliberationLevel ?? this._readDeliberationLevel(body),
       expires_at: session?.expiresAt,
       choices: [{
         index: 0,
@@ -215,6 +221,7 @@ export class MRPServer {
         seed_detector_plugin: payload.seed_detector_plugin,
         kb_plugin: payload.kb_plugin,
         goal_solver_plugin: payload.goal_solver_plugin,
+        deliberation_level: payload.deliberation_level,
         kb_id: payload.kb_id,
         kb_name: payload.kb_name
       });
@@ -261,7 +268,8 @@ export class MRPServer {
       body.planner_plugin || null,
       body.seed_detector_plugin || null,
       body.kb_plugin || null,
-      body.goal_solver_plugin || null
+      body.goal_solver_plugin || null,
+      this._readDeliberationLevel(body)
     );
     const workspaceStats = session.workspace?.getStats() || {};
     this._json(res, 200, {
@@ -272,6 +280,7 @@ export class MRPServer {
       seed_detector_plugin: session.preferredSeedDetectorPlugin,
       kb_plugin: session.preferredKBPlugin,
       goal_solver_plugin: session.preferredGoalSolverPlugin,
+      deliberation_level: session.preferredDeliberationLevel ?? 0,
       model: session.preferredModel,
       kb_id: session.mountedKbId,
       kb_name: session.mountedKbName,

@@ -14,6 +14,7 @@ deterministic structure:
 - plugin descriptors
 - KU metadata shells
 - validation targets
+- deliberation-policy / comparative-control objects
 - branch/result records
 
 This document defines the surface syntax, command
@@ -133,6 +134,11 @@ constructors.
 | `plugin` | `plugin <pluginType> <pluginId>` | Declares one planner-visible plugin descriptor. |
 | `ku` | `ku <kuType> "<kuId>"` | Creates one KU metadata shell. |
 | `validate` | `validate <mode>` | Creates one validation target. |
+| `policy` | `policy <frameRef> <level> <closureMode> <maxFrontier> <minFamilies> <maxComparisons> <validationFloor>` | Declares one frame-local deliberation policy. |
+| `objective` | `objective <frameRef> [<targetRef> ...]` | Declares one frame-local comparative objective. |
+| `candidate` | `candidate <frameRef> <branchRef> <resultRef> <strength>` | Promotes one branch result into a comparative candidate. |
+| `compare` | `compare <frameRef> [<candidateRef> ...] "<summary>"` | Records one explicit comparison object. |
+| `challenge` | `challenge <frameRef> <candidateRef> "<goal>" <severity>` | Records one targeted challenge for a candidate. |
 | `branch` | `branch <intentRef> <seedRef> <pluginRef>` | Creates one execution attempt record. |
 | `result_record` | `result_record <kind>` | Creates one result object. |
 
@@ -223,6 +229,27 @@ object kind.
 - `strength`
 - `partialAllowed`
 - `preserveConstraints`
+
+### Allowed policy fields
+
+- `validationFloor`
+
+### Allowed candidate fields
+
+- `score`
+- `selected`
+
+### Allowed compare fields
+
+- `status`
+- `summary`
+- `criterion`
+
+### Allowed challenge fields
+
+- `status`
+- `resolution`
+- `severity`
 
 ### Allowed branch fields
 

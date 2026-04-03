@@ -149,10 +149,11 @@ describe('HTTP KB session APIs', () => {
     assert.match(createdKb.kb_id, /^kb-[a-f0-9]{16}$/);
 
     const sessionRes = makeResCapture();
-    await server._createSession(makeJsonReq({}), sessionRes);
+    await server._createSession(makeJsonReq({ deliberation_level: 2 }), sessionRes);
     const createdSession = sessionRes.json();
     assert.equal(sessionRes.statusCode, 200);
     assert.ok(createdSession.session_id);
+    assert.equal(createdSession.deliberation_level, 2);
 
     const loadRes = makeResCapture();
     await server._mountKb(
@@ -406,6 +407,7 @@ describe('HTTP KB session APIs', () => {
     assert.match(res.body, /Running seed detector sd-symbolic/);
     assert.match(res.body, /# Streamed answer/);
     assert.match(res.body, /"request_id":"req-stream"/);
+    assert.match(res.body, /"deliberation_level":0/);
   });
 
   it('returns session explainability registry with execution trace and response document', async () => {
@@ -419,7 +421,7 @@ describe('HTTP KB session APIs', () => {
       defaultGoalSolverPlugin: 'gs-symbolic'
     });
     conversation.attachKBRepositoryManager(manager);
-    const session = await conversation.createSession(null, 'default', 'planner-default', 'sd-symbolic', 'kb-fast', 'gs-symbolic');
+    const session = await conversation.createSession(null, 'default', 'planner-default', 'sd-symbolic', 'kb-fast', 'gs-symbolic', 2);
     await conversation.commitSuccessfulTurn(
       session,
       'Explain Aurora.',
@@ -476,6 +478,7 @@ describe('HTTP KB session APIs', () => {
     assert.equal(payload.turns[0].seedDetectorPlugin, 'sd-symbolic');
     assert.equal(payload.turns[0].kbPlugin, 'kb-fast');
     assert.equal(payload.turns[0].goalSolverPlugin, 'gs-symbolic');
+    assert.equal(payload.turns[0].deliberationLevel, 2);
     assert.equal(payload.turns[0].executionTrace.stages[0].pluginId, 'gs-symbolic');
     assert.equal(payload.turns[0].responseDocument.groups[0].answerMarkdown, 'Aurora details.');
   });
@@ -491,7 +494,7 @@ describe('HTTP KB session APIs', () => {
       defaultGoalSolverPlugin: 'gs-symbolic'
     });
     conversation.attachKBRepositoryManager(manager);
-    const session = await conversation.createSession(null, 'default', 'planner-default', 'sd-symbolic', 'kb-fast', 'gs-symbolic');
+    const session = await conversation.createSession(null, 'default', 'planner-default', 'sd-symbolic', 'kb-fast', 'gs-symbolic', 1);
     await conversation.commitFailedTurn(
       session,
       'What failed?',
@@ -543,6 +546,7 @@ describe('HTTP KB session APIs', () => {
     assert.equal(payload.turn_count, 1);
     assert.equal(payload.turns[0].requestId, 'req-failed');
     assert.equal(payload.turns[0].answerStatus, 'failed');
+    assert.equal(payload.turns[0].deliberationLevel, 1);
     assert.equal(payload.turns[0].executionTrace.finalStatus, 'failed');
     assert.equal(payload.turns[0].error.code, 'VALIDATION_REJECTED');
   });

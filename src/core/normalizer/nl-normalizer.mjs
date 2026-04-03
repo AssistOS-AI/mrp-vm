@@ -13,57 +13,57 @@ function stripCodeFences(text) {
 }
 
 export class NLNormalizer {
-  constructor(strategyRegistry) {
-    this.strategyRegistry = strategyRegistry;
+  constructor(modeRegistry) {
+    this.modeRegistry = modeRegistry;
     this.validator = new CNLValidator();
     this.parser = new CNLParser();
   }
 
-  async toIntentCNL(rawNL, history, systemPrompt, strategy, requestedModel = null) {
+  async toIntentCNL(rawNL, history, systemPrompt, mode, requestedModel = null, extraInput = {}) {
     if (rawNL.length > MAX_NORMALIZER_INPUT_CHARS) {
       throw new MRPError('NORMALIZER_INPUT_TOO_LARGE', MOD, `Input exceeds ${MAX_NORMALIZER_INPUT_CHARS} characters`);
     }
     return this._normalizeWithRetry(
-      (input) => strategy.normalizeIntent(input),
-      { rawNL, history, systemPrompt, requestedModel },
+      (input) => mode.normalizeIntent(input),
+      { rawNL, history, systemPrompt, requestedModel, ...extraInput },
       r => r.intentCNL,
       md => this.validator.validateIntentCNL(md),
       'NORMALIZER_FAILED', 'NORMALIZER_VALIDATION_FAILED',
-      strategy
+      mode
     );
   }
 
-  async toSessionContextCNL(rawNL, systemPrompt, strategy, requestedModel = null) {
+  async toSessionContextCNL(rawNL, systemPrompt, mode, requestedModel = null, extraInput = {}) {
     if (rawNL.length > MAX_NORMALIZER_INPUT_CHARS) {
       throw new MRPError('NORMALIZER_INPUT_TOO_LARGE', MOD, `Input exceeds ${MAX_NORMALIZER_INPUT_CHARS} characters`);
     }
     return this._normalizeWithRetry(
-      (input) => strategy.extractSessionContext(input),
-      { rawNL, systemPrompt, requestedModel },
+      (input) => mode.extractSessionContext(input),
+      { rawNL, systemPrompt, requestedModel, ...extraInput },
       r => r.contextCNL,
       md => {
         if (!md || !md.trim()) return { valid: true, errors: [] };
         return this.validator.validateContextCNL(md);
       },
       'SESSION_CONTEXT_FAILED', 'SESSION_CONTEXT_VALIDATION_FAILED',
-      strategy
+      mode
     );
   }
 
-  async toContextCNL(chunkText, provenance, strategy, requestedModel = null) {
+  async toContextCNL(chunkText, provenance, mode, requestedModel = null, extraInput = {}) {
     if (chunkText.length > MAX_NORMALIZER_INPUT_CHARS) {
       throw new MRPError('NORMALIZER_INPUT_TOO_LARGE', MOD, `Input exceeds ${MAX_NORMALIZER_INPUT_CHARS} characters`);
     }
     return this._normalizeWithRetry(
-      (input) => strategy.normalizePersistentContext(input),
-      { chunkText, provenance, requestedModel },
+      (input) => mode.normalizePersistentContext(input),
+      { chunkText, provenance, requestedModel, ...extraInput },
       r => r.contextCNL,
       md => {
         if (!md || !md.trim()) return { valid: true, errors: [] };
         return this.validator.validateContextCNL(md);
       },
       'KB_CONTEXT_FAILED', 'KB_CONTEXT_VALIDATION_FAILED',
-      strategy
+      mode
     );
   }
 
@@ -85,18 +85,18 @@ export class NLNormalizer {
     return parts.join(' ') || cnl;
   }
 
-  async toSeedBundleCNL(rawNL, history, systemPrompt, strategy, requestedModel = null) {
+  async toSeedBundleCNL(rawNL, history, systemPrompt, mode, requestedModel = null, extraInput = {}) {
     if (rawNL.length > MAX_NORMALIZER_INPUT_CHARS) {
       throw new MRPError('NORMALIZER_INPUT_TOO_LARGE', MOD, `Input exceeds ${MAX_NORMALIZER_INPUT_CHARS} characters`);
     }
     return this._normalizeSeedBundleWithRetry(
-      input => strategy.detectSeedBundle(input),
-      { rawNL, history, systemPrompt, requestedModel },
-      strategy
+      input => mode.detectSeedBundle(input),
+      { rawNL, history, systemPrompt, requestedModel, ...extraInput },
+      mode
     );
   }
 
-  async _normalizeWithRetry(callFn, initialInput, extractFn, validateFn, failCode, validationFailCode, strategy) {
+  async _normalizeWithRetry(callFn, initialInput, extractFn, validateFn, failCode, validationFailCode, mode) {
     let result;
     try {
       result = await callFn(initialInput);
@@ -109,7 +109,7 @@ export class NLNormalizer {
 
     logger.warn(MOD, 'Validation failed, attempting corrective retry', { errors: vr.errors });
 
-    if (!strategy.usesLLM()) {
+    if (!mode.usesLLM()) {
       throw new MRPError(validationFailCode, MOD, 'Validation failed (symbolic, no retry)', { errors: vr.errors });
     }
 
@@ -172,7 +172,7 @@ export class NLNormalizer {
     return parts.join('\n');
   }
 
-  async _normalizeSeedBundleWithRetry(callFn, initialInput, strategy) {
+  async _normalizeSeedBundleWithRetry(callFn, initialInput, mode) {
     let attempts = 0;
     let result;
     try {
@@ -199,7 +199,7 @@ export class NLNormalizer {
       contextErrors: validation.contextValidation.errors
     });
 
-    if (!strategy.usesLLM()) {
+    if (!mode.usesLLM()) {
       throw new MRPError('NORMALIZER_VALIDATION_FAILED', MOD, 'Seed bundle validation failed (symbolic, no retry)', {
         attemptCount: attempts,
         intentErrors: validation.intentValidation.errors,

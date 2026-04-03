@@ -1,16 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { renderResolvedIntentPayloadMarkdown } from '../synthesis/resolved-intent-payload.mjs';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROMPTS_DIR = resolve(__dirname, '../../../config/prompts');
-
-function loadPrompt(name) {
-  const fp = resolve(PROMPTS_DIR, name);
-  return existsSync(fp) ? readFileSync(fp, 'utf-8').trim() : '';
-}
 
 function buildDescriptor(overrides) {
   return {
@@ -29,16 +18,37 @@ function buildDescriptor(overrides) {
   };
 }
 
-export class StrategySeedDetectorPlugin {
-  constructor(id, strategy, normalizer, options = {}) {
+function normalizeCompactAnswer(text = '') {
+  return String(text || '')
+    .replace(/^#+\s*/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isExplicitTerseQuestion(question = '') {
+  const normalized = String(question || '').trim();
+  return /yes\s+or\s+no/i.test(normalized) ||
+    /one\s+word/i.test(normalized) ||
+    /single\s+word/i.test(normalized);
+}
+
+function shouldAutoAcceptTerseValidation(input = {}) {
+  const answer = normalizeCompactAnswer(input.responseMarkdown);
+  if (!/^(yes|no)$/i.test(answer)) return false;
+  return isExplicitTerseQuestion(input.originalMessage);
+}
+
+export class ModeSeedDetectorPlugin {
+  constructor(id, mode, normalizer, options = {}) {
     this.id = id;
-    this.strategy = strategy;
+    this.mode = mode;
     this.normalizer = normalizer;
     this.modelRole = options.modelRole || null;
     this.ingestModelRole = options.ingestModelRole || this.modelRole;
     this.description = options.description || '';
     this.costClass = options.costClass || 'cheap';
     this.plannerHints = options.plannerHints || null;
+    this.prompts = options.prompts || {};
   }
 
   getDescriptor() {
@@ -48,9 +58,9 @@ export class StrategySeedDetectorPlugin {
       name: this.id,
       description: this.description,
       costClass: this.costClass,
-      usesLLM: this.strategy.usesLLM(),
+      usesLLM: this.mode.usesLLM(),
       modelRoles: [this.modelRole, this.ingestModelRole].filter(Boolean),
-      maxLLMCalls: this.strategy.usesLLM() ? 2 : 0,
+      maxLLMCalls: this.mode.usesLLM() ? 2 : 0,
       provides: ['detect-seeds', 'normalize-persistent-context'],
       plannerHints: this.plannerHints
     });
@@ -68,15 +78,16 @@ export class StrategySeedDetectorPlugin {
         input.currentMessage,
         input.historyForPrompt,
         input.systemPrompt,
-        this.strategy,
-        model
+        this.mode,
+        model,
+        { prompts: this.prompts, pluginId: this.id }
       );
       return {
         status: 'success',
         intentCNL: seedBundle.intentCNL,
         currentTurnContextCNL: seedBundle.currentTurnContextCNL,
         metadata: {
-          llmCalls: this.strategy.usesLLM() ? seedBundle.attemptCount || 1 : 0,
+          llmCalls: this.mode.usesLLM() ? seedBundle.attemptCount || 1 : 0,
           model
         },
         error: null
@@ -87,7 +98,7 @@ export class StrategySeedDetectorPlugin {
         intentCNL: null,
         currentTurnContextCNL: null,
         metadata: {
-          llmCalls: this.strategy.usesLLM() ? error.details?.attemptCount || 1 : 0,
+          llmCalls: this.mode.usesLLM() ? error.details?.attemptCount || 1 : 0,
           model
         },
         error: { code: error.code || 'SEED_PLUGIN_FAILED', message: error.message }
@@ -103,15 +114,17 @@ export class StrategySeedDetectorPlugin {
       sessionModel: input.sessionModel || null
     });
     try {
-      const result = await this.strategy.normalizePersistentContext({
+      const result = await this.mode.normalizePersistentContext({
         ...input,
-        requestedModel: model
+        requestedModel: model,
+        prompts: this.prompts,
+        pluginId: this.id
       });
       return {
         status: 'success',
         contextCNL: result.contextCNL || '',
         metadata: {
-          llmCalls: this.strategy.usesLLM() ? 1 : 0,
+          llmCalls: this.mode.usesLLM() ? 1 : 0,
           model
         },
         error: null
@@ -121,7 +134,7 @@ export class StrategySeedDetectorPlugin {
         status: error.code === 'STRATEGY_UNSUPPORTED_INPUT' ? 'unsupported' : 'error',
         contextCNL: null,
         metadata: {
-          llmCalls: this.strategy.usesLLM() ? 1 : 0,
+          llmCalls: this.mode.usesLLM() ? 1 : 0,
           model
         },
         error: { code: error.code || 'INGEST_PLUGIN_FAILED', message: error.message }
@@ -131,7 +144,7 @@ export class StrategySeedDetectorPlugin {
 
   createIngestStrategy(ctx, requestedModel = null, sessionModel = null) {
     return {
-      usesLLM: () => this.strategy.usesLLM(),
+      usesLLM: () => this.mode.usesLLM(),
       normalizePersistentContext: async (input) => {
         const result = await this.normalizePersistentContext({
           ...input,
@@ -152,6 +165,7 @@ export class RetrievalKBPlugin {
     this.description = options.description || '';
     this.costClass = options.costClass || 'cheap';
     this.plannerHints = options.plannerHints || null;
+    this.prompts = options.prompts || {};
   }
 
   getDescriptor() {
@@ -311,15 +325,16 @@ export class RetrievalKBPlugin {
   }
 }
 
-export class StrategyGoalSolverPlugin {
-  constructor(id, strategy, synthesizer, options = {}) {
+export class ModeGoalSolverPlugin {
+  constructor(id, mode, synthesizer, options = {}) {
     this.id = id;
-    this.strategy = strategy;
+    this.mode = mode;
     this.synthesizer = synthesizer;
     this.modelRole = options.modelRole || null;
     this.description = options.description || '';
     this.costClass = options.costClass || 'cheap';
     this.plannerHints = options.plannerHints || null;
+    this.prompts = options.prompts || {};
   }
 
   getDescriptor() {
@@ -329,9 +344,9 @@ export class StrategyGoalSolverPlugin {
       name: this.id,
       description: this.description,
       costClass: this.costClass,
-      usesLLM: this.strategy.usesLLM(),
+      usesLLM: this.mode.usesLLM(),
       modelRoles: [this.modelRole].filter(Boolean),
-      maxLLMCalls: this.strategy.usesLLM() ? 1 : 0,
+      maxLLMCalls: this.mode.usesLLM() ? 1 : 0,
       provides: ['solve-goal'],
       plannerHints: this.plannerHints
     });
@@ -354,16 +369,17 @@ export class StrategyGoalSolverPlugin {
         input.resolvedIntents,
         pluginOutputs,
         input.systemPrompt,
-        this.strategy,
+        this.mode,
         model,
-        input.guidanceUnits || []
+        input.guidanceUnits || [],
+        { prompts: this.prompts, pluginId: this.id }
       );
       return {
         status: result.status === 'no-context' ? 'no-context' : 'success',
         responseMarkdown: result.responseMarkdown,
         responseDocument: result.responseDocument,
         metadata: {
-          llmCalls: this.strategy.usesLLM() ? 1 : 0,
+          llmCalls: this.mode.usesLLM() ? 1 : 0,
           model,
           helperPluginCount: pluginOutputs.length
         },
@@ -375,7 +391,7 @@ export class StrategyGoalSolverPlugin {
         responseMarkdown: null,
         responseDocument: null,
         metadata: {
-          llmCalls: this.strategy.usesLLM() ? 1 : 0,
+          llmCalls: this.mode.usesLLM() ? 1 : 0,
           model
         },
         error: { code: error.code || 'GOAL_SOLVER_FAILED', message: error.message }
@@ -391,6 +407,7 @@ export class LLMValidationPlugin {
     this.modelRole = options.modelRole || 'validation';
     this.description = options.description || '';
     this.costClass = options.costClass || 'moderate';
+    this.prompts = options.prompts || {};
   }
 
   getDescriptor() {
@@ -421,11 +438,19 @@ export class LLMValidationPlugin {
       requestedModel: input.requestedModel || null,
       sessionModel: input.sessionModel || null
     });
+    if (shouldAutoAcceptTerseValidation(input)) {
+      return {
+        status: 'accepted',
+        verdict: 'accepted',
+        reason: 'Accepted terse boolean answer under explicit concise-output request.',
+        metadata: { llmCalls: 0, model: null },
+        error: null
+      };
+    }
     if (!this.llmBridge?.call) {
       return { status: 'accepted', verdict: 'accepted', reason: 'No LLM bridge available, accepting by default', metadata: { llmCalls: 0, model: null }, error: null };
     }
-    // Load prompt from external file for customizability
-    const prompt = loadPrompt('validate.md') || 'You are a response validator. Reply with JSON: {"verdict":"accepted"|"rejected","reason":"..."}';
+    const prompt = this.prompts.validateResponse || 'You are a response validator. Reply with JSON: {"verdict":"accepted"|"rejected","reason":"..."}';
     const userMsg = [
       '## Original Question', input.originalMessage || '',
       '## System Answer', (input.responseMarkdown || '').replace(/sess-[a-f0-9-]+/g, 'sess-REF').replace(/src-[a-f0-9]+/g, 'src-REF'),
@@ -453,3 +478,6 @@ export class LLMValidationPlugin {
     }
   }
 }
+
+export { ModeSeedDetectorPlugin as StrategySeedDetectorPlugin };
+export { ModeGoalSolverPlugin as StrategyGoalSolverPlugin };

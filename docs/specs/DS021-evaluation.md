@@ -87,12 +87,14 @@ Preferred combo shape for matrix mode:
 Suites SHOULD record or preserve:
 
 - requested combo surface
+- requested `deliberation_level` when explicitly set
 - planner plugin used
 - seed detector plugin used
 - KB plugin used
 - goal solver plugin used
 - LLM role assignments used
 - response document returned by the API
+- execution-trace deliberation summary when present
 
 ## Metrics
 

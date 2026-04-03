@@ -321,6 +321,36 @@ describe('Current-turn context is filtered per intent', () => {
     assert.equal(results[0].guidanceUnits.validation.length, 0);
   });
 
+  it('does not attach irrelevant current-turn guidance to unrelated intents', async () => {
+    const { ContextMatcher } = await import('../../src/plugins/kb-plugin/kb-fast/retrieval/context-matcher.mjs');
+    const matcher = new ContextMatcher(
+      { get: () => ({ retrieve: async () => ({ candidates: [] }) }), getProfile: () => ({ primaryStrategies: ['bm25-lexical'], secondaryStrategies: [] }) },
+      {}
+    );
+
+    const currentTurnUnits = [
+      {
+        id: 'ct-1',
+        role: 'Constraint',
+        topic: 'Kaelen output',
+        claim: 'Answer the Kaelen question with Yes or No.',
+        utilityActs: ['recommend'],
+        phaseScopes: ['gs-plugin']
+      }
+    ];
+
+    const results = await matcher.resolve(
+      [{ groupNumber: 1, act: 'explain', intent: 'Explain why Commander Vex failed.', target: 'Commander Vex failed', criteria: [], evidence: [], explicitContext: null, outputType: 'structured response' }],
+      [{ intentGroupNumber: 1, neededRoles: ['Explanation'], queryText: 'Commander Vex failed', queryTerms: ['commander', 'vex', 'failed'], actBoost: 'explain', maxResults: 5 }],
+      currentTurnUnits,
+      { sessionIndex: new KBIndex(), sessionContextUnits: [] },
+      'fast',
+      new KBIndex()
+    );
+
+    assert.equal(results[0].guidanceUnits.goalSolver.length, 0);
+  });
+
   it('does not let non-evidence guidance units displace evidence units', async () => {
     const { ContextMatcher } = await import('../../src/plugins/kb-plugin/kb-fast/retrieval/context-matcher.mjs');
     const { RetrievalStrategyRegistry, BM25LexicalStrategy } = await import('../../src/plugins/kb-plugin/kb-fast/retrieval/strategies/registry.mjs');

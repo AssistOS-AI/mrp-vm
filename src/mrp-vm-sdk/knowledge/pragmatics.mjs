@@ -1,5 +1,5 @@
 // DS004 canonical enums and mappings
-import { SYMBOLIC_RELATIONS } from './symbolic-facts.mjs';
+import { SYMBOLIC_RELATIONS } from '../nlp-util/symbolic-facts.mjs';
 
 export const PRAGMATIC_ACTS = [
   'compare', 'explain', 'recommend', 'diagnose',

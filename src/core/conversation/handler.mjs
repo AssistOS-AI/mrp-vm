@@ -4,8 +4,15 @@ import { MRPError } from '../platform/errors.mjs';
 import { logger } from '../platform/logger.mjs';
 import { KBIndex } from '../kb/index.mjs';
 import { SessionWorkspace } from '../kb/session-workspace.mjs';
+import { normalizeDeliberationLevel } from '../engine/runtime-objects.mjs';
 
 const MOD = 'conversation';
+const SESSION_WIDE_GUIDANCE_RE = /\b(for the rest of (?:this|the) session|from now on|remember this|remember that|keep (?:this|that) (?:for|throughout) (?:this|the) session|session-wide|persist this (?:instruction|preference|rule)|make this (?:the )?default)\b/i;
+
+function isTurnLocalGuidanceUnit(unit = {}) {
+  const scopes = Array.isArray(unit.phaseScopes) ? unit.phaseScopes : [];
+  return scopes.some(scope => scope && scope !== 'kb-plugin');
+}
 
 export class ConversationHandler {
   constructor(config = {}) {
@@ -74,7 +81,8 @@ export class ConversationHandler {
     plannerPlugin = null,
     seedDetectorPlugin = null,
     kbPlugin = null,
-    goalSolverPlugin = null
+    goalSolverPlugin = null,
+    deliberationLevel = null
   ) {
     if (this._sessions.size >= this.maxSessions) {
       this.expireInactiveSessions();
@@ -99,6 +107,7 @@ export class ConversationHandler {
       preferredSeedDetectorPlugin: resolvedSelections.seedDetectorPlugin,
       preferredKBPlugin: resolvedSelections.kbPlugin || null,
       preferredGoalSolverPlugin: resolvedSelections.goalSolverPlugin,
+      preferredDeliberationLevel: normalizeDeliberationLevel(deliberationLevel, 0),
       messageLog: [],
       systemPrompt: null,
       sessionContextUnits: [],
@@ -182,7 +191,8 @@ export class ConversationHandler {
     plannerPlugin = null,
     seedDetectorPlugin = null,
     kbPlugin = null,
-    goalSolverPlugin = null
+    goalSolverPlugin = null,
+    deliberationLevel = null
   ) {
     let session;
     if (sessionId) {
@@ -214,7 +224,8 @@ export class ConversationHandler {
         plannerPlugin,
         seedDetectorPlugin,
         kbPlugin,
-        goalSolverPlugin
+        goalSolverPlugin,
+        deliberationLevel
       );
     }
     const resolvedSelections = this._resolvePluginSelections({
@@ -224,6 +235,11 @@ export class ConversationHandler {
       kbPlugin,
       goalSolverPlugin
     });
+    const resolvedDeliberationLevel = normalizeDeliberationLevel(
+      deliberationLevel,
+      session.preferredDeliberationLevel ?? 0
+    );
+    session.preferredDeliberationLevel = resolvedDeliberationLevel;
     // Process new messages
     let systemPrompt = session.systemPrompt;
     let currentMessage = null;
@@ -248,6 +264,7 @@ export class ConversationHandler {
       explicitSeedDetectorPlugin: seedDetectorPlugin || null,
       explicitKBPlugin: kbPlugin || null,
       explicitGoalSolverPlugin: goalSolverPlugin || null,
+      requestedDeliberationLevel: resolvedDeliberationLevel,
       requestedPlannerPlugin: resolvedSelections.plannerPlugin,
       requestedSeedDetectorPlugin: resolvedSelections.seedDetectorPlugin,
       requestedKBPlugin: resolvedSelections.kbPlugin,
@@ -406,6 +423,7 @@ export class ConversationHandler {
     const toAdd = [];
     const stagedUnits = (currentTurnContextUnits || session.pendingTurnContextUnits || []);
     for (const u of stagedUnits) {
+      if (!this._shouldPersistTurnUnit(u, currentUserMessage)) continue;
       if (session.sessionContextUnits.length + toAdd.length >= this.maxContextUnits) break;
       if (!u.hash || !existingHashes.has(u.hash)) {
         toAdd.push(u);
@@ -422,6 +440,12 @@ export class ConversationHandler {
     if (selectedSeedDetectorPlugin) session.preferredSeedDetectorPlugin = selectedSeedDetectorPlugin;
     if (selectedKBPlugin) session.preferredKBPlugin = selectedKBPlugin;
     if (selectedGoalSolverPlugin) session.preferredGoalSolverPlugin = selectedGoalSolverPlugin;
+    if (executionRecord?.executionTrace?.deliberationLevel != null) {
+      session.preferredDeliberationLevel = normalizeDeliberationLevel(
+        executionRecord.executionTrace.deliberationLevel,
+        session.preferredDeliberationLevel ?? 0
+      );
+    }
     this._appendExplainabilityEntry(session, {
       requestId: executionRecord?.requestId || null,
       createdAt: executionRecord?.createdAt || null,
@@ -432,6 +456,7 @@ export class ConversationHandler {
       seedDetectorPlugin: selectedSeedDetectorPlugin || session.preferredSeedDetectorPlugin || null,
       kbPlugin: selectedKBPlugin || session.preferredKBPlugin || null,
       goalSolverPlugin: selectedGoalSolverPlugin || session.preferredGoalSolverPlugin || null,
+      deliberationLevel: session.preferredDeliberationLevel ?? 0,
       responseDocument: executionRecord?.responseDocument || null,
       executionTrace: executionRecord?.executionTrace || null
     });
@@ -464,6 +489,12 @@ export class ConversationHandler {
     if (selectedSeedDetectorPlugin) session.preferredSeedDetectorPlugin = selectedSeedDetectorPlugin;
     if (selectedKBPlugin) session.preferredKBPlugin = selectedKBPlugin;
     if (selectedGoalSolverPlugin) session.preferredGoalSolverPlugin = selectedGoalSolverPlugin;
+    if (executionRecord?.executionTrace?.deliberationLevel != null) {
+      session.preferredDeliberationLevel = normalizeDeliberationLevel(
+        executionRecord.executionTrace.deliberationLevel,
+        session.preferredDeliberationLevel ?? 0
+      );
+    }
 
     this._appendExplainabilityEntry(session, {
       requestId: executionRecord?.requestId || null,
@@ -478,6 +509,7 @@ export class ConversationHandler {
       seedDetectorPlugin: selectedSeedDetectorPlugin || session.preferredSeedDetectorPlugin || null,
       kbPlugin: selectedKBPlugin || session.preferredKBPlugin || null,
       goalSolverPlugin: selectedGoalSolverPlugin || session.preferredGoalSolverPlugin || null,
+      deliberationLevel: session.preferredDeliberationLevel ?? 0,
       responseDocument: executionRecord?.responseDocument || null,
       executionTrace: executionRecord?.executionTrace || null,
       error: executionRecord?.error || null
@@ -529,6 +561,7 @@ export class ConversationHandler {
       seed_detector_plugin: s.preferredSeedDetectorPlugin,
       kb_plugin: s.preferredKBPlugin,
       goal_solver_plugin: s.preferredGoalSolverPlugin,
+      deliberation_level: s.preferredDeliberationLevel ?? 0,
       model: s.preferredModel,
       kb_id: s.mountedKbId,
       kb_name: s.mountedKbName,
@@ -553,6 +586,7 @@ export class ConversationHandler {
       seedDetectorPlugin: entry.seedDetectorPlugin,
       kbPlugin: entry.kbPlugin,
       goalSolverPlugin: entry.goalSolverPlugin,
+      deliberationLevel: entry.deliberationLevel ?? 0,
       responseDocument: this._cloneExplainabilityPayload(entry.responseDocument),
       executionTrace: this._cloneExplainabilityPayload(entry.executionTrace),
       error: this._cloneExplainabilityPayload(entry.error)
@@ -600,6 +634,18 @@ export class ConversationHandler {
     session.pendingTurnContextUnits = nextUnits;
     session.pendingTurnIndex = new KBIndex(this.kbRepositoryManager?.retrievalConfig || {});
     session.pendingTurnIndex.rebuild(nextUnits);
+  }
+
+  _shouldPersistTurnUnit(unit = null, currentUserMessage = '') {
+    if (!unit) return false;
+    if (!isTurnLocalGuidanceUnit(unit)) return true;
+    const scopeText = [
+      currentUserMessage,
+      unit.claim || '',
+      unit.procedure || '',
+      unit.utilityNote || ''
+    ].join(' ');
+    return SESSION_WIDE_GUIDANCE_RE.test(scopeText);
   }
 
   async _notifyKBPlugins(eventType, session, payload = {}) {
@@ -668,6 +714,7 @@ export class ConversationHandler {
       seedDetectorPlugin: entry.seedDetectorPlugin || null,
       kbPlugin: entry.kbPlugin || null,
       goalSolverPlugin: entry.goalSolverPlugin || null,
+      deliberationLevel: entry.deliberationLevel ?? 0,
       responseDocument: this._cloneExplainabilityPayload(entry.responseDocument),
       executionTrace: this._cloneExplainabilityPayload(entry.executionTrace),
       error: this._cloneExplainabilityPayload(entry.error)

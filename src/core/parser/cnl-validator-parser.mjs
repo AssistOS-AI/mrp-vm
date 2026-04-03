@@ -5,7 +5,7 @@ import {
   INTENT_REQUIRED_FIELDS, INTENT_ALLOWED_FIELDS,
   CONTEXT_REQUIRED_FIELDS, CONTEXT_ALLOWED_FIELDS,
   normalizePhaseScopes, inferPhaseScopes
-} from '../../mrp-vm-sdk/knowledge/pragmatics.mjs';
+} from '../interpreter/pragmatics.mjs';
 import { SOPValidator } from '../interpreter/validator.mjs';
 import { SOPInterpreter } from '../interpreter/interpreter.mjs';
 

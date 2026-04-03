@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NLNormalizer } from '../../src/core/normalizer/nl-normalizer.mjs';
+import { CNLParser } from '../../src/core/parser/cnl-validator-parser.mjs';
 import { StrategyRegistry } from '../../src/mrp-vm-sdk/strategies/registry.mjs';
 import { StrategySeedDetectorPlugin } from '../../src/mrp-vm-sdk/plugins/builtin-adapters.mjs';
 import { LLMAssistedStrategy } from '../../src/mrp-vm-sdk/strategies/llm-assisted.mjs';
+import { SymbolicOnlyStrategy } from '../../src/mrp-vm-sdk/strategies/symbolic-only.mjs';
 
 describe('seed detection bundle flow', () => {
   it('uses a single detectSeedBundle call for sd-plugin.detectSeeds', async () => {
@@ -84,5 +86,26 @@ describe('seed detection bundle flow', () => {
     assert.equal(bridgeCalls, 1);
     assert.match(bundle.intentCNL, /Act: verify/);
     assert.match(bundle.currentTurnContextCNL, /Relation: provides/);
+  });
+
+  it('symbolic-only strategy splits short multi-question prompts into separate intent groups', async () => {
+    const strategy = new SymbolicOnlyStrategy();
+    const parser = new CNLParser();
+    const bundle = await strategy.detectSeedBundle({
+      rawNL: [
+        'Q1: Is Kaelen safe? Answer Yes or No.',
+        'Q2: Explain why Vex failed.',
+        'Q3: Name the operator. One word only.'
+      ].join('\n')
+    });
+
+    const groups = parser.parseIntentCNL(bundle.intentCNL);
+    assert.equal(groups.length, 3);
+    assert.match(groups[0].intent, /Is Kaelen safe/i);
+    assert.match(groups[0].output, /yes or no/i);
+    assert.match(groups[1].intent, /Explain why Vex failed\./);
+    assert.equal(groups[1].output, 'structured response');
+    assert.match(groups[2].intent, /Name the operator\./);
+    assert.match(groups[2].output, /one word/i);
   });
 });

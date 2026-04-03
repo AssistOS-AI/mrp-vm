@@ -11,7 +11,7 @@ import {
   stripStatementSigil,
   validateEnum
 } from './schema.mjs';
-import { PRAGMATIC_ACTS } from '../../mrp-vm-sdk/knowledge/pragmatics.mjs';
+import { PRAGMATIC_ACTS } from './pragmatics.mjs';
 import { SOPParser } from './parser.mjs';
 
 function makeError(code, statement, message, extra = {}) {
@@ -37,6 +37,14 @@ function normalizeArgValue(arg) {
   }
   if (arg.kind === 'ref') return stripStatementSigil(arg.value);
   return arg.value;
+}
+
+function isExternalFrameRef(refId = '') {
+  return /^f[\w-]+$/i.test(refId) || /^frame-[\w-]+$/i.test(refId);
+}
+
+function allowsExternalFrameRef(statement, argIndex) {
+  return ['policy', 'objective', 'candidate', 'compare', 'challenge'].includes(statement?.command) && argIndex === 0;
 }
 
 export class SOPValidator {
@@ -67,13 +75,18 @@ export class SOPValidator {
     const errors = [];
     const objects = new Map();
     const seenStatements = new Set();
-    const state = {
-      intents: [],
-      kus: [],
-      validations: [],
-      branches: [],
-      results: []
-    };
+      const state = {
+        intents: [],
+        kus: [],
+        validations: [],
+        policies: [],
+        objectives: [],
+        candidates: [],
+        comparisons: [],
+        challenges: [],
+        branches: [],
+        results: []
+      };
 
     for (const statement of statements) {
       if (seenStatements.has(statement.id)) {
@@ -182,6 +195,11 @@ export class SOPValidator {
         }
         if (statement.command === 'ku') state.kus.push(objectId);
         if (statement.command === 'validate') state.validations.push(objectId);
+        if (statement.command === 'policy') state.policies.push(objectId);
+        if (statement.command === 'objective') state.objectives.push(objectId);
+        if (statement.command === 'candidate') state.candidates.push(objectId);
+        if (statement.command === 'compare') state.comparisons.push(objectId);
+        if (statement.command === 'challenge') state.challenges.push(objectId);
         if (statement.command === 'branch') state.branches.push(objectId);
         if (statement.command === 'result_record') state.results.push(objectId);
         continue;
@@ -191,11 +209,13 @@ export class SOPValidator {
       const objectId = stripStatementSigil(refArg.value);
       const object = objects.get(objectId);
       if (!object) {
-        errors.push(makeError(
-          'UNRESOLVED_REFERENCE',
-          statement,
-          `Reference '${refArg.value}' does not resolve to a prior constructor`
-        ));
+        if (!allowsExternalFrameRef(statement, 0) || !isExternalFrameRef(objectId)) {
+          errors.push(makeError(
+            'UNRESOLVED_REFERENCE',
+            statement,
+            `Reference '${refArg.value}' does not resolve to a prior constructor`
+          ));
+        }
         continue;
       }
 
@@ -277,11 +297,13 @@ export class SOPValidator {
         if (arg.kind !== 'ref') continue;
         const targetId = stripStatementSigil(arg.value);
         if (!objects.has(targetId)) {
-          errors.push(makeError(
-            'UNRESOLVED_REFERENCE',
-            statement,
-            `Reference '${arg.value}' does not resolve to a prior constructor`
-          ));
+          if (!allowsExternalFrameRef(statement, index) || !isExternalFrameRef(targetId)) {
+            errors.push(makeError(
+              'UNRESOLVED_REFERENCE',
+              statement,
+              `Reference '${arg.value}' does not resolve to a prior constructor`
+            ));
+          }
         }
       }
     }
@@ -416,6 +438,52 @@ export class SOPValidator {
       }
     }
 
+    for (const candidateId of state.candidates) {
+      const object = objects.get(candidateId);
+      const branchRef = stripStatementSigil(object.statement.args[1]?.value || '');
+      const resultRef = stripStatementSigil(object.statement.args[2]?.value || '');
+      if (!objects.has(branchRef)) {
+        errors.push(makeError(
+          'UNRESOLVED_REFERENCE',
+          object.statement,
+          `Candidate '${object.statement.id}' references unknown branch '${object.statement.args[1]?.value || ''}'`
+        ));
+      }
+      if (!objects.has(resultRef)) {
+        errors.push(makeError(
+          'UNRESOLVED_REFERENCE',
+          object.statement,
+          `Candidate '${object.statement.id}' references unknown result '${object.statement.args[2]?.value || ''}'`
+        ));
+      }
+    }
+
+    for (const comparisonId of state.comparisons) {
+      const object = objects.get(comparisonId);
+      const candidates = normalizeArgValue(object.statement.args[1]);
+      for (const candidateRef of candidates || []) {
+        if (!objects.has(candidateRef)) {
+          errors.push(makeError(
+            'UNRESOLVED_REFERENCE',
+            object.statement,
+            `Comparison '${object.statement.id}' references unknown candidate '${candidateRef}'`
+          ));
+        }
+      }
+    }
+
+    for (const challengeId of state.challenges) {
+      const object = objects.get(challengeId);
+      const targetRef = stripStatementSigil(object.statement.args[1]?.value || '');
+      if (!objects.has(targetRef)) {
+        errors.push(makeError(
+          'UNRESOLVED_REFERENCE',
+          object.statement,
+          `Challenge '${object.statement.id}' references unknown target '${object.statement.args[1]?.value || ''}'`
+        ));
+      }
+    }
+
     for (const resultId of state.results) {
       const object = objects.get(resultId);
       const linked = state.branches.some(branchId => {
@@ -442,4 +510,3 @@ export class SOPValidator {
     return objects.get(refId)?.kind || null;
   }
 }
-

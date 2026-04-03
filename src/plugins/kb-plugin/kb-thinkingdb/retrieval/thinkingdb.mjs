@@ -4,7 +4,7 @@ import {
   extractSymbolicFact,
   normalizeSymbolKey,
   tokenizeSymbolText
-} from '../knowledge/symbolic-facts.mjs';
+} from '../../../../mrp-vm-sdk/nlp-util/symbolic-facts.mjs';
 
 function uniqueStrings(items) {
   return [...new Set((items || []).filter(Boolean))];

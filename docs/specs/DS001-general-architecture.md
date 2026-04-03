@@ -181,6 +181,9 @@ The DAG must capture:
 - Latency, plugin candidates tried, final answer statuses.
 
 Session-level explainability is exposed via the server API (DS013) and UI (DS014) as a per-request execution registry for the current session, correctly rendering the non-linear execution frames.
+The detailed execution-graph contract for
+explainability and observability is defined by
+DS034.
 
 ## Configuration Surface
 - `config/plugins.json`
@@ -200,3 +203,4 @@ Session-level explainability is exposed via the server API (DS013) and UI (DS014
 - DS030 — Knowledge Unit model
 - DS031 — SOP Lang Control
 - DS032 — SOP interpreter
+- DS034 — execution graph explainability

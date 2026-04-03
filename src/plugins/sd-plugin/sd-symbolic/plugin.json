@@ -4,9 +4,9 @@
   "name": "Symbolic Seed Detector",
   "version": "1.0.0",
   "knowledgeUnitsFile": "plugin.kus.md",
-  "description": "Rule-based extraction of problem seeds and session knowledge units in one pass. Fast, deterministic, no LLM cost.",
+  "description": "Rule-based extraction of problem seeds and session knowledge units using the in-repo lightweight NLP utilities and SOP builders. Fast, deterministic, no LLM cost.",
   "costClass": "cheap",
-  "strategyId": "symbolic-only",
+  "modeId": "symbolic-only",
   "plannerHints": {
     "expectedLatencyMs": 30,
     "expectedLLMCalls": 0,
@@ -18,4 +18,3 @@
     "confidenceWhenMatched": 0.82
   }
 }
-
